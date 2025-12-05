@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QToolBar, QPushButton, QLabel, QComboBox,
     QDockWidget, QScrollArea, QCheckBox, QFrame,
     QSplitter, QStatusBar, QMessageBox, QApplication,
-    QColorDialog
+    QColorDialog, QSizePolicy
 )
 from PySide6.QtCore import Qt, QTimer, QSettings, Signal
 from PySide6.QtGui import QAction, QIcon, QCloseEvent, QFont
@@ -194,6 +194,10 @@ class MainWindow(QMainWindow):
         # Settings for persistence
         self._settings = QSettings("kubux", "kubux-calendar")
         
+        # Auto-refresh timer
+        self._auto_refresh_timer = QTimer(self)
+        self._auto_refresh_timer.timeout.connect(self._on_auto_refresh)
+        
         self._setup_window()
         self._setup_ui()
         self._setup_toolbar()
@@ -202,6 +206,11 @@ class MainWindow(QMainWindow):
         # Load state and initialize
         self._load_state()
         self._initialize_data()
+        
+        # Start auto-refresh timer if interval > 0
+        if config.refresh_interval > 0:
+            self._auto_refresh_timer.start(config.refresh_interval * 1000)  # Convert to milliseconds
+            print(f"DEBUG: Auto-refresh enabled every {config.refresh_interval} seconds", file=__import__('sys').stderr)
     
     def _setup_window(self):
         """Configure main window properties."""
@@ -257,7 +266,7 @@ class MainWindow(QMainWindow):
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
         
-        # Navigation buttons
+        # === LEFT BLOCK: Navigation ===
         self._prev_btn = QPushButton("◀")
         self._prev_btn.setToolTip("Previous")
         self._prev_btn.clicked.connect(self._calendar_widget.go_previous)
@@ -293,23 +302,37 @@ class MainWindow(QMainWindow):
         self._view_combo.currentIndexChanged.connect(self._on_view_combo_changed)
         toolbar.addWidget(self._view_combo)
         
-        # Spacer
-        spacer = QWidget()
-        spacer.setSizePolicy(spacer.sizePolicy().horizontalPolicy(), spacer.sizePolicy().verticalPolicy())
-        spacer.setMinimumWidth(20)
-        toolbar.addWidget(spacer)
+        # === LEFT SPACER: Push New Event to center ===
+        left_spacer = QWidget()
+        left_spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        toolbar.addWidget(left_spacer)
         
-        # New event button
+        # === CENTER: New Event button ===
         self._new_event_btn = QPushButton("+ New Event")
         self._new_event_btn.setStyleSheet("background: #007bff; color: white; padding: 6px 12px;")
         self._new_event_btn.clicked.connect(self._on_new_event)
         toolbar.addWidget(self._new_event_btn)
         
-        # Refresh button
-        self._refresh_btn = QPushButton("🔄")
-        self._refresh_btn.setToolTip("Refresh")
-        self._refresh_btn.clicked.connect(self._refresh_events)
-        toolbar.addWidget(self._refresh_btn)
+        # === RIGHT SPACER: Push actions to right ===
+        right_spacer = QWidget()
+        right_spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        toolbar.addWidget(right_spacer)
+        
+        # === RIGHT BLOCK: Actions ===
+        self._reload_btn = QPushButton("Reload")
+        self._reload_btn.setToolTip("Reload events from all calendars")
+        self._reload_btn.clicked.connect(self._refresh_events)
+        toolbar.addWidget(self._reload_btn)
+        
+        self._edit_config_btn = QPushButton("Edit Config")
+        self._edit_config_btn.setToolTip("Open configuration file")
+        self._edit_config_btn.clicked.connect(self._on_edit_config)
+        toolbar.addWidget(self._edit_config_btn)
+        
+        self._quit_btn = QPushButton("Quit")
+        self._quit_btn.setToolTip("Exit application")
+        self._quit_btn.clicked.connect(self.close)
+        toolbar.addWidget(self._quit_btn)
         
         self._update_date_label()
     
@@ -432,6 +455,10 @@ class MainWindow(QMainWindow):
         """Handle data change from event store."""
         self._refresh_events()
     
+    def _on_auto_refresh(self):
+        """Handle auto-refresh timer tick."""
+        self._refresh_events()
+    
     def _on_slot_double_clicked(self, dt: datetime):
         """Handle double-click on empty time slot to create event."""
         self._open_event_dialog(initial_datetime=dt)
@@ -483,6 +510,29 @@ class MainWindow(QMainWindow):
         """Handle event deleted."""
         self._refresh_events()
         self._statusbar.showMessage(f"Event '{event.summary}' deleted", 3000)
+    
+    def _on_edit_config(self):
+        """Open the configuration file with the system default application."""
+        import subprocess
+        config_path = Config.get_default_config_path()
+        
+        if not config_path.exists():
+            QMessageBox.warning(
+                self,
+                "Config Not Found",
+                f"Configuration file not found at:\n{config_path}\n\nPlease create the file first."
+            )
+            return
+        
+        try:
+            subprocess.Popen(["xdg-open", str(config_path)])
+            self._statusbar.showMessage(f"Opened config: {config_path}", 3000)
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Could not open config file:\n{e}"
+            )
     
     def closeEvent(self, event: QCloseEvent):
         """Handle window close."""

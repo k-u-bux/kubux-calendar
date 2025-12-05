@@ -1,12 +1,13 @@
 """
 Configuration parser for Kubux Calendar.
 
-Handles INI file parsing and secure password retrieval via external programs.
+Handles TOML file parsing and secure password retrieval via external programs.
 """
 
-import configparser
+import tomllib
 import subprocess
 import os
+import sys
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
@@ -60,6 +61,7 @@ class Config:
     
     password_program: str
     state_file: Path
+    refresh_interval: int = 300  # Auto-refresh interval in seconds (0 to disable)
     nextcloud_accounts: list[NextcloudAccount] = field(default_factory=list)
     ics_subscriptions: list[ICSSubscription] = field(default_factory=list)
     
@@ -67,7 +69,7 @@ class Config:
     def get_default_config_path(cls) -> Path:
         """Get the default configuration file path."""
         xdg_config = os.environ.get('XDG_CONFIG_HOME', os.path.expanduser('~/.config'))
-        return Path(xdg_config) / 'kubux-calendar' / 'kubux-calendar.ini'
+        return Path(xdg_config) / 'kubux-calendar' / 'kubux-calendar.toml'
     
     @classmethod
     def get_default_state_path(cls) -> Path:
@@ -77,99 +79,111 @@ class Config:
     
     @classmethod
     def load(cls, config_path: Optional[Path] = None) -> 'Config':
-        """Load configuration from INI file."""
+        """Load configuration from TOML file."""
         if config_path is None:
             config_path = cls.get_default_config_path()
         
         if not config_path.exists():
             raise FileNotFoundError(f"Configuration file not found: {config_path}")
         
-        parser = configparser.ConfigParser()
-        parser.read(config_path)
+        with open(config_path, 'rb') as f:
+            data = tomllib.load(f)
         
         # Parse General section
-        general = parser['General'] if 'General' in parser else {}
-        password_program = general.get('password_program', '/usr/bin/pass').strip('"\'')
+        general = data.get('General', {})
+        password_program = general.get('password_program', '/usr/bin/pass')
+        refresh_interval = general.get('refresh_interval', 300)  # Default 5 minutes
         
         state_file_str = general.get('state_file', str(cls.get_default_state_path()))
-        state_file = Path(os.path.expanduser(state_file_str.strip('"\'')))
+        state_file = Path(os.path.expanduser(state_file_str))
         
         # Parse Nextcloud accounts
+        # Supports both [Nextcloud.AccountName] and [Nextcloud] with nested accounts
         nextcloud_accounts = []
-        for section in parser.sections():
-            if section.startswith('Nextcloud.'):
-                account_name = section.split('.', 1)[1]
-                nc_config = parser[section]
-                
+        print(f"DEBUG: TOML data keys: {list(data.keys())}", file=sys.stderr)
+        for key, value in data.items():
+            print(f"DEBUG: Checking key '{key}' (type={type(value).__name__})", file=sys.stderr)
+            
+            # Format 1: [Nextcloud.AccountName]
+            if key.startswith('Nextcloud.') and isinstance(value, dict):
+                account_name = key.split('.', 1)[1]
+                print(f"DEBUG: Found Nextcloud account (dot format): {account_name}", file=sys.stderr)
+                print(f"DEBUG:   url={value.get('url', '')}", file=sys.stderr)
+                print(f"DEBUG:   username={value.get('username', '')}", file=sys.stderr)
+                print(f"DEBUG:   password_key={value.get('password_key', '')}", file=sys.stderr)
                 account = NextcloudAccount(
                     name=account_name,
-                    url=nc_config.get('url', '').strip('"\''),
-                    username=nc_config.get('username', '').strip('"\''),
-                    password_key=nc_config.get('password_key', '').strip('"\''),
-                    color=nc_config.get('color', '#4285f4').strip('"\'')
+                    url=value.get('url', ''),
+                    username=value.get('username', ''),
+                    password_key=value.get('password_key', ''),
+                    color=value.get('color', '#4285f4')
                 )
                 nextcloud_accounts.append(account)
+            
+            # Format 2: [Nextcloud] with nested [Nextcloud.AccountName] sub-tables
+            elif key == 'Nextcloud' and isinstance(value, dict):
+                print(f"DEBUG: Found Nextcloud root section, checking sub-accounts...", file=sys.stderr)
+                print(f"DEBUG:   Sub-keys: {list(value.keys())}", file=sys.stderr)
+                for sub_key, sub_value in value.items():
+                    print(f"DEBUG:   Sub-key '{sub_key}' (type={type(sub_value).__name__})", file=sys.stderr)
+                    if isinstance(sub_value, dict):
+                        account_name = sub_key
+                        print(f"DEBUG: Found Nextcloud account (nested format): {account_name}", file=sys.stderr)
+                        print(f"DEBUG:     url={sub_value.get('url', '')}", file=sys.stderr)
+                        print(f"DEBUG:     username={sub_value.get('username', '')}", file=sys.stderr)
+                        print(f"DEBUG:     password_key={sub_value.get('password_key', '')}", file=sys.stderr)
+                        account = NextcloudAccount(
+                            name=account_name,
+                            url=sub_value.get('url', ''),
+                            username=sub_value.get('username', ''),
+                            password_key=sub_value.get('password_key', ''),
+                            color=sub_value.get('color', '#4285f4')
+                        )
+                        nextcloud_accounts.append(account)
+        
+        print(f"DEBUG: Total Nextcloud accounts found: {len(nextcloud_accounts)}", file=sys.stderr)
         
         # Parse ICS subscriptions
+        # Supports both [Subscription.Name] and [Subscription] with nested sub-tables
         ics_subscriptions = []
-        for section in parser.sections():
-            if section.startswith('Subscription.'):
-                sub_id = section.split('.', 1)[1]
-                sub_config = parser[section]
-                
+        for key, value in data.items():
+            # Format 1: [Subscription.Name]
+            if key.startswith('Subscription.') and isinstance(value, dict):
+                sub_id = key.split('.', 1)[1]
+                print(f"DEBUG: Found ICS subscription (dot format): {sub_id}", file=sys.stderr)
                 subscription = ICSSubscription(
-                    name=sub_config.get('name', sub_id).strip('"\''),
-                    url=sub_config.get('url', '').strip('"\''),
-                    color=sub_config.get('color', '#34a853').strip('"\'')
+                    name=value.get('name', sub_id),
+                    url=value.get('url', ''),
+                    color=value.get('color', '#34a853')
                 )
                 ics_subscriptions.append(subscription)
+            
+            # Format 2: [Subscription] with nested [Subscription.Name] sub-tables
+            elif key == 'Subscription' and isinstance(value, dict):
+                print(f"DEBUG: Found Subscription root section, checking sub-subscriptions...", file=sys.stderr)
+                print(f"DEBUG:   Sub-keys: {list(value.keys())}", file=sys.stderr)
+                for sub_key, sub_value in value.items():
+                    if isinstance(sub_value, dict):
+                        sub_id = sub_key
+                        print(f"DEBUG: Found ICS subscription (nested format): {sub_id}", file=sys.stderr)
+                        print(f"DEBUG:     url={sub_value.get('url', '')}", file=sys.stderr)
+                        print(f"DEBUG:     name={sub_value.get('name', sub_id)}", file=sys.stderr)
+                        subscription = ICSSubscription(
+                            name=sub_value.get('name', sub_id),
+                            url=sub_value.get('url', ''),
+                            color=sub_value.get('color', '#34a853')
+                        )
+                        ics_subscriptions.append(subscription)
+        
+        print(f"DEBUG: Total ICS subscriptions found: {len(ics_subscriptions)}", file=sys.stderr)
         
         return cls(
             password_program=password_program,
             state_file=state_file,
+            refresh_interval=refresh_interval,
             nextcloud_accounts=nextcloud_accounts,
             ics_subscriptions=ics_subscriptions
         )
-    
-    def save(self, config_path: Optional[Path] = None) -> None:
-        """Save configuration to INI file."""
-        if config_path is None:
-            config_path = self.get_default_config_path()
-        
-        # Ensure directory exists
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        parser = configparser.ConfigParser()
-        
-        # General section
-        parser['General'] = {
-            'password_program': self.password_program,
-            'state_file': str(self.state_file)
-        }
-        
-        # Nextcloud accounts
-        for account in self.nextcloud_accounts:
-            section = f'Nextcloud.{account.name}'
-            parser[section] = {
-                'url': account.url,
-                'username': account.username,
-                'password_key': account.password_key,
-                'color': account.color
-            }
-        
-        # ICS subscriptions
-        for i, sub in enumerate(self.ics_subscriptions):
-            # Create a valid section name from the subscription name
-            section_name = sub.name.replace(' ', '_').replace('.', '_')
-            section = f'Subscription.{section_name}'
-            parser[section] = {
-                'url': sub.url,
-                'name': sub.name,
-                'color': sub.color
-            }
-        
-        with open(config_path, 'w') as f:
-            parser.write(f)
 
 
 # Colors palette for auto-assignment to calendars
