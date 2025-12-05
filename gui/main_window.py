@@ -24,7 +24,7 @@ from backend.config import Config
 from backend.event_store import EventStore, CalendarSource, Event
 from backend.caldav_client import EventData
 
-from .widgets.calendar_widget import CalendarWidget, ViewType
+from .widgets.calendar_widget import CalendarWidget, ViewType, set_layout_config
 from .event_dialog import EventDialog
 
 
@@ -183,6 +183,13 @@ class MainWindow(QMainWindow):
     def __init__(self, config: Config, parent=None):
         super().__init__(parent)
         self.config = config
+        
+        # Set layout config for calendar widget BEFORE creating UI
+        set_layout_config(config.layout)
+        
+        # Apply interface font to the application
+        interface_font = QFont(config.layout.interface_font, config.layout.interface_font_size)
+        QApplication.instance().setFont(interface_font)
         
         # Initialize event store
         self.event_store = EventStore(config)

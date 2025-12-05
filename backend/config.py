@@ -56,12 +56,23 @@ class ICSSubscription:
 
 
 @dataclass
+class LayoutConfig:
+    """Configuration for UI layout and fonts."""
+    interface_font: str = "Sans"
+    interface_font_size: int = 12
+    text_font: str = "Sans"
+    text_font_size: int = 12
+    hour_height: int = 60  # Height of an hour slot in day/week view in pixels
+
+
+@dataclass
 class Config:
     """Main configuration container for Kubux Calendar."""
     
     password_program: str
     state_file: Path
     refresh_interval: int = 300  # Auto-refresh interval in seconds (0 to disable)
+    layout: LayoutConfig = field(default_factory=LayoutConfig)
     nextcloud_accounts: list[NextcloudAccount] = field(default_factory=list)
     ics_subscriptions: list[ICSSubscription] = field(default_factory=list)
     
@@ -177,10 +188,21 @@ class Config:
         
         print(f"DEBUG: Total ICS subscriptions found: {len(ics_subscriptions)}", file=sys.stderr)
         
+        # Parse Layout section
+        layout_data = data.get('Layout', {})
+        layout = LayoutConfig(
+            interface_font=layout_data.get('interface_font', 'Sans'),
+            interface_font_size=layout_data.get('interface_font_size', 12),
+            text_font=layout_data.get('text_font', 'Sans'),
+            text_font_size=layout_data.get('text_font_size', 12),
+            hour_height=layout_data.get('hour_height', 60)
+        )
+        
         return cls(
             password_program=password_program,
             state_file=state_file,
             refresh_interval=refresh_interval,
+            layout=layout,
             nextcloud_accounts=nextcloud_accounts,
             ics_subscriptions=ics_subscriptions
         )

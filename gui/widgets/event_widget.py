@@ -10,10 +10,25 @@ from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout,
     QFrame, QSizePolicy
 )
-from PySide6.QtCore import Qt, Signal, QSize
-from PySide6.QtGui import QColor, QPalette, QFont, QMouseEvent
+from PySide6.QtCore import Qt, Signal, QSize, QPointF
+from PySide6.QtGui import QColor, QPalette, QFont, QMouseEvent, QPainter, QPolygonF, QBrush, QPen, QFontMetrics
 
 from backend.caldav_client import EventData
+from backend.config import LayoutConfig
+
+# Module-level layout config (set by MainWindow at startup via calendar_widget)
+_layout_config: LayoutConfig = LayoutConfig()
+
+
+def set_event_layout_config(config: LayoutConfig):
+    """Set the layout configuration for event widgets."""
+    global _layout_config
+    _layout_config = config
+
+
+def get_text_font() -> QFont:
+    """Get the configured text font for events."""
+    return QFont(_layout_config.text_font, _layout_config.text_font_size)
 
 # Get local timezone offset dynamically
 import time as _time
@@ -119,6 +134,9 @@ class EventWidget(QFrame):
     
     def _setup_ui(self) -> None:
         """Set up the widget UI."""
+        # Apply text font to this widget and its children
+        self.setFont(get_text_font())
+        
         if self.compact:
             self._setup_compact_ui()
         else:
@@ -176,19 +194,22 @@ class EventWidget(QFrame):
         layout.setSpacing(0)
         layout.setAlignment(Qt.AlignTop)
         
+        # Get the text font for events
+        text_font = get_text_font()
+        
         # Title (with optional indicators) - convert line breaks to spaces
         title_text = self._sanitize_text(self.event_data.summary)
         if self.event_data.is_recurring:
             title_text = "🔄 " + title_text
-        if self.event_data.read_only:
-            title_text = "🔒 " + title_text
+        # Read-only indicator is rendered as corner triangle in paintEvent
         
         title_label = QLabel(title_text)
         title_label.setWordWrap(False)  # Single line, no wrapping
         title_label.setTextFormat(Qt.PlainText)
-        font = title_label.font()
-        font.setBold(True)
-        title_label.setFont(font)
+        # Apply text font with bold
+        title_font = QFont(text_font)
+        title_font.setBold(True)
+        title_label.setFont(title_font)
         layout.addWidget(title_label)
         
         # Location (if present and show_location is True)
@@ -197,6 +218,7 @@ class EventWidget(QFrame):
             location_label = QLabel(location_text)
             location_label.setWordWrap(False)  # Single line, no wrapping
             location_label.setTextFormat(Qt.PlainText)
+            location_label.setFont(text_font)
             layout.addWidget(location_label)
     
     def _setup_full_ui(self) -> None:
@@ -204,6 +226,9 @@ class EventWidget(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 4, 6, 4)
         layout.setSpacing(2)
+        
+        # Get the text font for events
+        text_font = get_text_font()
         
         # Header row with time and indicators
         header_layout = QHBoxLayout()
@@ -215,9 +240,11 @@ class EventWidget(QFrame):
             local_end = to_local_datetime(self.event_data.end)
             time_text = f"{local_start.strftime('%H:%M')} - {local_end.strftime('%H:%M')}"
             time_label = QLabel(time_text)
+            time_label.setFont(text_font)
             header_layout.addWidget(time_label)
         elif self.event_data.all_day:
             all_day_label = QLabel("All day")
+            all_day_label.setFont(text_font)
             header_layout.addWidget(all_day_label)
         
         header_layout.addStretch()
@@ -228,29 +255,28 @@ class EventWidget(QFrame):
             recur_label.setToolTip("Recurring event")
             header_layout.addWidget(recur_label)
         
-        if self.event_data.read_only:
-            readonly_label = QLabel("🔒")
-            readonly_label.setToolTip("Read-only (from subscription)")
-            header_layout.addWidget(readonly_label)
+        # Read-only indicator is rendered as corner triangle in paintEvent
         
         layout.addLayout(header_layout)
         
         # Title
         title_label = QLabel(self.event_data.summary)
-        font = title_label.font()
-        font.setBold(True)
-        title_label.setFont(font)
+        title_font = QFont(text_font)
+        title_font.setBold(True)
+        title_label.setFont(title_font)
         title_label.setWordWrap(True)
         layout.addWidget(title_label)
         
         # Location (if present)
         if self.event_data.location:
             location_label = QLabel(f"📍 {self.event_data.location}")
+            location_label.setFont(text_font)
             location_label.setWordWrap(True)
             layout.addWidget(location_label)
         
         # Calendar name
         cal_label = QLabel(self.event_data.calendar_name)
+        cal_label.setFont(text_font)
         cal_label.setStyleSheet("color: rgba(0, 0, 0, 0.6);")
         layout.addWidget(cal_label)
     
@@ -308,6 +334,38 @@ class EventWidget(QFrame):
             return QSize(50, 20)
         else:
             return QSize(80, 40)
+    
+    def paintEvent(self, event) -> None:
+        """Override paintEvent to draw read-only indicator triangle."""
+        super().paintEvent(event)
+        
+        if self.event_data.read_only:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.Antialiasing)
+            
+            # Calculate triangle size based on font height (half a line)
+            fm = QFontMetrics(self.font())
+            triangle_size = fm.height() // 2
+            
+            # Triangle position: bottom-right corner
+            w = self.width()
+            h = self.height()
+            
+            # Triangle points: bottom-right corner, going up and left
+            points = QPolygonF([
+                QPointF(w, h),                              # Bottom-right corner
+                QPointF(w - triangle_size, h),              # Left along bottom
+                QPointF(w, h - triangle_size)               # Up along right edge
+            ])
+            
+            # Determine triangle color based on background luminance
+            bg_color = lighten_color(self.event_data.calendar_color, 0.4)
+            triangle_color = get_contrasting_text_color(bg_color)
+            
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(QColor(triangle_color)))
+            painter.drawPolygon(points)
+            painter.end()
 
 
 class AllDayEventWidget(EventWidget):

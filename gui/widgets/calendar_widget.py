@@ -14,7 +14,34 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QFontMetrics, QMouseEvent
 
 from backend.caldav_client import EventData
-from .event_widget import EventWidget
+from backend.config import LayoutConfig
+from .event_widget import EventWidget, set_event_layout_config
+
+# Module-level layout config (set by MainWindow at startup)
+_layout_config: LayoutConfig = LayoutConfig()
+
+# Module-level hour height (updated when layout config is set)
+HOUR_HEIGHT = 60  # Default value
+
+
+def set_layout_config(config: LayoutConfig):
+    """Set the layout configuration for this module and event widget."""
+    global _layout_config, HOUR_HEIGHT
+    _layout_config = config
+    HOUR_HEIGHT = config.hour_height
+    # Also set for event widgets
+    set_event_layout_config(config)
+
+
+def get_hour_height() -> int:
+    """Get the configured hour height in pixels."""
+    return HOUR_HEIGHT
+
+
+def get_text_font() -> tuple[str, int]:
+    """Get the configured text font name and size."""
+    return (_layout_config.text_font, _layout_config.text_font_size)
+
 
 # Get local timezone offset dynamically
 import time as _time
@@ -52,9 +79,6 @@ class ViewType(Enum):
     DAY = "day"
     WEEK = "week"
     MONTH = "month"
-
-
-HOUR_HEIGHT = 60  # pixels per hour
 
 
 def _get_single_line_event_height() -> int:
