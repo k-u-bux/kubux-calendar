@@ -95,6 +95,7 @@ class EventWidget(QFrame):
         event_data: EventData,
         compact: bool = False,
         show_time: bool = True,
+        show_location: bool = True,
         parent: QWidget = None
     ):
         """
@@ -104,12 +105,14 @@ class EventWidget(QFrame):
             event_data: The event data to display
             compact: If True, use a compact single-line layout
             show_time: If True, show the event time
+            show_location: If True, show the location (if present)
             parent: Parent widget
         """
         super().__init__(parent)
         self.event_data = event_data
         self.compact = compact
         self.show_time = show_time
+        self.show_location = show_location
         
         self._setup_ui()
         self._apply_style()
@@ -160,7 +163,7 @@ class EventWidget(QFrame):
         self.setToolTip("<br>".join(lines))
     
     def _setup_compact_ui(self) -> None:
-        """Set up a compact layout with title and location, top-aligned."""
+        """Set up a compact layout with title and optionally location, top-aligned."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 2, 4, 2)
         layout.setSpacing(0)
@@ -181,8 +184,8 @@ class EventWidget(QFrame):
         title_label.setFont(font)
         layout.addWidget(title_label)
         
-        # Location (if present)
-        if self.event_data.location:
+        # Location (if present and show_location is True)
+        if self.show_location and self.event_data.location:
             location_label = QLabel(self.event_data.location)
             location_label.setWordWrap(True)
             location_label.setTextFormat(Qt.PlainText)
@@ -305,7 +308,11 @@ class AllDayEventWidget(EventWidget):
     
     def __init__(self, event_data: EventData, parent: QWidget = None):
         super().__init__(event_data, compact=True, show_time=False, parent=parent)
-        self.setMaximumHeight(22)
+        # Set height based on font metrics (1 line + padding)
+        from PySide6.QtGui import QFontMetrics
+        fm = QFontMetrics(self.font())
+        line_height = fm.height()
+        self.setMaximumHeight(line_height + 8)  # 8px padding
     
     def _apply_style(self) -> None:
         """Apply styling for all-day events."""

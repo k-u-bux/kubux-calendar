@@ -55,7 +55,13 @@ class ViewType(Enum):
 
 
 HOUR_HEIGHT = 60  # pixels per hour
-ALL_DAY_EVENT_HEIGHT = 22  # pixels per all-day event
+
+
+def _get_single_line_event_height() -> int:
+    """Calculate height for a single-line event based on font metrics."""
+    sample_label = QLabel("Sample")
+    fm = QFontMetrics(sample_label.font())
+    return fm.height() + 8  # font height + padding
 
 
 def is_all_day_event(event: 'EventData') -> bool:
@@ -92,7 +98,8 @@ class AllDayEventCell(QWidget):
     def add_event(self, event: EventData):
         self._events.append(event)
         widget = EventWidget(event, compact=True, show_time=False, parent=self)
-        widget.setFixedHeight(ALL_DAY_EVENT_HEIGHT - 4)
+        event_height = _get_single_line_event_height()
+        widget.setFixedHeight(event_height - 4)
         widget.clicked.connect(self.event_clicked.emit)
         widget.double_clicked.connect(self.event_double_clicked.emit)
         self._layout.addWidget(widget)
@@ -154,7 +161,8 @@ class AllDayEventsRow(QWidget):
             self.setFixedHeight(0)
             self.hide()
         else:
-            height = max_events * ALL_DAY_EVENT_HEIGHT + 4
+            event_height = _get_single_line_event_height()
+            height = max_events * event_height + 4
             self.setFixedHeight(height)
             self.show()
 
@@ -538,9 +546,13 @@ class WeekView(QWidget):
         time_col_width = _get_time_column_width()
         
         # Header with day names
+        # Account for scrollbar width on the right (typically ~16px on most systems)
+        from PySide6.QtWidgets import QApplication, QStyle
+        scrollbar_width = QApplication.style().pixelMetric(QStyle.PM_ScrollBarExtent)
+        
         header = QWidget()
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(time_col_width, 0, 0, 0)  # Match time column width
+        header_layout.setContentsMargins(time_col_width, 0, scrollbar_width, 0)  # Match time column + scrollbar
         header_layout.setSpacing(1)
         
         self._header_labels = []
@@ -750,8 +762,10 @@ class MonthDayCell(QFrame):
         self.clear_events()
     
     def add_event(self, event: EventData):
-        widget = EventWidget(event, compact=True, show_time=False)
-        widget.setMaximumHeight(20)
+        # Month view: title only, no location
+        widget = EventWidget(event, compact=True, show_time=False, show_location=False)
+        event_height = _get_single_line_event_height()
+        widget.setMaximumHeight(event_height)
         widget.clicked.connect(self.event_clicked.emit)
         widget.double_clicked.connect(self.event_double_clicked.emit)
         self._events_layout.addWidget(widget)
@@ -813,6 +827,10 @@ class MonthView(QWidget):
         self._grid_layout = QGridLayout(grid_widget)
         self._grid_layout.setContentsMargins(0, 0, 0, 0)
         self._grid_layout.setSpacing(1)
+        
+        # Set equal column stretch for all 7 days
+        for col in range(7):
+            self._grid_layout.setColumnStretch(col, 1)
         
         for row in range(6):
             for col in range(7):
