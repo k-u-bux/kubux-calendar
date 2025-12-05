@@ -53,6 +53,9 @@
             makeWrapper ${pythonEnv}/bin/python $out/bin/kubux-calendar \
               --add-flags "$out/lib/kubux-calendar/kubux_calendar.py" \
               --set PYTHONPATH "$out/lib/kubux-calendar"
+
+            # Copy desktop file
+            cp kubux-calendar.desktop $out/share/applications/
           '';
 
           meta = with pkgs.lib; {
