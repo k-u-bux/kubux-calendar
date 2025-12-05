@@ -238,17 +238,27 @@ class CalDAVClient:
                 end = pytz.UTC.localize(end)
             
             # Fetch events from CalDAV
+            # We use expand=False to get raw events, then expand recurring events client-side
+            # This is more reliable for complex RRULE patterns like BYDAY=MO,TH
             caldav_events = calendar._caldav_calendar.date_search(
                 start=start,
                 end=end,
-                expand=expand_recurring
+                expand=False
             )
             
             for caldav_event in caldav_events:
                 try:
                     event_data = self._parse_caldav_event(caldav_event, calendar)
                     if event_data:
-                        events.append(event_data)
+                        # If event has recurrence and we want expansion, expand it client-side
+                        if expand_recurring and event_data.recurrence:
+                            expanded = self._expand_recurring_event(
+                                event_data, start, end
+                            )
+                            events.extend(expanded)
+                        else:
+                            # Non-recurring event or expansion disabled
+                            events.append(event_data)
                 except Exception as e:
                     print(f"Error parsing event: {e}")
                     continue
@@ -257,6 +267,119 @@ class CalDAVClient:
             print(f"Error fetching events: {e}")
         
         return events
+    
+    def _expand_recurring_event(
+        self,
+        event: EventData,
+        query_start: datetime,
+        query_end: datetime
+    ) -> list[EventData]:
+        """
+        Expand a recurring event into instances within the query range.
+        
+        Uses dateutil.rrule for proper handling of complex patterns like BYDAY=MO,TH.
+        
+        Args:
+            event: The recurring event to expand
+            query_start: Start of query range
+            query_end: End of query range
+        
+        Returns:
+            List of EventData instances within the range.
+        """
+        if not event.recurrence:
+            return [event]
+        
+        expanded_events = []
+        duration = event.duration
+        
+        try:
+            from dateutil.rrule import rrulestr, rrule, DAILY, WEEKLY, MONTHLY, YEARLY
+            
+            # Build RRULE string from our RecurrenceRule object
+            rrule_parts = [f"FREQ={event.recurrence.frequency}"]
+            
+            if event.recurrence.interval and event.recurrence.interval != 1:
+                rrule_parts.append(f"INTERVAL={event.recurrence.interval}")
+            
+            if event.recurrence.count:
+                rrule_parts.append(f"COUNT={event.recurrence.count}")
+            
+            if event.recurrence.until:
+                until = event.recurrence.until
+                if isinstance(until, datetime):
+                    rrule_parts.append(f"UNTIL={until.strftime('%Y%m%dT%H%M%SZ')}")
+                else:
+                    rrule_parts.append(f"UNTIL={until.strftime('%Y%m%d')}")
+            
+            if event.recurrence.by_day:
+                # Handle BYDAY - could be list or single value
+                by_day = event.recurrence.by_day
+                if isinstance(by_day, list):
+                    rrule_parts.append(f"BYDAY={','.join(str(d) for d in by_day)}")
+                else:
+                    rrule_parts.append(f"BYDAY={by_day}")
+            
+            if event.recurrence.by_month_day:
+                by_md = event.recurrence.by_month_day
+                if isinstance(by_md, list):
+                    rrule_parts.append(f"BYMONTHDAY={','.join(str(d) for d in by_md)}")
+                else:
+                    rrule_parts.append(f"BYMONTHDAY={by_md}")
+            
+            if event.recurrence.by_month:
+                by_m = event.recurrence.by_month
+                if isinstance(by_m, list):
+                    rrule_parts.append(f"BYMONTH={','.join(str(m) for m in by_m)}")
+                else:
+                    rrule_parts.append(f"BYMONTH={by_m}")
+            
+            rrule_str = ";".join(rrule_parts)
+            
+            # Parse with dateutil
+            rule = rrulestr(f"RRULE:{rrule_str}", dtstart=event.start)
+            
+            # Get instances within range (limit to prevent runaway)
+            instances = list(rule.between(query_start, query_end, inc=True))[:500]
+            
+            for instance_start in instances:
+                # Ensure timezone awareness
+                if instance_start.tzinfo is None:
+                    instance_start = pytz.UTC.localize(instance_start)
+                
+                instance_end = instance_start + duration
+                
+                # Create a new EventData for this instance
+                instance_event = EventData(
+                    uid=f"{event.uid}_{instance_start.isoformat()}",
+                    summary=event.summary,
+                    start=instance_start,
+                    end=instance_end,
+                    description=event.description,
+                    location=event.location,
+                    all_day=event.all_day,
+                    recurrence=event.recurrence,  # Keep the recurrence info for display
+                    recurrence_id=instance_start,
+                    calendar_id=event.calendar_id,
+                    calendar_name=event.calendar_name,
+                    calendar_color=event.calendar_color,
+                    source_type=event.source_type,
+                    read_only=event.read_only,
+                    _caldav_event=event._caldav_event,  # Keep reference to original
+                    _raw_ical=event._raw_ical
+                )
+                expanded_events.append(instance_event)
+        
+        except ImportError:
+            print("dateutil not available, returning original event")
+            expanded_events.append(event)
+        except Exception as e:
+            print(f"Error expanding recurring event '{event.summary}': {e}")
+            # If expansion fails, at least return the original event if it's in range
+            if event.end >= query_start and event.start <= query_end:
+                expanded_events.append(event)
+        
+        return expanded_events
     
     def _parse_caldav_event(
         self,
