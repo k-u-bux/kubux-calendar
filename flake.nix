@@ -42,7 +42,8 @@
             # Create directories
             mkdir -p $out/bin
             mkdir -p $out/lib/kubux-calendar
-            
+            mkdir -p  $out/share/applications
+
             # Copy all Python source files
             cp $src/kubux_calendar.py $out/lib/kubux-calendar/
             cp -r $src/backend $out/lib/kubux-calendar/
