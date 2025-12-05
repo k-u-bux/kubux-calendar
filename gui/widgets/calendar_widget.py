@@ -162,7 +162,7 @@ class AllDayEventsRow(QWidget):
 class DayColumnWidget(QWidget):
     """
     A single day column with absolute positioning for events.
-    Events span according to their duration.
+    Events span according to their duration. Overlapping events are placed side by side.
     """
     
     slot_clicked = Signal(datetime)
@@ -175,6 +175,7 @@ class DayColumnWidget(QWidget):
         self._date = for_date
         self._events: list[EventData] = []
         self._event_widgets: list[EventWidget] = []
+        self._event_layout: list[tuple[EventData, int, int]] = []  # (event, column, total_columns)
         self._setup_ui()
     
     def _setup_ui(self):
@@ -197,59 +198,152 @@ class DayColumnWidget(QWidget):
     
     def add_event(self, event: EventData):
         self._events.append(event)
-        self._add_event_widget(event)
     
-    def _add_event_widget(self, event: EventData):
-        widget = EventWidget(event, compact=True, parent=self)
-        widget.clicked.connect(self.event_clicked.emit)
-        widget.double_clicked.connect(self.event_double_clicked.emit)
+    def finalize_events(self):
+        """Call after all events are added to calculate layout and create widgets."""
+        self._calculate_layout()
+        self._create_event_widgets()
+    
+    def _events_overlap(self, e1: EventData, e2: EventData) -> bool:
+        """Check if two events overlap in time."""
+        s1 = to_local_hour(e1.start)
+        e1_end = to_local_hour(e1.end)
+        s2 = to_local_hour(e2.start)
+        e2_end = to_local_hour(e2.end)
+        # Ensure minimum duration
+        if e1_end <= s1:
+            e1_end = s1 + 0.5
+        if e2_end <= s2:
+            e2_end = s2 + 0.5
+        return s1 < e2_end and s2 < e1_end
+    
+    def _calculate_layout(self):
+        """Calculate column positions for overlapping events."""
+        if not self._events:
+            self._event_layout = []
+            return
         
-        # Calculate position based on time
-        start_hour = to_local_hour(event.start)
-        end_hour = to_local_hour(event.end)
+        # Sort events by start time, then by duration (longer first)
+        sorted_events = sorted(self._events, key=lambda e: (to_local_hour(e.start), -(to_local_hour(e.end) - to_local_hour(e.start))))
         
-        # Clamp to visible range
-        start_hour = max(0, min(24, start_hour))
-        end_hour = max(0, min(24, end_hour))
+        # Assign columns to events
+        # Each event gets (column_index, total_columns_in_group)
+        event_columns: dict[str, int] = {}  # event.uid -> column
+        event_groups: list[list[EventData]] = []  # groups of overlapping events
         
-        if end_hour <= start_hour:
-            end_hour = start_hour + 0.5  # Minimum 30 min display
+        # Build overlap groups
+        for event in sorted_events:
+            # Find which existing groups this event overlaps with
+            overlapping_groups = []
+            for i, group in enumerate(event_groups):
+                for group_event in group:
+                    if self._events_overlap(event, group_event):
+                        overlapping_groups.append(i)
+                        break
+            
+            if not overlapping_groups:
+                # Start a new group
+                event_groups.append([event])
+            elif len(overlapping_groups) == 1:
+                # Add to existing group
+                event_groups[overlapping_groups[0]].append(event)
+            else:
+                # Merge groups
+                merged = []
+                for i in sorted(overlapping_groups, reverse=True):
+                    merged.extend(event_groups.pop(i))
+                merged.append(event)
+                event_groups.append(merged)
         
-        y = int(start_hour * HOUR_HEIGHT)
-        height = int((end_hour - start_hour) * HOUR_HEIGHT)
-        height = max(height, 20)  # Minimum height
+        # Assign column numbers within each group
+        self._event_layout = []
+        for group in event_groups:
+            # Sort group by start time
+            group.sort(key=lambda e: to_local_hour(e.start))
+            
+            # Assign columns greedily
+            columns: list[float] = []  # end time of event in each column
+            event_col_map: dict[str, int] = {}
+            
+            for event in group:
+                start = to_local_hour(event.start)
+                end = to_local_hour(event.end)
+                if end <= start:
+                    end = start + 0.5
+                
+                # Find first column where this event fits
+                assigned = False
+                for col_idx, col_end in enumerate(columns):
+                    if start >= col_end:
+                        columns[col_idx] = end
+                        event_col_map[event.uid] = col_idx
+                        assigned = True
+                        break
+                
+                if not assigned:
+                    # Need a new column
+                    event_col_map[event.uid] = len(columns)
+                    columns.append(end)
+            
+            total_cols = len(columns)
+            for event in group:
+                col = event_col_map[event.uid]
+                self._event_layout.append((event, col, total_cols))
+    
+    def _create_event_widgets(self):
+        """Create and position event widgets based on calculated layout."""
+        for widget in self._event_widgets:
+            widget.deleteLater()
+        self._event_widgets.clear()
         
-        # Leave some margin
-        widget.setGeometry(2, y + 1, self.width() - 4, height - 2)
-        widget.show()
-        self._event_widgets.append(widget)
+        for event, col, total_cols in self._event_layout:
+            widget = EventWidget(event, compact=True, parent=self)
+            widget.clicked.connect(self.event_clicked.emit)
+            widget.double_clicked.connect(self.event_double_clicked.emit)
+            self._event_widgets.append(widget)
+            widget.show()
+        
+        self._position_event_widgets()
+    
+    def _position_event_widgets(self):
+        """Position all event widgets based on their layout."""
+        available_width = self.width() - 4  # Leave 2px margin on each side
+        
+        for widget, (event, col, total_cols) in zip(self._event_widgets, self._event_layout):
+            start_hour = to_local_hour(event.start)
+            end_hour = to_local_hour(event.end)
+            start_hour = max(0, min(24, start_hour))
+            end_hour = max(0, min(24, end_hour))
+            if end_hour <= start_hour:
+                end_hour = start_hour + 0.5
+            
+            y = int(start_hour * HOUR_HEIGHT)
+            height = max(int((end_hour - start_hour) * HOUR_HEIGHT), 20)
+            
+            # Calculate width and x position based on column
+            col_width = available_width // total_cols
+            x = 2 + col * col_width
+            width = col_width - 1  # 1px gap between columns
+            
+            widget.setGeometry(x, y + 1, width, height - 2)
     
     def clear_events(self):
         for widget in self._event_widgets:
             widget.deleteLater()
         self._event_widgets.clear()
         self._events.clear()
+        self._event_layout.clear()
     
     def _refresh_events(self):
         events = self._events.copy()
         self.clear_events()
-        for event in events:
-            self.add_event(event)
+        self._events = events
+        self._calculate_layout()
+        self._create_event_widgets()
     
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # Reposition all event widgets when column is resized
-        for widget in self._event_widgets:
-            ev = widget.event_data
-            start_hour = to_local_hour(ev.start)
-            end_hour = to_local_hour(ev.end)
-            start_hour = max(0, min(24, start_hour))
-            end_hour = max(0, min(24, end_hour))
-            if end_hour <= start_hour:
-                end_hour = start_hour + 0.5
-            y = int(start_hour * HOUR_HEIGHT)
-            height = max(int((end_hour - start_hour) * HOUR_HEIGHT), 20)
-            widget.setGeometry(2, y + 1, self.width() - 4, height - 2)
+        self._position_event_widgets()
     
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
@@ -409,6 +503,7 @@ class DayView(QWidget):
         # Add timed events
         for event in timed_events:
             self._day_column.add_event(event)
+        self._day_column.finalize_events()
     
     def get_date_range(self) -> tuple[datetime, datetime]:
         start = datetime.combine(self._date, dt_time.min)
@@ -583,6 +678,10 @@ class WeekView(QWidget):
         # Add all-day events to their respective day cells
         for day_idx, events in enumerate(all_day_by_day):
             self._all_day_row.set_events_for_day(day_idx, events)
+        
+        # Finalize event layouts for all day columns
+        for col in self._day_columns:
+            col.finalize_events()
         
         # Update the all-day row height (same height for all days, based on max)
         self._all_day_row.update_height()
