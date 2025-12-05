@@ -53,6 +53,10 @@ def local_to_utc(dt: datetime) -> datetime:
 class RecurrenceWidget(QGroupBox):
     """Widget for configuring event recurrence."""
     
+    # Day name abbreviations in RRULE format
+    DAY_CODES = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
+    DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    
     def __init__(self, parent=None):
         super().__init__("Recurrence", parent)
         self.setCheckable(True)
@@ -78,7 +82,29 @@ class RecurrenceWidget(QGroupBox):
         interval_layout.addStretch()
         layout.addRow("Every:", interval_layout)
         
+        # Week day checkboxes (shown only for weekly recurrence)
+        # Use a container for the entire row so we can hide label + checkboxes together
+        self._weekday_row = QWidget()
+        weekday_row_layout = QHBoxLayout(self._weekday_row)
+        weekday_row_layout.setContentsMargins(0, 0, 0, 0)
+        weekday_row_layout.setSpacing(8)
+        
+        weekday_label = QLabel("On days:")
+        weekday_row_layout.addWidget(weekday_label)
+        
+        self._weekday_checks: list[QCheckBox] = []
+        for i, label in enumerate(self.DAY_LABELS):
+            cb = QCheckBox(label)
+            cb.setToolTip(f"Repeat on {label}")
+            weekday_row_layout.addWidget(cb)
+            self._weekday_checks.append(cb)
+        weekday_row_layout.addStretch()
+        
+        layout.addRow(self._weekday_row)
+        self._weekday_row.hide()  # Hidden until "Weekly" is selected
+        
         self._freq_combo.currentIndexChanged.connect(self._update_interval_label)
+        self._freq_combo.currentIndexChanged.connect(self._update_weekday_visibility)
         
         # End condition
         self._end_combo = QComboBox()
@@ -103,6 +129,11 @@ class RecurrenceWidget(QGroupBox):
         labels = {"daily": "day(s)", "weekly": "week(s)", "monthly": "month(s)", "yearly": "year(s)"}
         self._interval_label.setText(labels.get(freq, "day(s)"))
     
+    def _update_weekday_visibility(self):
+        """Show/hide weekday row based on frequency selection."""
+        is_weekly = self._freq_combo.currentText() == "Weekly"
+        self._weekday_row.setVisible(is_weekly)
+    
     def _update_end_widget(self):
         index = self._end_combo.currentIndex()
         self._count_spin.setVisible(index == 1)
@@ -116,13 +147,25 @@ class RecurrenceWidget(QGroupBox):
         interval = self._interval_spin.value()
         count = None
         until = None
+        by_day = None
+        
+        # Get selected weekdays for weekly recurrence
+        if freq == "WEEKLY":
+            selected_days = []
+            for i, cb in enumerate(self._weekday_checks):
+                if cb.isChecked():
+                    selected_days.append(self.DAY_CODES[i])
+            if selected_days:
+                by_day = selected_days
+        
         end_index = self._end_combo.currentIndex()
         if end_index == 1:
             count = self._count_spin.value()
         elif end_index == 2:
             until_dt = self._until_edit.dateTime().toPython()
             until = pytz.UTC.localize(until_dt) if until_dt.tzinfo is None else until_dt
-        return RecurrenceRule(frequency=freq, interval=interval, count=count, until=until)
+        
+        return RecurrenceRule(frequency=freq, interval=interval, count=count, until=until, by_day=by_day)
     
     def set_recurrence(self, rule: Optional[RecurrenceRule]):
         if rule is None:
@@ -132,6 +175,21 @@ class RecurrenceWidget(QGroupBox):
         freq_map = {"DAILY": 0, "WEEKLY": 1, "MONTHLY": 2, "YEARLY": 3}
         self._freq_combo.setCurrentIndex(freq_map.get(rule.frequency, 0))
         self._interval_spin.setValue(rule.interval)
+        
+        # Set weekday checkboxes
+        for cb in self._weekday_checks:
+            cb.setChecked(False)
+        if rule.by_day:
+            for day_code in rule.by_day:
+                # Handle both string and potential vWeekday objects
+                day_str = str(day_code).upper()
+                # Strip any prefix numbers (like "1MO" for first Monday)
+                if len(day_str) > 2:
+                    day_str = day_str[-2:]
+                if day_str in self.DAY_CODES:
+                    idx = self.DAY_CODES.index(day_str)
+                    self._weekday_checks[idx].setChecked(True)
+        
         if rule.count:
             self._end_combo.setCurrentIndex(1)
             self._count_spin.setValue(rule.count)
