@@ -575,6 +575,7 @@ class WeekView(QWidget):
         scrollbar_width = QApplication.style().pixelMetric(QStyle.PM_ScrollBarExtent)
         
         header = QWidget()
+        header.setStyleSheet("background: #f5f5f5;")
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(time_col_width, 0, scrollbar_width, 0)  # Match time column + scrollbar
         header_layout.setSpacing(1)
@@ -597,6 +598,7 @@ class WeekView(QWidget):
         
         # Spacer to align with time column
         all_day_spacer = QWidget()
+        all_day_spacer.setStyleSheet("background: #f5f5f5;")
         all_day_spacer.setFixedWidth(time_col_width)
         all_day_layout.addWidget(all_day_spacer)
         
@@ -624,6 +626,7 @@ class WeekView(QWidget):
         time_widget = QWidget()
         time_widget.setFixedWidth(time_col_width)
         time_widget.setFixedHeight(24 * HOUR_HEIGHT)
+        time_widget.setStyleSheet(" background: #f5f5f5;")
         time_layout = QVBoxLayout(time_widget)
         time_layout.setContentsMargins(0, 0, 0, 0)
         time_layout.setSpacing(0)
@@ -675,7 +678,7 @@ class WeekView(QWidget):
         day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
         for i, label in enumerate(self._header_labels):
             d = self._start_date + timedelta(days=i)
-            label.setText(f"{day_names[i]}\n{d.day}")
+            label.setText(f"{day_names[i]} {d.day}")
             if d == date.today():
                 label.setStyleSheet("font-weight: bold; padding: 8px; background: #e3f2fd; color: #1976d2;")
             else:
