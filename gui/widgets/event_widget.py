@@ -126,22 +126,13 @@ class EventWidget(QFrame):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
     
     def _setup_compact_ui(self) -> None:
-        """Set up a compact single-line layout."""
-        layout = QHBoxLayout(self)
+        """Set up a compact layout with title and location, top-aligned."""
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 2, 4, 2)
-        layout.setSpacing(4)
+        layout.setSpacing(0)
+        layout.setAlignment(Qt.AlignTop)
         
-        # Time label (if showing time and not all-day)
-        if self.show_time and not self.event_data.all_day:
-            local_start = to_local_datetime(self.event_data.start)
-            time_text = local_start.strftime("%H:%M")
-            time_label = QLabel(time_text)
-            font = time_label.font()
-            font.setBold(True)
-            time_label.setFont(font)
-            layout.addWidget(time_label)
-        
-        # Title
+        # Title (with optional indicators)
         title_text = self.event_data.summary
         if self.event_data.is_recurring:
             title_text = "🔄 " + title_text
@@ -149,9 +140,19 @@ class EventWidget(QFrame):
             title_text = "🔒 " + title_text
         
         title_label = QLabel(title_text)
-        title_label.setWordWrap(False)
+        title_label.setWordWrap(True)
         title_label.setTextFormat(Qt.PlainText)
-        layout.addWidget(title_label, 1)
+        font = title_label.font()
+        font.setBold(True)
+        title_label.setFont(font)
+        layout.addWidget(title_label)
+        
+        # Location (if present)
+        if self.event_data.location:
+            location_label = QLabel(self.event_data.location)
+            location_label.setWordWrap(True)
+            location_label.setTextFormat(Qt.PlainText)
+            layout.addWidget(location_label)
     
     def _setup_full_ui(self) -> None:
         """Set up a full multi-line layout."""
