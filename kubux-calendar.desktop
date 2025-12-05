@@ -2,7 +2,7 @@
 Name=Kubux Calendar
 Comment=A simple desktop calendar for CalDav and ICS subscriptions
 Exec=kubux-calendar
-Icon=calendar
+Icon=office-calendar
 Terminal=false
 Type=Application
 Categories=Office;Calendar;
