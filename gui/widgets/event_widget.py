@@ -124,6 +124,40 @@ class EventWidget(QFrame):
         self.setFrameStyle(QFrame.StyledPanel | QFrame.Plain)
         self.setCursor(Qt.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        
+        # Set tooltip with full event info
+        self._setup_tooltip()
+    
+    def _setup_tooltip(self) -> None:
+        """Set up the tooltip with full event information."""
+        lines = []
+        
+        # Title
+        lines.append(f"<b>{self.event_data.summary}</b>")
+        
+        # Time
+        if self.event_data.all_day:
+            lines.append("All day")
+        else:
+            local_start = to_local_datetime(self.event_data.start)
+            local_end = to_local_datetime(self.event_data.end)
+            lines.append(f"{local_start.strftime('%H:%M')} - {local_end.strftime('%H:%M')}")
+        
+        # Location
+        if self.event_data.location:
+            lines.append(f"📍 {self.event_data.location}")
+        
+        # Calendar
+        lines.append(f"<i>{self.event_data.calendar_name}</i>")
+        
+        # Description (truncate if too long)
+        if self.event_data.description:
+            desc = self.event_data.description
+            if len(desc) > 200:
+                desc = desc[:200] + "..."
+            lines.append(f"<br>{desc}")
+        
+        self.setToolTip("<br>".join(lines))
     
     def _setup_compact_ui(self) -> None:
         """Set up a compact layout with title and location, top-aligned."""
