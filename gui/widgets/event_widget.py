@@ -277,6 +277,9 @@ class EventWidget(QFrame):
             QLabel {{
                 color: {text_color};
                 background: transparent;
+                border: none;
+                padding: 0px;
+                margin: 0px;
             }}
         """)
     
