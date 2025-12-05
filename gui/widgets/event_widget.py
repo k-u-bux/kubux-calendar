@@ -131,6 +131,13 @@ class EventWidget(QFrame):
         # Set tooltip with full event info
         self._setup_tooltip()
     
+    def _sanitize_text(self, text: str) -> str:
+        """Convert line breaks to spaces for single-line display."""
+        if not text:
+            return text
+        # Replace various line break types with a single space
+        return ' '.join(text.split())
+    
     def _setup_tooltip(self) -> None:
         """Set up the tooltip with full event information."""
         lines = []
@@ -169,15 +176,15 @@ class EventWidget(QFrame):
         layout.setSpacing(0)
         layout.setAlignment(Qt.AlignTop)
         
-        # Title (with optional indicators)
-        title_text = self.event_data.summary
+        # Title (with optional indicators) - convert line breaks to spaces
+        title_text = self._sanitize_text(self.event_data.summary)
         if self.event_data.is_recurring:
             title_text = "🔄 " + title_text
         if self.event_data.read_only:
             title_text = "🔒 " + title_text
         
         title_label = QLabel(title_text)
-        title_label.setWordWrap(True)
+        title_label.setWordWrap(False)  # Single line, no wrapping
         title_label.setTextFormat(Qt.PlainText)
         font = title_label.font()
         font.setBold(True)
@@ -186,8 +193,9 @@ class EventWidget(QFrame):
         
         # Location (if present and show_location is True)
         if self.show_location and self.event_data.location:
-            location_label = QLabel(self.event_data.location)
-            location_label.setWordWrap(True)
+            location_text = self._sanitize_text(self.event_data.location)
+            location_label = QLabel(location_text)
+            location_label.setWordWrap(False)  # Single line, no wrapping
             location_label.setTextFormat(Qt.PlainText)
             layout.addWidget(location_label)
     
