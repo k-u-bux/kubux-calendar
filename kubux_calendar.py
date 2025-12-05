@@ -58,9 +58,8 @@ def main():
         config = Config.load(args.config)
     except FileNotFoundError as e:
         print(f"Error: {e}")
-        print("\nPlease create a configuration file at one of these locations:")
-        print(f"  - {Config.get_default_config_path()}")
-        print("  - ./kubux-calendar.ini")
+        print(f"\nPlease create a configuration file at:")
+        print(f"  {Config.get_default_config_path()}")
         print("\nExample configuration:")
         print("""
 [General]

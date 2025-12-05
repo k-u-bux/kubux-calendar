@@ -66,20 +66,8 @@ class Config:
     @classmethod
     def get_default_config_path(cls) -> Path:
         """Get the default configuration file path."""
-        # Check XDG config first, then fall back to current directory
         xdg_config = os.environ.get('XDG_CONFIG_HOME', os.path.expanduser('~/.config'))
-        xdg_path = Path(xdg_config) / 'kubux-calendar' / 'kubux-calendar.ini'
-        
-        if xdg_path.exists():
-            return xdg_path
-        
-        # Check current directory
-        local_path = Path('kubux-calendar.ini')
-        if local_path.exists():
-            return local_path
-        
-        # Return XDG path as default (even if it doesn't exist yet)
-        return xdg_path
+        return Path(xdg_config) / 'kubux-calendar' / 'kubux-calendar.ini'
     
     @classmethod
     def get_default_state_path(cls) -> Path:
