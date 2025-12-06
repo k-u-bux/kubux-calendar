@@ -17,8 +17,8 @@ from PySide6.QtWidgets import (
     QSplitter, QStatusBar, QMessageBox, QApplication,
     QColorDialog, QSizePolicy
 )
-from PySide6.QtCore import Qt, QTimer, QSettings, Signal
-from PySide6.QtGui import QAction, QIcon, QCloseEvent, QFont
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QIcon, QCloseEvent, QFont, QKeySequence, QShortcut
 
 from backend.config import Config
 from backend.event_store import EventStore, CalendarSource, Event
@@ -198,8 +198,9 @@ class MainWindow(QMainWindow):
         # Track open event dialogs
         self._event_dialogs: list[EventDialog] = []
         
-        # Settings for persistence
-        self._settings = QSettings("kubux", "kubux-calendar")
+        # State file for persistence (using JSON, not QSettings)
+        self._state_file = config.state_file
+        self._ui_state: dict = {}
         
         # Auto-refresh timer
         self._auto_refresh_timer = QTimer(self)
@@ -208,6 +209,7 @@ class MainWindow(QMainWindow):
         self._setup_window()
         self._setup_ui()
         self._setup_toolbar()
+        self._setup_shortcuts()
         self._setup_statusbar()
         
         # Load state and initialize
@@ -224,12 +226,26 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Kubux Calendar")
         self.setMinimumSize(800, 600)
         
+        # Load UI state from JSON file
+        self._load_ui_state()
+        
         # Restore window geometry
-        geometry = self._settings.value("geometry")
+        geometry = self._ui_state.get("geometry")
         if geometry:
-            self.restoreGeometry(geometry)
+            import base64
+            self.restoreGeometry(base64.b64decode(geometry))
         else:
             self.resize(1200, 800)
+    
+    def _setup_shortcuts(self):
+        """Set up keyboard shortcuts from config bindings."""
+        # Previous period
+        prev_shortcut = QShortcut(QKeySequence(self.config.bindings.prev), self)
+        prev_shortcut.activated.connect(self._calendar_widget.go_previous)
+        
+        # Next period
+        next_shortcut = QShortcut(QKeySequence(self.config.bindings.next), self)
+        next_shortcut.activated.connect(self._calendar_widget.go_next)
     
     def _setup_ui(self):
         """Set up the main UI layout."""
@@ -349,15 +365,48 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self._statusbar)
         self._statusbar.showMessage("Ready")
     
+    def _load_ui_state(self):
+        """Load UI state from the JSON state file."""
+        if self._state_file.exists():
+            try:
+                with open(self._state_file, 'r') as f:
+                    state = json.load(f)
+                    self._ui_state = state.get('ui', {})
+            except Exception as e:
+                print(f"Error loading UI state: {e}", file=__import__('sys').stderr)
+                self._ui_state = {}
+        else:
+            self._ui_state = {}
+    
+    def _save_ui_state(self):
+        """Save UI state to the JSON state file."""
+        try:
+            # Load existing state to preserve calendar visibility/colors
+            existing_state = {}
+            if self._state_file.exists():
+                with open(self._state_file, 'r') as f:
+                    existing_state = json.load(f)
+            
+            # Update UI state
+            existing_state['ui'] = self._ui_state
+            
+            # Ensure directory exists
+            self._state_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(self._state_file, 'w') as f:
+                json.dump(existing_state, f, indent=2)
+        except Exception as e:
+            print(f"Error saving UI state: {e}", file=__import__('sys').stderr)
+    
     def _load_state(self):
-        """Load persisted application state."""
+        """Load persisted application state from JSON."""
         # View type
-        view_str = self._settings.value("view_type", "week")
+        view_str = self._ui_state.get("view_type", "week")
         view_map = {"day": ViewType.DAY, "week": ViewType.WEEK, "month": ViewType.MONTH}
         view_type = view_map.get(view_str, ViewType.WEEK)
         
         # Current date
-        date_str = self._settings.value("current_date")
+        date_str = self._ui_state.get("current_date")
         if date_str:
             try:
                 current_date = date.fromisoformat(date_str)
@@ -375,25 +424,30 @@ class MainWindow(QMainWindow):
         self._view_combo.setCurrentIndex(view_index.get(view_type, 1))
         
         # Restore scroll position (defer to after layout)
-        scroll_pos = self._settings.value("scroll_position", 0, type=int)
+        scroll_pos = self._ui_state.get("scroll_position", 0)
         QTimer.singleShot(100, lambda: self._calendar_widget.set_scroll_position(scroll_pos))
     
     def _save_state(self):
-        """Save application state."""
-        # Window geometry
-        self._settings.setValue("geometry", self.saveGeometry())
+        """Save application state to JSON."""
+        import base64
+        
+        # Window geometry (encode as base64 string for JSON)
+        self._ui_state["geometry"] = base64.b64encode(self.saveGeometry().data()).decode('utf-8')
         
         # View type
         view_type = self._calendar_widget.get_current_view()
-        self._settings.setValue("view_type", view_type.value)
+        self._ui_state["view_type"] = view_type.value
         
         # Current date
         current_date = self._calendar_widget.get_current_date()
-        self._settings.setValue("current_date", current_date.isoformat())
+        self._ui_state["current_date"] = current_date.isoformat()
         
         # Scroll position
         scroll_pos = self._calendar_widget.get_scroll_position()
-        self._settings.setValue("scroll_position", scroll_pos)
+        self._ui_state["scroll_position"] = scroll_pos
+        
+        # Save to file
+        self._save_ui_state()
     
     def _initialize_data(self):
         """Initialize calendar data."""

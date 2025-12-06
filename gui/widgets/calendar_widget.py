@@ -522,10 +522,20 @@ class DayView(QWidget):
         
         for event in self._events:
             local_start = to_local_datetime(event.start)
-            if local_start.date() == self._date:
-                if is_all_day_event(event):
+            local_end = to_local_datetime(event.end)
+            
+            if is_all_day_event(event):
+                # Check if this all-day event spans this date
+                start_date = local_start.date()
+                end_date = local_end.date()
+                # All-day events typically have end at midnight of next day, so subtract 1 day for display
+                if end_date > start_date:
+                    end_date = end_date - timedelta(days=1)
+                if start_date <= self._date <= end_date:
                     all_day_events.append(event)
-                else:
+            else:
+                # Timed event - only show if it starts on this day
+                if local_start.date() == self._date:
                     timed_events.append(event)
         
         # Add all-day events
@@ -705,13 +715,26 @@ class WeekView(QWidget):
         
         for event in self._events:
             local_start = to_local_datetime(event.start)
-            event_date = local_start.date()
-            day_offset = (event_date - self._start_date).days
+            local_end = to_local_datetime(event.end)
             
-            if 0 <= day_offset < 7:
-                if is_all_day_event(event):
-                    all_day_by_day[day_offset].append(event)
-                else:
+            if is_all_day_event(event):
+                # Multi-day all-day events should appear on each day they span
+                start_date = local_start.date()
+                end_date = local_end.date()
+                # All-day events typically have end at midnight of next day, so subtract 1 day for display
+                if end_date > start_date:
+                    end_date = end_date - timedelta(days=1)
+                
+                # Add to each day in the week that this event spans
+                for day_idx in range(7):
+                    day_date = self._start_date + timedelta(days=day_idx)
+                    if start_date <= day_date <= end_date:
+                        all_day_by_day[day_idx].append(event)
+            else:
+                # Timed event - only show on start day
+                event_date = local_start.date()
+                day_offset = (event_date - self._start_date).days
+                if 0 <= day_offset < 7:
                     self._day_columns[day_offset].add_event(event)
         
         # Add all-day events to their respective day cells
@@ -901,11 +924,27 @@ class MonthView(QWidget):
         
         for event in self._events:
             local_start = to_local_datetime(event.start)
-            event_date = local_start.date()
-            for cell in self._cells:
-                if cell.date == event_date:
-                    cell.add_event(event)
-                    break
+            local_end = to_local_datetime(event.end)
+            
+            if is_all_day_event(event):
+                # Multi-day all-day events should appear on each day they span
+                start_date = local_start.date()
+                end_date = local_end.date()
+                # All-day events typically have end at midnight of next day, so subtract 1 day for display
+                if end_date > start_date:
+                    end_date = end_date - timedelta(days=1)
+                
+                # Add to each cell that falls within the event's date range
+                for cell in self._cells:
+                    if start_date <= cell.date <= end_date:
+                        cell.add_event(event)
+            else:
+                # Timed event - only show on start day
+                event_date = local_start.date()
+                for cell in self._cells:
+                    if cell.date == event_date:
+                        cell.add_event(event)
+                        break
     
     def get_date_range(self) -> tuple[datetime, datetime]:
         start = datetime.combine(self._cells[0].date, dt_time.min)

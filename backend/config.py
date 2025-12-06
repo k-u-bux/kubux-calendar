@@ -66,6 +66,13 @@ class LayoutConfig:
 
 
 @dataclass
+class BindingsConfig:
+    """Configuration for keyboard bindings."""
+    next: str = "Right"  # Key to go to next period
+    prev: str = "Left"   # Key to go to previous period
+
+
+@dataclass
 class Config:
     """Main configuration container for Kubux Calendar."""
     
@@ -73,6 +80,7 @@ class Config:
     state_file: Path
     refresh_interval: int = 300  # Auto-refresh interval in seconds (0 to disable)
     layout: LayoutConfig = field(default_factory=LayoutConfig)
+    bindings: BindingsConfig = field(default_factory=BindingsConfig)
     nextcloud_accounts: list[NextcloudAccount] = field(default_factory=list)
     ics_subscriptions: list[ICSSubscription] = field(default_factory=list)
     
@@ -198,11 +206,19 @@ class Config:
             hour_height=layout_data.get('hour_height', 60)
         )
         
+        # Parse Bindings section
+        bindings_data = data.get('Bindings', {})
+        bindings = BindingsConfig(
+            next=bindings_data.get('next', 'Right'),
+            prev=bindings_data.get('prev', 'Left')
+        )
+        
         return cls(
             password_program=password_program,
             state_file=state_file,
             refresh_interval=refresh_interval,
             layout=layout,
+            bindings=bindings,
             nextcloud_accounts=nextcloud_accounts,
             ics_subscriptions=ics_subscriptions
         )

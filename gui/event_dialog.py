@@ -9,13 +9,15 @@ from typing import Optional
 import pytz
 import time as _time
 
+import json
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLineEdit, QTextEdit, QDateTimeEdit, QCheckBox,
     QComboBox, QPushButton, QLabel, QGroupBox,
     QSpinBox, QMessageBox, QFrame
 )
-from PySide6.QtCore import Qt, Signal, QDateTime, QSettings
+from PySide6.QtCore import Qt, Signal, QDateTime
 from PySide6.QtGui import QFont, QCloseEvent
 
 from backend.caldav_client import EventData, RecurrenceRule
@@ -228,13 +230,48 @@ class EventDialog(QWidget):
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.setMinimumSize(400, 500)
         
-        # Restore window geometry from settings
-        self._settings = QSettings("kubux", "kubux-calendar")
-        geometry = self._settings.value("event_dialog_geometry")
+        # State file for persistence (from event_store's config)
+        self._state_file = self.event_store.config.state_file
+        self._dialog_state = self._load_dialog_state()
+        
+        # Restore window geometry from JSON state
+        geometry = self._dialog_state.get("event_dialog_geometry")
         if geometry:
-            self.restoreGeometry(geometry)
+            import base64
+            self.restoreGeometry(base64.b64decode(geometry))
         else:
             self.resize(500, 600)
+    
+    def _load_dialog_state(self) -> dict:
+        """Load dialog state from the JSON state file."""
+        if self._state_file.exists():
+            try:
+                with open(self._state_file, 'r') as f:
+                    state = json.load(f)
+                    return state.get('event_dialog', {})
+            except Exception:
+                pass
+        return {}
+    
+    def _save_dialog_state(self):
+        """Save dialog state to the JSON state file."""
+        try:
+            # Load existing state to preserve other data
+            existing_state = {}
+            if self._state_file.exists():
+                with open(self._state_file, 'r') as f:
+                    existing_state = json.load(f)
+            
+            # Update dialog state
+            existing_state['event_dialog'] = self._dialog_state
+            
+            # Ensure directory exists
+            self._state_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(self._state_file, 'w') as f:
+                json.dump(existing_state, f, indent=2)
+        except Exception as e:
+            print(f"Error saving dialog state: {e}", file=__import__('sys').stderr)
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -259,6 +296,13 @@ class EventDialog(QWidget):
         
         if self.is_new:
             form.addRow("Calendar:", self._calendar_combo)
+            # Set last used calendar as default
+            last_calendar_id = self._dialog_state.get("last_calendar_id")
+            if last_calendar_id:
+                for i in range(self._calendar_combo.count()):
+                    if self._calendar_combo.itemData(i) == last_calendar_id:
+                        self._calendar_combo.setCurrentIndex(i)
+                        break
         else:
             cal_label = QLabel(f"{self.event_data.calendar_name}")
             form.addRow("Calendar:", cal_label)
@@ -393,6 +437,8 @@ class EventDialog(QWidget):
                 all_day=self._all_day_check.isChecked(), recurrence=recurrence
             )
             if new_event:
+                # Save last used calendar
+                self._dialog_state["last_calendar_id"] = calendar_id
                 self.event_saved.emit(new_event)
                 self.close()
             else:
@@ -444,7 +490,9 @@ class EventDialog(QWidget):
             QMessageBox.critical(self, "Error", "Failed to delete event.")
     
     def closeEvent(self, close_event: QCloseEvent):
-        # Save window geometry
-        self._settings.setValue("event_dialog_geometry", self.saveGeometry())
+        # Save window geometry (encode as base64 for JSON)
+        import base64
+        self._dialog_state["event_dialog_geometry"] = base64.b64encode(self.saveGeometry().data()).decode('utf-8')
+        self._save_dialog_state()
         self.closed.emit()
         super().closeEvent(close_event)
