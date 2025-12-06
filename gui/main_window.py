@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QSplitter, QStatusBar, QMessageBox, QApplication,
     QColorDialog, QSizePolicy
 )
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal, QFileSystemWatcher
 from PySide6.QtGui import QAction, QIcon, QCloseEvent, QFont, QKeySequence, QShortcut
 
 from backend.config import Config
@@ -205,6 +205,13 @@ class MainWindow(QMainWindow):
         # Auto-refresh timer
         self._auto_refresh_timer = QTimer(self)
         self._auto_refresh_timer.timeout.connect(self._on_auto_refresh)
+        
+        # Config file watcher
+        self._config_watcher = QFileSystemWatcher(self)
+        config_path = Config.get_default_config_path()
+        if config_path.exists():
+            self._config_watcher.addPath(str(config_path))
+        self._config_watcher.fileChanged.connect(self._on_config_file_changed)
         
         self._setup_window()
         self._setup_ui()
@@ -528,6 +535,65 @@ class MainWindow(QMainWindow):
     def _on_auto_refresh(self):
         """Handle auto-refresh timer tick."""
         self._refresh_events()
+    
+    def _on_config_file_changed(self, path: str):
+        """Handle config file change - reload configuration."""
+        import sys
+        print(f"DEBUG: Config file changed: {path}", file=sys.stderr)
+        self._statusbar.showMessage("Config file changed, reloading...")
+        
+        # Some editors (like vim) delete and recreate the file, which removes it from the watcher
+        # Re-add the path if it exists
+        config_path = Config.get_default_config_path()
+        if config_path.exists() and str(config_path) not in self._config_watcher.files():
+            self._config_watcher.addPath(str(config_path))
+        
+        # Delay reload slightly to ensure file is fully written
+        QTimer.singleShot(500, self._reload_config)
+    
+    def _reload_config(self):
+        """Reload configuration and reinitialize calendar sources."""
+        import sys
+        try:
+            # Load new config
+            new_config = Config.load()
+            self.config = new_config
+            
+            # Update layout config
+            set_layout_config(new_config.layout)
+            
+            # Update interface font
+            interface_font = QFont(new_config.layout.interface_font, new_config.layout.interface_font_size)
+            QApplication.instance().setFont(interface_font)
+            
+            # Reinitialize event store with new config
+            self.event_store = EventStore(new_config)
+            self.event_store.set_on_change_callback(self._on_data_changed)
+            
+            # Update sidebar's reference to event store
+            self._sidebar.event_store = self.event_store
+            
+            # Reinitialize data
+            self._initialize_data()
+            
+            # Update auto-refresh timer
+            self._auto_refresh_timer.stop()
+            if new_config.refresh_interval > 0:
+                self._auto_refresh_timer.start(new_config.refresh_interval * 1000)
+                print(f"DEBUG: Auto-refresh updated to {new_config.refresh_interval} seconds", file=sys.stderr)
+            
+            self._statusbar.showMessage("Configuration reloaded successfully", 3000)
+            print("DEBUG: Config reloaded successfully", file=sys.stderr)
+            
+        except Exception as e:
+            error_msg = f"Failed to reload config: {e}"
+            print(f"ERROR: {error_msg}", file=sys.stderr)
+            self._statusbar.showMessage(error_msg, 5000)
+            QMessageBox.warning(
+                self,
+                "Config Reload Error",
+                f"Failed to reload configuration:\n{e}\n\nPrevious configuration is still active."
+            )
     
     def _on_slot_double_clicked(self, dt: datetime):
         """Handle double-click on empty time slot to create event."""
