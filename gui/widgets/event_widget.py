@@ -197,11 +197,9 @@ class EventWidget(QFrame):
         # Get the text font for events
         text_font = get_text_font()
         
-        # Title (with optional indicators) - convert line breaks to spaces
+        # Title - convert line breaks to spaces
+        # Indicators (recurring, read-only) are rendered as corner triangles in paintEvent
         title_text = self._sanitize_text(self.event_data.summary)
-        if self.event_data.is_recurring:
-            title_text = "🔄 " + title_text
-        # Read-only indicator is rendered as corner triangle in paintEvent
         
         title_label = QLabel(title_text)
         title_label.setWordWrap(False)  # Single line, no wrapping
@@ -249,13 +247,7 @@ class EventWidget(QFrame):
         
         header_layout.addStretch()
         
-        # Indicators
-        if self.event_data.is_recurring:
-            recur_label = QLabel("🔄")
-            recur_label.setToolTip("Recurring event")
-            header_layout.addWidget(recur_label)
-        
-        # Read-only indicator is rendered as corner triangle in paintEvent
+        # Indicators (recurring, read-only) are rendered as corner triangles in paintEvent
         
         layout.addLayout(header_layout)
         
@@ -336,36 +328,49 @@ class EventWidget(QFrame):
             return QSize(80, 40)
     
     def paintEvent(self, event) -> None:
-        """Override paintEvent to draw read-only indicator triangle."""
+        """Override paintEvent to draw indicator triangles for recurring and read-only events."""
         super().paintEvent(event)
         
+        # Determine if we need to draw any triangles
+        if not self.event_data.is_recurring and not self.event_data.read_only:
+            return
+        
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        # Calculate triangle size based on font height (half a line)
+        fm = QFontMetrics(self.font())
+        triangle_size = fm.height() // 2
+        
+        w = self.width()
+        h = self.height()
+        
+        # Determine triangle color based on background luminance
+        bg_color = lighten_color(self.event_data.calendar_color, 0.4)
+        triangle_color = get_contrasting_text_color(bg_color)
+        
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(QColor(triangle_color)))
+        
+        # Draw recurring indicator triangle in bottom-left corner
+        if self.event_data.is_recurring:
+            recurring_points = QPolygonF([
+                QPointF(0, h),                              # Bottom-left corner
+                QPointF(triangle_size, h),                  # Right along bottom
+                QPointF(0, h - triangle_size)               # Up along left edge
+            ])
+            painter.drawPolygon(recurring_points)
+        
+        # Draw read-only indicator triangle in bottom-right corner
         if self.event_data.read_only:
-            painter = QPainter(self)
-            painter.setRenderHint(QPainter.Antialiasing)
-            
-            # Calculate triangle size based on font height (half a line)
-            fm = QFontMetrics(self.font())
-            triangle_size = fm.height() // 2
-            
-            # Triangle position: bottom-right corner
-            w = self.width()
-            h = self.height()
-            
-            # Triangle points: bottom-right corner, going up and left
-            points = QPolygonF([
+            readonly_points = QPolygonF([
                 QPointF(w, h),                              # Bottom-right corner
                 QPointF(w - triangle_size, h),              # Left along bottom
                 QPointF(w, h - triangle_size)               # Up along right edge
             ])
-            
-            # Determine triangle color based on background luminance
-            bg_color = lighten_color(self.event_data.calendar_color, 0.4)
-            triangle_color = get_contrasting_text_color(bg_color)
-            
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(QBrush(QColor(triangle_color)))
-            painter.drawPolygon(points)
-            painter.end()
+            painter.drawPolygon(readonly_points)
+        
+        painter.end()
 
 
 class AllDayEventWidget(EventWidget):
