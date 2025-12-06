@@ -289,24 +289,8 @@ class MainWindow(QMainWindow):
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
         
-        # === LEFT BLOCK: Navigation ===
-        self._prev_btn = QPushButton("◀")
-        self._prev_btn.setToolTip("Previous")
-        self._prev_btn.clicked.connect(self._calendar_widget.go_previous)
-        toolbar.addWidget(self._prev_btn)
-        
-        self._today_btn = QPushButton("Today")
-        self._today_btn.clicked.connect(self._calendar_widget.go_today)
-        toolbar.addWidget(self._today_btn)
-        
-        self._next_btn = QPushButton("▶")
-        self._next_btn.setToolTip("Next")
-        self._next_btn.clicked.connect(self._calendar_widget.go_next)
-        toolbar.addWidget(self._next_btn)
-        
-        toolbar.addSeparator()
-        
-        # Date label
+        # === LEFT BLOCK ===
+        # Date label (info first)
         self._date_label = QLabel()
         font = self._date_label.font()
         font.setBold(True)
@@ -324,6 +308,23 @@ class MainWindow(QMainWindow):
         self._view_combo.setCurrentIndex(1)  # Default to week view
         self._view_combo.currentIndexChanged.connect(self._on_view_combo_changed)
         toolbar.addWidget(self._view_combo)
+        
+        toolbar.addSeparator()
+        
+        # Navigation buttons
+        self._prev_btn = QPushButton("◀")
+        self._prev_btn.setToolTip("Previous")
+        self._prev_btn.clicked.connect(self._calendar_widget.go_previous)
+        toolbar.addWidget(self._prev_btn)
+        
+        self._today_btn = QPushButton("Today")
+        self._today_btn.clicked.connect(self._calendar_widget.go_today)
+        toolbar.addWidget(self._today_btn)
+        
+        self._next_btn = QPushButton("▶")
+        self._next_btn.setToolTip("Next")
+        self._next_btn.clicked.connect(self._calendar_widget.go_next)
+        toolbar.addWidget(self._next_btn)
         
         # === LEFT SPACER: Push New Event to center ===
         left_spacer = QWidget()
