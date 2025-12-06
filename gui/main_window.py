@@ -250,18 +250,18 @@ class MainWindow(QMainWindow):
     def _setup_ui(self):
         """Set up the main UI layout."""
         # Central widget with splitter
-        splitter = QSplitter(Qt.Horizontal)
+        self._splitter = QSplitter(Qt.Horizontal)
         
         # Sidebar
         sidebar_scroll = QScrollArea()
         sidebar_scroll.setWidgetResizable(True)
         sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        sidebar_scroll.setMinimumWidth(180)
-        sidebar_scroll.setMaximumWidth(300)
+        sidebar_scroll.setMinimumWidth(50)  # Allow sidebar to be made smaller
+        sidebar_scroll.setMaximumWidth(400)  # Allow sidebar to be made wider
         
         self._sidebar = CalendarSidebar(self.event_store)
         sidebar_scroll.setWidget(self._sidebar)
-        splitter.addWidget(sidebar_scroll)
+        self._splitter.addWidget(sidebar_scroll)
         
         # Main calendar view
         main_widget = QWidget()
@@ -276,12 +276,12 @@ class MainWindow(QMainWindow):
         self._calendar_widget.date_changed.connect(self._on_date_changed)
         
         main_layout.addWidget(self._calendar_widget)
-        splitter.addWidget(main_widget)
+        self._splitter.addWidget(main_widget)
         
-        # Set splitter sizes
-        splitter.setSizes([200, 1000])
+        # Set default splitter sizes (will be overridden by saved state if available)
+        self._splitter.setSizes([200, 1000])
         
-        self.setCentralWidget(splitter)
+        self.setCentralWidget(self._splitter)
     
     def _setup_toolbar(self):
         """Set up the navigation toolbar."""
@@ -426,6 +426,11 @@ class MainWindow(QMainWindow):
         # Restore scroll position (defer to after layout)
         scroll_pos = self._ui_state.get("scroll_position", 0)
         QTimer.singleShot(100, lambda: self._calendar_widget.set_scroll_position(scroll_pos))
+        
+        # Restore splitter sizes (sidebar width)
+        splitter_sizes = self._ui_state.get("splitter_sizes")
+        if splitter_sizes and isinstance(splitter_sizes, list) and len(splitter_sizes) == 2:
+            self._splitter.setSizes(splitter_sizes)
     
     def _save_state(self):
         """Save application state to JSON."""
@@ -445,6 +450,9 @@ class MainWindow(QMainWindow):
         # Scroll position
         scroll_pos = self._calendar_widget.get_scroll_position()
         self._ui_state["scroll_position"] = scroll_pos
+        
+        # Splitter sizes (sidebar width)
+        self._ui_state["splitter_sizes"] = self._splitter.sizes()
         
         # Save to file
         self._save_ui_state()
