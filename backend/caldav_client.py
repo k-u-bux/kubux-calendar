@@ -343,9 +343,12 @@ class CalDAVClient:
             instances = list(rule.between(query_start, query_end, inc=True))[:500]
             
             for instance_start in instances:
-                # Ensure timezone awareness
+                # Ensure timezone awareness and normalize to UTC
                 if instance_start.tzinfo is None:
                     instance_start = pytz.UTC.localize(instance_start)
+                else:
+                    # Convert to UTC (should already be UTC but ensure consistency)
+                    instance_start = instance_start.astimezone(pytz.UTC)
                 
                 instance_end = instance_start + duration
                 
@@ -408,6 +411,12 @@ class CalDAVClient:
                     start = dtstart.dt
                     all_day = not isinstance(start, datetime)
                     
+                    # Parse recurrence rule first (needed for timezone handling)
+                    recurrence = None
+                    rrule_component = component.get('RRULE')
+                    if rrule_component:
+                        recurrence = RecurrenceRule.from_rrule(rrule_component)
+                    
                     if all_day:
                         # Convert date to datetime for consistency
                         start = datetime.combine(start, datetime.min.time())
@@ -418,21 +427,33 @@ class CalDAVClient:
                         else:
                             end = start + timedelta(days=1)
                     else:
-                        if start.tzinfo is None:
-                            start = pytz.UTC.localize(start)
-                        if dtend:
-                            end = dtend.dt
-                            if end.tzinfo is None:
-                                end = pytz.UTC.localize(end)
+                        # For recurring events, keep original timezone for proper expansion
+                        # For non-recurring events, normalize to UTC
+                        if recurrence is not None:
+                            # Keep timezone info but ensure it's aware
+                            if start.tzinfo is None:
+                                start = pytz.UTC.localize(start)
+                            # Don't convert to UTC yet - expansion will handle it
+                            if dtend:
+                                end = dtend.dt
+                                if end.tzinfo is None:
+                                    end = pytz.UTC.localize(end)
+                            else:
+                                end = start + timedelta(hours=1)
                         else:
-                            # Default to 1 hour duration
-                            end = start + timedelta(hours=1)
-                    
-                    # Parse recurrence rule if present
-                    recurrence = None
-                    rrule = component.get('RRULE')
-                    if rrule:
-                        recurrence = RecurrenceRule.from_rrule(rrule)
+                            # Non-recurring: normalize to UTC
+                            if start.tzinfo is None:
+                                start = pytz.UTC.localize(start)
+                            else:
+                                start = start.astimezone(pytz.UTC)
+                            if dtend:
+                                end = dtend.dt
+                                if end.tzinfo is None:
+                                    end = pytz.UTC.localize(end)
+                                else:
+                                    end = end.astimezone(pytz.UTC)
+                            else:
+                                end = start + timedelta(hours=1)
                     
                     # Check for recurrence-id (specific instance)
                     recurrence_id = None

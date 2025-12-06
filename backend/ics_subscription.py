@@ -176,19 +176,31 @@ class ICSSubscription:
             # Check if all-day event
             all_day = ics_event.all_day if hasattr(ics_event, 'all_day') else False
             
-            # Ensure timezone awareness
-            if start_dt.tzinfo is None:
-                start_dt = pytz.UTC.localize(start_dt)
-            if end_dt.tzinfo is None:
-                end_dt = pytz.UTC.localize(end_dt)
+            # Check for recurrence first
+            has_recurrence = self._has_recurrence(ics_event)
             
-            # Check for recurrence
-            # The ics library handles RRULE expansion differently
-            # We'll need to handle recurring events
+            # For recurring events, keep original timezone for proper expansion
+            # For non-recurring events, normalize to UTC
+            if has_recurrence:
+                # Keep timezone info but ensure it's aware
+                if start_dt.tzinfo is None:
+                    start_dt = pytz.UTC.localize(start_dt)
+                if end_dt.tzinfo is None:
+                    end_dt = pytz.UTC.localize(end_dt)
+            else:
+                # Non-recurring: normalize to UTC
+                if start_dt.tzinfo is None:
+                    start_dt = pytz.UTC.localize(start_dt)
+                else:
+                    start_dt = start_dt.astimezone(pytz.UTC)
+                if end_dt.tzinfo is None:
+                    end_dt = pytz.UTC.localize(end_dt)
+                else:
+                    end_dt = end_dt.astimezone(pytz.UTC)
             
             # Check if event falls within our query range
             # For non-recurring events, simple bounds check
-            if not self._has_recurrence(ics_event):
+            if not has_recurrence:
                 if end_dt < query_start or start_dt > query_end:
                     return None
                 
@@ -274,8 +286,11 @@ class ICSSubscription:
             instances = rule.between(query_start, query_end, inc=True)[:1000]
             
             for instance_start in instances:
+                # Ensure timezone awareness and convert to UTC
                 if instance_start.tzinfo is None:
                     instance_start = pytz.UTC.localize(instance_start)
+                else:
+                    instance_start = instance_start.astimezone(pytz.UTC)
                 
                 instance_end = instance_start + duration
                 
