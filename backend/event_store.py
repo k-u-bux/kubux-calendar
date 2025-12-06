@@ -48,6 +48,9 @@ class EventStore:
     - Manage calendar visibility
     """
     
+    # Cache window: fetch ±2 months around the center of requested date range
+    CACHE_WINDOW_MONTHS = 2
+    
     def __init__(self, config: Config):
         """
         Initialize the event store.
@@ -62,6 +65,11 @@ class EventStore:
         self._calendars: dict[str, CalendarSource] = {}
         self._visibility: dict[str, bool] = {}
         self._colors: dict[str, str] = {}
+        
+        # Event cache for performance
+        self._cached_events: list[Event] = []
+        self._cache_start: Optional[datetime] = None
+        self._cache_end: Optional[datetime] = None
         
         # State file path
         self._state_file = config.state_file
@@ -205,38 +213,36 @@ class EventStore:
             self._save_state()
             self._notify_change()
     
-    def get_events(
-        self,
-        start: datetime,
-        end: datetime,
-        calendar_ids: Optional[list[str]] = None,
-        visible_only: bool = True
-    ) -> list[Event]:
-        """
-        Get events from specified calendars within a time range.
+    def _is_cache_valid(self, start: datetime, end: datetime) -> bool:
+        """Check if the requested range is within the cache window."""
+        if self._cache_start is None or self._cache_end is None:
+            return False
+        if not self._cached_events:
+            return False
+        return start >= self._cache_start and end <= self._cache_end
+    
+    def _calculate_cache_window(self, start: datetime, end: datetime) -> tuple[datetime, datetime]:
+        """Calculate the cache window (±2 months around the center of the requested range)."""
+        # Find the center of the requested range
+        center = start + (end - start) / 2
         
-        Args:
-            start: Start of time range
-            end: End of time range
-            calendar_ids: List of calendar IDs to query (None = all)
-            visible_only: If True, only query visible calendars
+        # Calculate ±2 months window
+        # Use a simple 30-day month approximation for speed
+        months = self.CACHE_WINDOW_MONTHS
+        window_start = center - timedelta(days=months * 30)
+        window_end = center + timedelta(days=months * 30)
         
-        Returns:
-            List of Event objects sorted by start time.
-        """
-        # Determine which calendars to query
-        if calendar_ids is None:
-            calendars = self.get_calendars(visible_only=visible_only)
-        else:
-            calendars = [
-                self._calendars[cid] for cid in calendar_ids
-                if cid in self._calendars and
-                (not visible_only or self._calendars[cid].visible)
-            ]
+        return window_start, window_end
+    
+    def _fetch_events_into_cache(self, start: datetime, end: datetime) -> None:
+        """Fetch events from all sources and store in cache."""
+        import sys
+        print(f"DEBUG: Fetching events into cache for range {start.date()} to {end.date()}", file=sys.stderr)
         
         all_events = []
         
-        for calendar in calendars:
+        # Fetch from all calendars (not just visible ones, for flexibility)
+        for calendar in self._calendars.values():
             if calendar.source_type == "caldav":
                 # Get events from CalDAV
                 if calendar._caldav_calendar is not None:
@@ -247,24 +253,108 @@ class EventStore:
                             calendar._caldav_calendar,
                             start, end
                         )
-                        # Apply custom calendar color to events
+                        # Store calendar info with events
                         for event in events:
                             event.calendar_color = calendar.color
+                            event._source_calendar_id = calendar.id
                         all_events.extend(events)
             
             elif calendar.source_type == "ics":
                 # Get events from ICS subscription
                 if calendar._ics_subscription is not None:
                     events = calendar._ics_subscription.get_events(start, end)
-                    # Apply custom calendar color to events
+                    # Store calendar info with events
                     for event in events:
                         event.calendar_color = calendar.color
+                        event._source_calendar_id = calendar.id
                     all_events.extend(events)
         
-        # Sort by start time
-        all_events.sort(key=lambda e: e.start)
+        # Update cache
+        self._cached_events = all_events
+        self._cache_start = start
+        self._cache_end = end
         
-        return all_events
+        print(f"DEBUG: Cached {len(all_events)} events", file=sys.stderr)
+    
+    def invalidate_cache(self) -> None:
+        """Invalidate the event cache. Call this when events are modified."""
+        self._cached_events = []
+        self._cache_start = None
+        self._cache_end = None
+    
+    def get_events(
+        self,
+        start: datetime,
+        end: datetime,
+        calendar_ids: Optional[list[str]] = None,
+        visible_only: bool = True
+    ) -> list[Event]:
+        """
+        Get events from specified calendars within a time range.
+        
+        Uses a cache with a ±2 month window for faster navigation.
+        
+        Args:
+            start: Start of time range
+            end: End of time range
+            calendar_ids: List of calendar IDs to query (None = all)
+            visible_only: If True, only query visible calendars
+        
+        Returns:
+            List of Event objects sorted by start time.
+        """
+        # Check if we need to refresh the cache
+        if not self._is_cache_valid(start, end):
+            cache_start, cache_end = self._calculate_cache_window(start, end)
+            self._fetch_events_into_cache(cache_start, cache_end)
+        
+        # Determine which calendars are visible
+        if calendar_ids is None:
+            visible_calendar_ids = {
+                c.id for c in self._calendars.values()
+                if not visible_only or c.visible
+            }
+        else:
+            visible_calendar_ids = {
+                cid for cid in calendar_ids
+                if cid in self._calendars and
+                (not visible_only or self._calendars[cid].visible)
+            }
+        
+        # Helper to make datetime comparison work with mixed tz-aware/naive
+        def make_comparable(dt: datetime) -> datetime:
+            """Strip timezone info for comparison."""
+            if dt.tzinfo is not None:
+                return dt.replace(tzinfo=None)
+            return dt
+        
+        start_cmp = make_comparable(start)
+        end_cmp = make_comparable(end)
+        
+        # Filter events from cache
+        filtered_events = []
+        for event in self._cached_events:
+            # Check if event is in the requested time range
+            event_end = make_comparable(event.end)
+            event_start = make_comparable(event.start)
+            if event_end < start_cmp or event_start > end_cmp:
+                continue
+            
+            # Check if calendar is visible
+            source_cal_id = getattr(event, '_source_calendar_id', None)
+            if source_cal_id and source_cal_id not in visible_calendar_ids:
+                continue
+            
+            # Update calendar color in case it changed
+            if source_cal_id and source_cal_id in self._calendars:
+                event.calendar_color = self._calendars[source_cal_id].color
+            
+            filtered_events.append(event)
+        
+        # Sort by start time
+        filtered_events.sort(key=lambda e: e.start)
+        
+        return filtered_events
     
     def create_event(
         self,
@@ -317,6 +407,7 @@ class EventStore:
         
         result = client.create_event(calendar._caldav_calendar, event)
         if result:
+            self.invalidate_cache()  # Clear cache so new event is fetched
             self._notify_change()
         return result
     
@@ -352,6 +443,7 @@ class EventStore:
         
         result = client.update_event(event)
         if result:
+            self.invalidate_cache()  # Clear cache so updated event is fetched
             self._notify_change()
         return result
     
@@ -376,6 +468,7 @@ class EventStore:
                 if client:
                     result = client.delete_event(event)
                     if result:
+                        self.invalidate_cache()  # Clear cache so deleted event is removed
                         self._notify_change()
                     return result
         
@@ -402,6 +495,7 @@ class EventStore:
                 if client:
                     result = client.delete_recurring_instance(event, instance_start)
                     if result:
+                        self.invalidate_cache()  # Clear cache so deleted instance is removed
                         self._notify_change()
                     return result
         
@@ -426,6 +520,8 @@ class EventStore:
             # Refresh all ICS subscriptions
             self._ics_manager.fetch_all()
         
+        # Invalidate cache so fresh data is fetched on next get_events call
+        self.invalidate_cache()
         self._notify_change()
     
     def _load_state(self) -> None:
