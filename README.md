@@ -17,6 +17,8 @@ A lightweight PySide6 desktop calendar application for Nextcloud (CalDAV) and IC
 - **Password Integration**: Secure password retrieval via external programs (e.g., `pass`)
 - **Keyboard Navigation**: Configurable keyboard shortcuts
 - **Event Caching**: Pre-fetches ±2 months of events for fast navigation
+- **Live Config Reload**: Automatically reloads when the config file changes (no restart needed)
+- **Persistent UI State**: Remembers window size, sidebar width, view, and scroll position
 
 ## Screenshot
 
@@ -181,6 +183,7 @@ kubux-calendar/
 
 Application state is stored in `~/.local/state/kubux-calendar/state.json`:
 - Window geometry and position
+- Sidebar width (splitter position)
 - Current view type and date
 - Scroll position
 - Calendar visibility and colors
