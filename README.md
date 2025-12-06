@@ -58,8 +58,7 @@ python kubux_calendar.py
 ## Configuration
 
 The configuration file is located at:
-- `~/.config/kubux-calendar/kubux-calendar.toml` (TOML format, preferred)
-- `~/.config/kubux-calendar/kubux-calendar.ini` (INI format, legacy)
+- `~/.config/kubux-calendar/kubux-calendar.toml` (TOML format)
 
 ### Example Configuration (TOML)
 
