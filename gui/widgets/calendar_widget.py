@@ -1216,6 +1216,14 @@ class ListView(QWidget):
         
         # Re-add stretch
         self._content_layout.addStretch()
+        
+        # Emit visible range after layout is complete
+        from PySide6.QtCore import QTimer
+        def _emit_visible_range():
+            visible_range = self.get_visible_date_range()
+            if visible_range[0] and visible_range[1]:
+                self.visible_range_changed.emit(visible_range[0], visible_range[1])
+        QTimer.singleShot(50, _emit_visible_range)
     
     def get_visible_date_range(self) -> tuple[Optional[datetime], Optional[datetime]]:
         """Get the date range of currently visible events."""
