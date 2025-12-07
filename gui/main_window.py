@@ -24,7 +24,7 @@ from backend.config import Config
 from backend.event_store import EventStore, CalendarSource, Event
 from backend.caldav_client import EventData
 
-from .widgets.calendar_widget import CalendarWidget, ViewType, set_layout_config, set_localization_config, get_localization_config
+from .widgets.calendar_widget import CalendarWidget, ViewType, set_layout_config, set_localization_config, get_localization_config, set_colors_config, set_labels_config
 from .event_dialog import EventDialog
 
 
@@ -184,9 +184,11 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self.config = config
         
-        # Set layout config and localization for calendar widget BEFORE creating UI
+        # Set layout config, localization, colors, and labels for calendar widget BEFORE creating UI
         set_layout_config(config.layout)
         set_localization_config(config.localization)
+        set_colors_config(config.colors)
+        set_labels_config(config.labels)
         
         # Apply interface font to the application
         interface_font = QFont(config.layout.interface_font, config.layout.interface_font_size)
@@ -597,9 +599,11 @@ class MainWindow(QMainWindow):
             new_config = Config.load()
             self.config = new_config
             
-            # Update layout and localization config
+            # Update layout, localization, colors, and labels config
             set_layout_config(new_config.layout)
             set_localization_config(new_config.localization)
+            set_colors_config(new_config.colors)
+            set_labels_config(new_config.labels)
             
             # Update interface font
             interface_font = QFont(new_config.layout.interface_font, new_config.layout.interface_font_size)

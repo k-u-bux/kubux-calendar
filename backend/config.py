@@ -74,6 +74,102 @@ class BindingsConfig:
 
 
 @dataclass
+class ColorsConfig:
+    """Configuration for UI colors."""
+    # Calendar/Grid Colors
+    day_column_background: str = "#ffffff"
+    hour_line: str = "#e8e8e8"
+    cell_border: str = "#e0e0e0"
+    allday_cell_background: str = "#fafafa"
+    
+    # Header/Navigation Colors
+    header_background: str = "#f5f5f5"
+    today_highlight_background: str = "#e3f2fd"
+    today_highlight_text: str = "#1976d2"
+    
+    # Month View Colors
+    month_cell_current: str = "#ffffff"
+    month_cell_other: str = "#f5f5f5"
+    month_text_current: str = "#000000"
+    month_text_other: str = "#999999"
+    
+    # UI Element Colors
+    color_box_border: str = "#999999"
+    secondary_text: str = "rgba(0, 0, 0, 0.6)"
+    tertiary_text: str = "rgba(0, 0, 0, 0.7)"
+    
+    # Button Colors (Event Dialog)
+    button_save_background: str = "#007bff"
+    button_save_text: str = "#ffffff"
+    button_delete_background: str = "#dc3545"
+    button_delete_text: str = "#ffffff"
+    
+    # Notice/Alert Colors
+    readonly_notice_background: str = "#fff3cd"
+    readonly_notice_text: str = "#856404"
+
+
+@dataclass
+class LabelsConfig:
+    """Configuration for UI labels."""
+    # Main Window Labels
+    window_title: str = "Kubux Calendar"
+    sidebar_header: str = "Calendars"
+    
+    # View Switcher Labels
+    view_day: str = "Day"
+    view_week: str = "Week"
+    view_month: str = "Month"
+    view_list: str = "List"
+    
+    # Toolbar Button Labels
+    button_prev: str = "◀"
+    button_next: str = "▶"
+    button_today: str = "Today"
+    button_new_event: str = "New Event"
+    button_reload: str = "Reload"
+    button_edit_config: str = "Edit Config"
+    button_quit: str = "Quit"
+    
+    # Event Dialog Labels
+    dialog_new_event: str = "New Event"
+    dialog_edit_event: str = "Edit: {}"
+    field_title: str = "Title:"
+    field_calendar: str = "Calendar:"
+    field_start: str = "Start:"
+    field_end: str = "End:"
+    field_location: str = "Location:"
+    field_description: str = "Description:"
+    checkbox_allday: str = "All-day event"
+    button_save: str = "Save"
+    button_cancel: str = "Cancel"
+    button_delete: str = "Delete"
+    
+    # Recurrence Labels
+    recurrence_title: str = "Recurrence"
+    recurrence_repeat: str = "Repeat:"
+    recurrence_every: str = "Every:"
+    recurrence_on_days: str = "On days:"
+    recurrence_ends: str = "Ends:"
+    recurrence_occurrences: str = "Occurrences:"
+    recurrence_until: str = "Until:"
+    freq_daily: str = "Daily"
+    freq_weekly: str = "Weekly"
+    freq_monthly: str = "Monthly"
+    freq_yearly: str = "Yearly"
+    end_never: str = "Never"
+    end_after_count: str = "After N occurrences"
+    end_until_date: str = "Until date"
+    
+    # Miscellaneous Labels
+    allday_label: str = "All day"
+    no_events: str = "No events"
+    location_icon: str = "📍"
+    subscription_icon: str = "📡"
+    readonly_notice: str = "🔒 This event is read-only (from a subscription)"
+
+
+@dataclass
 class LocalizationConfig:
     """Configuration for localized day and month names."""
     # Default to English abbreviated day names
@@ -109,6 +205,8 @@ class Config:
     layout: LayoutConfig = field(default_factory=LayoutConfig)
     bindings: BindingsConfig = field(default_factory=BindingsConfig)
     localization: LocalizationConfig = field(default_factory=LocalizationConfig)
+    colors: ColorsConfig = field(default_factory=ColorsConfig)
+    labels: LabelsConfig = field(default_factory=LabelsConfig)
     nextcloud_accounts: list[NextcloudAccount] = field(default_factory=list)
     ics_subscriptions: list[ICSSubscription] = field(default_factory=list)
     
@@ -257,6 +355,80 @@ class Config:
             month_names=month_names
         )
         
+        # Parse Colors section
+        colors_data = data.get('Colors', {})
+        colors = ColorsConfig(
+            day_column_background=colors_data.get('day_column_background', ColorsConfig.day_column_background),
+            hour_line=colors_data.get('hour_line', ColorsConfig.hour_line),
+            cell_border=colors_data.get('cell_border', ColorsConfig.cell_border),
+            allday_cell_background=colors_data.get('allday_cell_background', ColorsConfig.allday_cell_background),
+            header_background=colors_data.get('header_background', ColorsConfig.header_background),
+            today_highlight_background=colors_data.get('today_highlight_background', ColorsConfig.today_highlight_background),
+            today_highlight_text=colors_data.get('today_highlight_text', ColorsConfig.today_highlight_text),
+            month_cell_current=colors_data.get('month_cell_current', ColorsConfig.month_cell_current),
+            month_cell_other=colors_data.get('month_cell_other', ColorsConfig.month_cell_other),
+            month_text_current=colors_data.get('month_text_current', ColorsConfig.month_text_current),
+            month_text_other=colors_data.get('month_text_other', ColorsConfig.month_text_other),
+            color_box_border=colors_data.get('color_box_border', ColorsConfig.color_box_border),
+            secondary_text=colors_data.get('secondary_text', ColorsConfig.secondary_text),
+            tertiary_text=colors_data.get('tertiary_text', ColorsConfig.tertiary_text),
+            button_save_background=colors_data.get('button_save_background', ColorsConfig.button_save_background),
+            button_save_text=colors_data.get('button_save_text', ColorsConfig.button_save_text),
+            button_delete_background=colors_data.get('button_delete_background', ColorsConfig.button_delete_background),
+            button_delete_text=colors_data.get('button_delete_text', ColorsConfig.button_delete_text),
+            readonly_notice_background=colors_data.get('readonly_notice_background', ColorsConfig.readonly_notice_background),
+            readonly_notice_text=colors_data.get('readonly_notice_text', ColorsConfig.readonly_notice_text),
+        )
+        
+        # Parse Labels section
+        labels_data = data.get('Labels', {})
+        labels = LabelsConfig(
+            window_title=labels_data.get('window_title', LabelsConfig.window_title),
+            sidebar_header=labels_data.get('sidebar_header', LabelsConfig.sidebar_header),
+            view_day=labels_data.get('view_day', LabelsConfig.view_day),
+            view_week=labels_data.get('view_week', LabelsConfig.view_week),
+            view_month=labels_data.get('view_month', LabelsConfig.view_month),
+            view_list=labels_data.get('view_list', LabelsConfig.view_list),
+            button_prev=labels_data.get('button_prev', LabelsConfig.button_prev),
+            button_next=labels_data.get('button_next', LabelsConfig.button_next),
+            button_today=labels_data.get('button_today', LabelsConfig.button_today),
+            button_new_event=labels_data.get('button_new_event', LabelsConfig.button_new_event),
+            button_reload=labels_data.get('button_reload', LabelsConfig.button_reload),
+            button_edit_config=labels_data.get('button_edit_config', LabelsConfig.button_edit_config),
+            button_quit=labels_data.get('button_quit', LabelsConfig.button_quit),
+            dialog_new_event=labels_data.get('dialog_new_event', LabelsConfig.dialog_new_event),
+            dialog_edit_event=labels_data.get('dialog_edit_event', LabelsConfig.dialog_edit_event),
+            field_title=labels_data.get('field_title', LabelsConfig.field_title),
+            field_calendar=labels_data.get('field_calendar', LabelsConfig.field_calendar),
+            field_start=labels_data.get('field_start', LabelsConfig.field_start),
+            field_end=labels_data.get('field_end', LabelsConfig.field_end),
+            field_location=labels_data.get('field_location', LabelsConfig.field_location),
+            field_description=labels_data.get('field_description', LabelsConfig.field_description),
+            checkbox_allday=labels_data.get('checkbox_allday', LabelsConfig.checkbox_allday),
+            button_save=labels_data.get('button_save', LabelsConfig.button_save),
+            button_cancel=labels_data.get('button_cancel', LabelsConfig.button_cancel),
+            button_delete=labels_data.get('button_delete', LabelsConfig.button_delete),
+            recurrence_title=labels_data.get('recurrence_title', LabelsConfig.recurrence_title),
+            recurrence_repeat=labels_data.get('recurrence_repeat', LabelsConfig.recurrence_repeat),
+            recurrence_every=labels_data.get('recurrence_every', LabelsConfig.recurrence_every),
+            recurrence_on_days=labels_data.get('recurrence_on_days', LabelsConfig.recurrence_on_days),
+            recurrence_ends=labels_data.get('recurrence_ends', LabelsConfig.recurrence_ends),
+            recurrence_occurrences=labels_data.get('recurrence_occurrences', LabelsConfig.recurrence_occurrences),
+            recurrence_until=labels_data.get('recurrence_until', LabelsConfig.recurrence_until),
+            freq_daily=labels_data.get('freq_daily', LabelsConfig.freq_daily),
+            freq_weekly=labels_data.get('freq_weekly', LabelsConfig.freq_weekly),
+            freq_monthly=labels_data.get('freq_monthly', LabelsConfig.freq_monthly),
+            freq_yearly=labels_data.get('freq_yearly', LabelsConfig.freq_yearly),
+            end_never=labels_data.get('end_never', LabelsConfig.end_never),
+            end_after_count=labels_data.get('end_after_count', LabelsConfig.end_after_count),
+            end_until_date=labels_data.get('end_until_date', LabelsConfig.end_until_date),
+            allday_label=labels_data.get('allday_label', LabelsConfig.allday_label),
+            no_events=labels_data.get('no_events', LabelsConfig.no_events),
+            location_icon=labels_data.get('location_icon', LabelsConfig.location_icon),
+            subscription_icon=labels_data.get('subscription_icon', LabelsConfig.subscription_icon),
+            readonly_notice=labels_data.get('readonly_notice', LabelsConfig.readonly_notice),
+        )
+        
         return cls(
             password_program=password_program,
             state_file=state_file,
@@ -264,6 +436,8 @@ class Config:
             layout=layout,
             bindings=bindings,
             localization=localization,
+            colors=colors,
+            labels=labels,
             nextcloud_accounts=nextcloud_accounts,
             ics_subscriptions=ics_subscriptions
         )

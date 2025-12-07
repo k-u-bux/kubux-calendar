@@ -14,12 +14,14 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QFontMetrics, QMouseEvent
 
 from backend.caldav_client import EventData
-from backend.config import LayoutConfig, LocalizationConfig
-from .event_widget import EventWidget, set_event_layout_config
+from backend.config import LayoutConfig, LocalizationConfig, ColorsConfig, LabelsConfig
+from .event_widget import EventWidget, set_event_layout_config, set_event_colors_config
 
-# Module-level layout config (set by MainWindow at startup)
+# Module-level configs (set by MainWindow at startup)
 _layout_config: LayoutConfig = LayoutConfig()
 _localization_config: LocalizationConfig = LocalizationConfig()
+_colors_config: ColorsConfig = ColorsConfig()
+_labels_config: LabelsConfig = LabelsConfig()
 
 # Module-level hour height (updated when layout config is set)
 HOUR_HEIGHT = 60  # Default value
@@ -43,6 +45,29 @@ def set_localization_config(config: LocalizationConfig):
 def get_localization_config() -> LocalizationConfig:
     """Get the current localization configuration."""
     return _localization_config
+
+
+def set_colors_config(config: ColorsConfig):
+    """Set the colors configuration for this module and event widget."""
+    global _colors_config
+    _colors_config = config
+    set_event_colors_config(config)
+
+
+def get_colors_config() -> ColorsConfig:
+    """Get the current colors configuration."""
+    return _colors_config
+
+
+def set_labels_config(config: LabelsConfig):
+    """Set the labels configuration for this module."""
+    global _labels_config
+    _labels_config = config
+
+
+def get_labels_config() -> LabelsConfig:
+    """Get the current labels configuration."""
+    return _labels_config
 
 
 def get_hour_height() -> int:
@@ -704,15 +729,16 @@ class WeekView(QWidget):
     
     def _update_headers(self):
         localization = get_localization_config()
+        colors = get_colors_config()
         font_name, font_size = get_interface_font()
         for i, label in enumerate(self._header_labels):
             d = self._start_date + timedelta(days=i)
             day_name = localization.get_day_name(i)
             label.setText(f"{day_name} {d.day}")
             if d == date.today():
-                label.setStyleSheet(f"font-family: '{font_name}'; font-size: {font_size}pt; font-weight: bold; padding: 8px; background: #e3f2fd; color: #1976d2;")
+                label.setStyleSheet(f"font-family: '{font_name}'; font-size: {font_size}pt; font-weight: bold; padding: 8px; background: {colors.today_highlight_background}; color: {colors.today_highlight_text};")
             else:
-                label.setStyleSheet(f"font-family: '{font_name}'; font-size: {font_size}pt; font-weight: bold; padding: 8px; background: #f5f5f5;")
+                label.setStyleSheet(f"font-family: '{font_name}'; font-size: {font_size}pt; font-weight: bold; padding: 8px; background: {colors.header_background};")
     
     def set_date(self, d: date):
         self._start_date = self._get_week_start(d)

@@ -14,16 +14,23 @@ from PySide6.QtCore import Qt, Signal, QSize, QPointF
 from PySide6.QtGui import QColor, QPalette, QFont, QMouseEvent, QPainter, QPolygonF, QBrush, QPen, QFontMetrics
 
 from backend.caldav_client import EventData
-from backend.config import LayoutConfig
+from backend.config import LayoutConfig, ColorsConfig
 
-# Module-level layout config (set by MainWindow at startup via calendar_widget)
+# Module-level configs (set by MainWindow at startup via calendar_widget)
 _layout_config: LayoutConfig = LayoutConfig()
+_colors_config: ColorsConfig = ColorsConfig()
 
 
 def set_event_layout_config(config: LayoutConfig):
     """Set the layout configuration for event widgets."""
     global _layout_config
     _layout_config = config
+
+
+def set_event_colors_config(config: ColorsConfig):
+    """Set the colors configuration for event widgets."""
+    global _colors_config
+    _colors_config = config
 
 
 def get_text_font() -> QFont:
