@@ -24,7 +24,7 @@ from backend.config import Config
 from backend.event_store import EventStore, CalendarSource, Event
 from backend.caldav_client import EventData
 
-from .widgets.calendar_widget import CalendarWidget, ViewType, set_layout_config
+from .widgets.calendar_widget import CalendarWidget, ViewType, set_layout_config, set_localization_config, get_localization_config
 from .event_dialog import EventDialog
 
 
@@ -184,8 +184,9 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self.config = config
         
-        # Set layout config for calendar widget BEFORE creating UI
+        # Set layout config and localization for calendar widget BEFORE creating UI
         set_layout_config(config.layout)
+        set_localization_config(config.localization)
         
         # Apply interface font to the application
         interface_font = QFont(config.layout.interface_font, config.layout.interface_font_size)
@@ -253,6 +254,11 @@ class MainWindow(QMainWindow):
         # Next period
         next_shortcut = QShortcut(QKeySequence(self.config.bindings.next), self)
         next_shortcut.activated.connect(self._calendar_widget.go_next)
+        
+        # New event
+        if self.config.bindings.new_event:
+            new_event_shortcut = QShortcut(QKeySequence(self.config.bindings.new_event), self)
+            new_event_shortcut.activated.connect(self._on_new_event)
     
     def _setup_ui(self):
         """Set up the main UI layout."""
@@ -500,16 +506,23 @@ class MainWindow(QMainWindow):
         """Update the date label in the toolbar."""
         current_date = self._calendar_widget.get_current_date()
         view_type = self._calendar_widget.get_current_view()
+        localization = get_localization_config()
         
         if view_type == ViewType.DAY:
-            text = current_date.strftime("%A, %B %d, %Y")
+            # Use localized month name
+            month_name = localization.get_month_name(current_date.month)
+            day_name = localization.get_day_name(current_date.weekday())
+            text = f"{day_name}, {month_name} {current_date.day}, {current_date.year}"
         elif view_type == ViewType.WEEK:
             week_start = current_date - timedelta(days=current_date.weekday())
             week_end = week_start + timedelta(days=6)
             if week_start.month == week_end.month:
-                text = f"{week_start.strftime('%B %d')} - {week_end.strftime('%d, %Y')}"
+                month_name = localization.get_month_name(week_start.month)
+                text = f"{month_name} {week_start.day} - {week_end.day}, {week_end.year}"
             else:
-                text = f"{week_start.strftime('%b %d')} - {week_end.strftime('%b %d, %Y')}"
+                month_start = localization.get_month_name(week_start.month)
+                month_end = localization.get_month_name(week_end.month)
+                text = f"{month_start} {week_start.day} - {month_end} {week_end.day}, {week_end.year}"
         elif view_type == ViewType.LIST:
             # For list view, show visible range (will be updated dynamically)
             visible_range = self._calendar_widget.get_list_visible_range()
@@ -520,7 +533,8 @@ class MainWindow(QMainWindow):
             else:
                 text = "No events"
         else:  # MONTH
-            text = current_date.strftime("%B %Y")
+            month_name = localization.get_month_name(current_date.month)
+            text = f"{month_name} {current_date.year}"
         
         self._date_label.setText(text)
     
@@ -578,8 +592,9 @@ class MainWindow(QMainWindow):
             new_config = Config.load()
             self.config = new_config
             
-            # Update layout config
+            # Update layout and localization config
             set_layout_config(new_config.layout)
+            set_localization_config(new_config.localization)
             
             # Update interface font
             interface_font = QFont(new_config.layout.interface_font, new_config.layout.interface_font_size)

@@ -14,11 +14,12 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QFontMetrics, QMouseEvent
 
 from backend.caldav_client import EventData
-from backend.config import LayoutConfig
+from backend.config import LayoutConfig, LocalizationConfig
 from .event_widget import EventWidget, set_event_layout_config
 
 # Module-level layout config (set by MainWindow at startup)
 _layout_config: LayoutConfig = LayoutConfig()
+_localization_config: LocalizationConfig = LocalizationConfig()
 
 # Module-level hour height (updated when layout config is set)
 HOUR_HEIGHT = 60  # Default value
@@ -31,6 +32,17 @@ def set_layout_config(config: LayoutConfig):
     HOUR_HEIGHT = config.hour_height
     # Also set for event widgets
     set_event_layout_config(config)
+
+
+def set_localization_config(config: LocalizationConfig):
+    """Set the localization configuration for this module."""
+    global _localization_config
+    _localization_config = config
+
+
+def get_localization_config() -> LocalizationConfig:
+    """Get the current localization configuration."""
+    return _localization_config
 
 
 def get_hour_height() -> int:
@@ -691,11 +703,12 @@ class WeekView(QWidget):
         self._scroll.verticalScrollBar().setValue(position)
     
     def _update_headers(self):
-        day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        localization = get_localization_config()
         font_name, font_size = get_interface_font()
         for i, label in enumerate(self._header_labels):
             d = self._start_date + timedelta(days=i)
-            label.setText(f"{day_names[i]} {d.day}")
+            day_name = localization.get_day_name(i)
+            label.setText(f"{day_name} {d.day}")
             if d == date.today():
                 label.setStyleSheet(f"font-family: '{font_name}'; font-size: {font_size}pt; font-weight: bold; padding: 8px; background: #e3f2fd; color: #1976d2;")
             else:
@@ -877,8 +890,10 @@ class MonthView(QWidget):
         
         self._header_labels = []
         font_name, font_size = get_interface_font()
-        for name in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]:
-            label = QLabel(name)
+        localization = get_localization_config()
+        for i in range(7):
+            day_name = localization.get_day_name(i)
+            label = QLabel(day_name)
             label.setAlignment(Qt.AlignCenter)
             label.setStyleSheet(f"font-family: '{font_name}'; font-size: {font_size}pt; font-weight: bold; padding: 8px; background: #f5f5f5;")
             header_layout.addWidget(label, 1)

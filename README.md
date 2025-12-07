@@ -14,6 +14,7 @@ A simple desktop calendar application for Nextcloud (CalDAV) and ICS subscriptio
 - **Custom Colors**: Assign custom colors to each calendar
 - **All-Day Events**: Full support for all-day and multi-day events
 - **Recurring Events**: Display and manage recurring events
+- **Localization**: Customize day and month names for any language
 - **Password Integration**: Secure password retrieval via external programs (e.g., `pass`)
 - **Keyboard Navigation**: Configurable keyboard shortcuts
 - **Event Caching**: Pre-fetches ±2 months of events for fast navigation
@@ -76,6 +77,11 @@ text_font_size = 10
 [Bindings]
 next = "l"
 prev = "h"
+new_event = "+"
+
+[Localization]
+day_names = "Mo Di Mi Do Fr Sa So"
+month_names = "Januar Februar März April Mai Juni Juli August September Oktober November Dezember"
 
 [Nextcloud.Primary]
 url = "https://nextcloud.example.com"
@@ -111,6 +117,23 @@ color = "#ff6b6b"
 |--------|---------|-------------|
 | `next` | None | Key to navigate forward (day/week/month) |
 | `prev` | None | Key to navigate backward |
+| `new_event` | None | Key to create a new event |
+
+#### Localization Section
+
+Customize day and month names for your language. If omitted, English defaults are used.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `day_names` | "Mon Tue Wed Thu Fri Sat Sun" | Space-separated abbreviated day names (Monday=first) |
+| `month_names` | "January February ... December" | Space-separated full month names |
+
+Example for German:
+```toml
+[Localization]
+day_names = "Mo Di Mi Do Fr Sa So"
+month_names = "Januar Februar März April Mai Juni Juli August September Oktober November Dezember"
+```
 
 #### Nextcloud Accounts
 

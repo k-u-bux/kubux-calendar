@@ -70,6 +70,33 @@ class BindingsConfig:
     """Configuration for keyboard bindings."""
     next: str = "Right"  # Key to go to next period
     prev: str = "Left"   # Key to go to previous period
+    new_event: str = ""  # Key to create a new event
+
+
+@dataclass
+class LocalizationConfig:
+    """Configuration for localized day and month names."""
+    # Default to English abbreviated day names
+    day_names: list[str] = None  # Mon Tue Wed Thu Fri Sat Sun
+    # Default to English full month names
+    month_names: list[str] = None  # January February ... December
+    
+    def __post_init__(self):
+        if self.day_names is None:
+            self.day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        if self.month_names is None:
+            self.month_names = [
+                "January", "February", "March", "April", "May", "June",
+                "July", "August", "September", "October", "November", "December"
+            ]
+    
+    def get_day_name(self, weekday: int) -> str:
+        """Get localized day name for weekday (0=Monday, 6=Sunday)."""
+        return self.day_names[weekday] if 0 <= weekday < len(self.day_names) else ""
+    
+    def get_month_name(self, month: int) -> str:
+        """Get localized month name (1=January, 12=December)."""
+        return self.month_names[month - 1] if 1 <= month <= len(self.month_names) else ""
 
 
 @dataclass
@@ -81,6 +108,7 @@ class Config:
     refresh_interval: int = 300  # Auto-refresh interval in seconds (0 to disable)
     layout: LayoutConfig = field(default_factory=LayoutConfig)
     bindings: BindingsConfig = field(default_factory=BindingsConfig)
+    localization: LocalizationConfig = field(default_factory=LocalizationConfig)
     nextcloud_accounts: list[NextcloudAccount] = field(default_factory=list)
     ics_subscriptions: list[ICSSubscription] = field(default_factory=list)
     
@@ -210,7 +238,23 @@ class Config:
         bindings_data = data.get('Bindings', {})
         bindings = BindingsConfig(
             next=bindings_data.get('next', 'Right'),
-            prev=bindings_data.get('prev', 'Left')
+            prev=bindings_data.get('prev', 'Left'),
+            new_event=bindings_data.get('new_event', '')
+        )
+        
+        # Parse Localization section
+        localization_data = data.get('Localization', {})
+        day_names_str = localization_data.get('day_names', '')
+        month_names_str = localization_data.get('month_names', '')
+        
+        # Parse space-separated day names (if provided)
+        day_names = day_names_str.split() if day_names_str else None
+        # Parse space-separated month names (if provided)
+        month_names = month_names_str.split() if month_names_str else None
+        
+        localization = LocalizationConfig(
+            day_names=day_names,
+            month_names=month_names
         )
         
         return cls(
@@ -219,6 +263,7 @@ class Config:
             refresh_interval=refresh_interval,
             layout=layout,
             bindings=bindings,
+            localization=localization,
             nextcloud_accounts=nextcloud_accounts,
             ics_subscriptions=ics_subscriptions
         )
