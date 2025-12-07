@@ -1,6 +1,6 @@
 # Kubux Calendar
 
-A lightweight PySide6 desktop calendar application for Nextcloud (CalDAV) and ICS subscriptions.
+A simple desktop calendar application for Nextcloud (CalDAV) and ICS subscriptions.
 
 ![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)
 
