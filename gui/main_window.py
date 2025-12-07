@@ -348,8 +348,8 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(left_spacer)
         
         # === CENTER: New Event button ===
-        self._new_event_btn = QPushButton("+ New Event")
-        self._new_event_btn.setStyleSheet("background: #007bff; color: white; padding: 6px 12px;")
+        self._new_event_btn = QPushButton("New Event")
+        # self._new_event_btn.setStyleSheet("background: #007bff; color: white; padding: 6px 12px;")
         self._new_event_btn.clicked.connect(self._on_new_event)
         toolbar.addWidget(self._new_event_btn)
         
