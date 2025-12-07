@@ -84,6 +84,7 @@ class ViewType(Enum):
     DAY = "day"
     WEEK = "week"
     MONTH = "month"
+    LIST = "list"
 
 
 def _get_single_line_event_height() -> int:
@@ -971,6 +972,342 @@ class MonthView(QWidget):
             label.setStyleSheet(f"font-family: '{font_name}'; font-size: {font_size}pt; font-weight: bold; padding: 8px; background: #f5f5f5;")
 
 
+class ListEventWidget(QFrame):
+    """Full-width event widget for list view showing all event info."""
+    
+    clicked = Signal(EventData)
+    double_clicked = Signal(EventData)
+    
+    def __init__(self, event_data: EventData, parent=None):
+        super().__init__(parent)
+        self.event_data = event_data
+        self._setup_ui()
+        self._apply_style()
+    
+    def _setup_ui(self):
+        """Set up the widget with all event info."""
+        from .event_widget import get_text_font, get_contrasting_text_color, lighten_color
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(4)
+        
+        text_font = get_text_font()
+        
+        # First row: Date/time and title
+        header_layout = QHBoxLayout()
+        header_layout.setSpacing(12)
+        
+        # Date and time
+        local_start = to_local_datetime(self.event_data.start)
+        local_end = to_local_datetime(self.event_data.end)
+        
+        if self.event_data.all_day:
+            date_text = local_start.strftime("%Y/%m/%d")
+            time_text = "All day"
+        else:
+            date_text = local_start.strftime("%Y/%m/%d")
+            time_text = f"{local_start.strftime('%H:%M')} - {local_end.strftime('%H:%M')}"
+        
+        date_label = QLabel(date_text)
+        date_label.setFont(text_font)
+        date_label.setFixedWidth(90)
+        header_layout.addWidget(date_label)
+        
+        time_label = QLabel(time_text)
+        time_label.setFont(text_font)
+        time_label.setFixedWidth(110)
+        header_layout.addWidget(time_label)
+        
+        # Title (bold)
+        title_font = QFont(text_font)
+        title_font.setBold(True)
+        title_label = QLabel(self.event_data.summary)
+        title_label.setFont(title_font)
+        title_label.setWordWrap(False)
+        header_layout.addWidget(title_label, 1)
+        
+        # Calendar name (right-aligned)
+        cal_label = QLabel(self.event_data.calendar_name)
+        cal_label.setFont(text_font)
+        cal_label.setStyleSheet("color: rgba(0, 0, 0, 0.6);")
+        header_layout.addWidget(cal_label)
+        
+        layout.addLayout(header_layout)
+        
+        # Second row: Location (if present)
+        if self.event_data.location:
+            location_label = QLabel(f"📍 {self.event_data.location}")
+            location_label.setFont(text_font)
+            location_label.setStyleSheet("margin-left: 212px;")  # Align with title
+            layout.addWidget(location_label)
+        
+        # Third row: Description (if present, truncated)
+        if self.event_data.description:
+            desc = self.event_data.description.replace('\n', ' ').replace('\r', '')
+            if len(desc) > 200:
+                desc = desc[:200] + "..."
+            desc_label = QLabel(desc)
+            desc_label.setFont(text_font)
+            desc_label.setWordWrap(True)
+            desc_label.setStyleSheet("margin-left: 212px; color: rgba(0, 0, 0, 0.7);")
+            layout.addWidget(desc_label)
+        
+        self.setFrameStyle(QFrame.StyledPanel | QFrame.Plain)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+    
+    def _apply_style(self):
+        """Apply color styling based on the event's calendar color."""
+        from .event_widget import get_contrasting_text_color, lighten_color
+        
+        bg_color = self.event_data.calendar_color
+        text_color = get_contrasting_text_color(bg_color)
+        border_color = bg_color
+        bg_lighter = lighten_color(bg_color, 0.4)
+        
+        self.setStyleSheet(f"""
+            ListEventWidget {{
+                background-color: {bg_lighter};
+                border: 2px solid {border_color};
+                border-left: 4px solid {border_color};
+                border-radius: 4px;
+                color: {text_color};
+            }}
+            ListEventWidget:hover {{
+                background-color: {lighten_color(bg_color, 0.2)};
+            }}
+            QLabel {{
+                color: {text_color};
+                background: transparent;
+                border: none;
+            }}
+        """)
+    
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self.event_data)
+        super().mousePressEvent(event)
+    
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            self.double_clicked.emit(self.event_data)
+        super().mouseDoubleClickEvent(event)
+    
+    def paintEvent(self, event):
+        """Draw indicator triangles for recurring and read-only events."""
+        super().paintEvent(event)
+        
+        if not self.event_data.is_recurring and not self.event_data.read_only:
+            return
+        
+        from PySide6.QtGui import QPainter, QBrush, QColor, QPolygonF
+        from .event_widget import get_contrasting_text_color, lighten_color
+        
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        fm = QFontMetrics(self.font())
+        triangle_size = fm.height() // 2
+        
+        w = self.width()
+        h = self.height()
+        
+        bg_color = lighten_color(self.event_data.calendar_color, 0.4)
+        triangle_color = get_contrasting_text_color(bg_color)
+        
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(QColor(triangle_color)))
+        
+        if self.event_data.is_recurring:
+            from PySide6.QtCore import QPointF
+            recurring_points = QPolygonF([
+                QPointF(0, h),
+                QPointF(triangle_size, h),
+                QPointF(0, h - triangle_size)
+            ])
+            painter.drawPolygon(recurring_points)
+        
+        if self.event_data.read_only:
+            from PySide6.QtCore import QPointF
+            readonly_points = QPolygonF([
+                QPointF(w, h),
+                QPointF(w - triangle_size, h),
+                QPointF(w, h - triangle_size)
+            ])
+            painter.drawPolygon(readonly_points)
+        
+        painter.end()
+
+
+class ListView(QWidget):
+    """Chronological list view of events with bi-infinite scrolling."""
+    
+    event_clicked = Signal(EventData)
+    event_double_clicked = Signal(EventData)
+    visible_range_changed = Signal(datetime, datetime)  # Emitted when visible events change
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._events: list[EventData] = []
+        self._event_widgets: list[ListEventWidget] = []
+        self._current_date = date.today()
+        self._sorted_events: list[EventData] = []  # Keep sorted list for navigation
+        self._setup_ui()
+    
+    def _setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        # Scroll area
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        
+        # Content widget
+        self._content = QWidget()
+        self._content_layout = QVBoxLayout(self._content)
+        self._content_layout.setContentsMargins(8, 8, 8, 8)
+        self._content_layout.setSpacing(4)
+        self._content_layout.addStretch()  # Keep events at top
+        
+        self._scroll.setWidget(self._content)
+        main_layout.addWidget(self._scroll)
+        
+        # Connect scroll to detect visible range
+        self._scroll.verticalScrollBar().valueChanged.connect(self._on_scroll)
+    
+    def _on_scroll(self):
+        """Handle scroll event to update visible range."""
+        visible_range = self.get_visible_date_range()
+        if visible_range[0] and visible_range[1]:
+            self.visible_range_changed.emit(visible_range[0], visible_range[1])
+    
+    def set_date(self, d: date):
+        """Set the current date (used for navigation context)."""
+        self._current_date = d
+    
+    def set_events(self, events: list[EventData]):
+        """Set events and rebuild the list."""
+        self._events = events
+        self._refresh_display()
+    
+    def _refresh_display(self):
+        """Rebuild the event list display."""
+        # Clear existing widgets
+        for widget in self._event_widgets:
+            widget.deleteLater()
+        self._event_widgets.clear()
+        
+        # Sort events chronologically
+        sorted_events = sorted(self._events, key=lambda e: to_local_datetime(e.start))
+        
+        # Remove the stretch at the end temporarily
+        stretch_item = self._content_layout.takeAt(self._content_layout.count() - 1)
+        
+        # Add event widgets
+        for event in sorted_events:
+            widget = ListEventWidget(event)
+            widget.clicked.connect(self.event_clicked.emit)
+            widget.double_clicked.connect(self.event_double_clicked.emit)
+            self._content_layout.addWidget(widget)
+            self._event_widgets.append(widget)
+        
+        # Re-add stretch
+        self._content_layout.addStretch()
+    
+    def get_visible_date_range(self) -> tuple[Optional[datetime], Optional[datetime]]:
+        """Get the date range of currently visible events."""
+        if not self._event_widgets:
+            return (None, None)
+        
+        viewport = self._scroll.viewport()
+        scroll_pos = self._scroll.verticalScrollBar().value()
+        viewport_height = viewport.height()
+        
+        first_visible: Optional[datetime] = None
+        last_visible: Optional[datetime] = None
+        
+        for widget in self._event_widgets:
+            # Get widget position relative to scroll area
+            widget_pos = widget.mapTo(self._content, widget.rect().topLeft())
+            widget_top = widget_pos.y()
+            widget_bottom = widget_top + widget.height()
+            
+            # Check if widget is visible
+            if widget_bottom > scroll_pos and widget_top < scroll_pos + viewport_height:
+                event_start = to_local_datetime(widget.event_data.start)
+                if first_visible is None:
+                    first_visible = event_start
+                last_visible = event_start
+        
+        return (first_visible, last_visible)
+    
+    def get_date_range(self) -> tuple[datetime, datetime]:
+        """Get the date range for fetching events (±3 months from current date)."""
+        start = datetime.combine(self._current_date - timedelta(days=90), dt_time.min)
+        end = datetime.combine(self._current_date + timedelta(days=90), dt_time.max)
+        return start, end
+    
+    def get_scroll_position(self) -> int:
+        """Get current scroll position."""
+        return self._scroll.verticalScrollBar().value()
+    
+    def set_scroll_position(self, position: int):
+        """Set scroll position."""
+        self._scroll.verticalScrollBar().setValue(position)
+    
+    def scroll_page_forward(self):
+        """Scroll forward by one page height."""
+        scrollbar = self._scroll.verticalScrollBar()
+        page_height = self._scroll.viewport().height()
+        scrollbar.setValue(scrollbar.value() + page_height)
+    
+    def scroll_page_backward(self):
+        """Scroll backward by one page height."""
+        scrollbar = self._scroll.verticalScrollBar()
+        page_height = self._scroll.viewport().height()
+        scrollbar.setValue(scrollbar.value() - page_height)
+    
+    def scroll_to_upcoming(self):
+        """Scroll to position the next upcoming event at the top of the page."""
+        if not self._event_widgets:
+            return
+        
+        # Get current local time for comparison
+        now = datetime.now()
+        
+        # Find the first event that starts after now
+        target_widget = None
+        for widget in self._event_widgets:
+            # Compare in local time (to_local_datetime converts UTC events to local)
+            event_start = to_local_datetime(widget.event_data.start)
+            # Remove timezone info for comparison if present
+            event_start_naive = event_start.replace(tzinfo=None) if event_start.tzinfo else event_start
+            if event_start_naive >= now:
+                target_widget = widget
+                break
+        
+        # If no future event, scroll to the last event (it's already past)
+        if target_widget is None and self._event_widgets:
+            target_widget = self._event_widgets[-1]
+        
+        if target_widget:
+            # Use ensureWidgetVisible to scroll the target into view at the top
+            self._scroll.ensureWidgetVisible(target_widget, 0, 0)
+            # Then adjust to put it at the top
+            from PySide6.QtCore import QTimer
+            def _scroll_to_top():
+                widget_pos = target_widget.mapTo(self._content, target_widget.rect().topLeft())
+                self._scroll.verticalScrollBar().setValue(max(0, widget_pos.y() - 8))
+            QTimer.singleShot(10, _scroll_to_top)
+    
+    def refresh_styles(self):
+        """Refresh styles after config change (rebuild widgets)."""
+        self._refresh_display()
+
+
 class CalendarWidget(QWidget):
     """Main calendar widget with switchable views."""
     
@@ -980,6 +1317,7 @@ class CalendarWidget(QWidget):
     event_double_clicked = Signal(EventData)
     view_changed = Signal(ViewType)
     date_changed = Signal(date)
+    visible_range_changed = Signal(datetime, datetime)  # For list view date label updates
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -996,6 +1334,7 @@ class CalendarWidget(QWidget):
         self._day_view = DayView()
         self._week_view = WeekView()
         self._month_view = MonthView()
+        self._list_view = ListView()
         
         for view in [self._day_view, self._week_view]:
             view.slot_clicked.connect(self.slot_clicked.emit)
@@ -1008,9 +1347,15 @@ class CalendarWidget(QWidget):
         self._month_view.event_clicked.connect(self.event_clicked.emit)
         self._month_view.event_double_clicked.connect(self.event_double_clicked.emit)
         
+        # List view only emits event clicks (no slot clicks - new events via toolbar)
+        self._list_view.event_clicked.connect(self.event_clicked.emit)
+        self._list_view.event_double_clicked.connect(self.event_double_clicked.emit)
+        self._list_view.visible_range_changed.connect(self.visible_range_changed.emit)
+        
         self._stack.addWidget(self._day_view)
         self._stack.addWidget(self._week_view)
         self._stack.addWidget(self._month_view)
+        self._stack.addWidget(self._list_view)
         
         layout.addWidget(self._stack)
         self.set_view(self._current_view)
@@ -1023,9 +1368,12 @@ class CalendarWidget(QWidget):
         elif view_type == ViewType.WEEK:
             self._stack.setCurrentWidget(self._week_view)
             self._week_view.set_date(self._current_date)
-        else:
+        elif view_type == ViewType.MONTH:
             self._stack.setCurrentWidget(self._month_view)
             self._month_view.set_date(self._current_date)
+        else:  # LIST
+            self._stack.setCurrentWidget(self._list_view)
+            self._list_view.set_date(self._current_date)
         self.view_changed.emit(view_type)
     
     def set_date(self, d: date):
@@ -1033,12 +1381,14 @@ class CalendarWidget(QWidget):
         self._day_view.set_date(d)
         self._week_view.set_date(d)
         self._month_view.set_date(d)
+        self._list_view.set_date(d)
         self.date_changed.emit(d)
     
     def set_events(self, events: list[EventData]):
         self._day_view.set_events(events)
         self._week_view.set_events(events)
         self._month_view.set_events(events)
+        self._list_view.set_events(events)
     
     def get_current_view(self) -> ViewType:
         return self._current_view
@@ -1051,48 +1401,66 @@ class CalendarWidget(QWidget):
             return self._day_view.get_date_range()
         elif self._current_view == ViewType.WEEK:
             return self._week_view.get_date_range()
-        else:
+        elif self._current_view == ViewType.MONTH:
             return self._month_view.get_date_range()
+        else:  # LIST
+            return self._list_view.get_date_range()
+    
+    def get_list_visible_range(self) -> tuple[Optional[datetime], Optional[datetime]]:
+        """Get the visible date range for list view."""
+        return self._list_view.get_visible_date_range()
     
     def go_today(self):
-        self.set_date(date.today())
+        if self._current_view == ViewType.LIST:
+            # For list view: scroll to next upcoming event
+            self._list_view.scroll_to_upcoming()
+        else:
+            self.set_date(date.today())
     
     def go_previous(self):
         if self._current_view == ViewType.DAY:
             self.set_date(self._current_date - timedelta(days=1))
         elif self._current_view == ViewType.WEEK:
             self.set_date(self._current_date - timedelta(weeks=1))
-        else:
+        elif self._current_view == ViewType.MONTH:
             if self._current_date.month == 1:
                 self.set_date(self._current_date.replace(year=self._current_date.year - 1, month=12))
             else:
                 self.set_date(self._current_date.replace(month=self._current_date.month - 1))
+        else:  # LIST - scroll up by one page
+            self._list_view.scroll_page_backward()
     
     def go_next(self):
         if self._current_view == ViewType.DAY:
             self.set_date(self._current_date + timedelta(days=1))
         elif self._current_view == ViewType.WEEK:
             self.set_date(self._current_date + timedelta(weeks=1))
-        else:
+        elif self._current_view == ViewType.MONTH:
             if self._current_date.month == 12:
                 self.set_date(self._current_date.replace(year=self._current_date.year + 1, month=1))
             else:
                 self.set_date(self._current_date.replace(month=self._current_date.month + 1))
+        else:  # LIST - scroll down by one page
+            self._list_view.scroll_page_forward()
     
     def get_scroll_position(self) -> int:
-        """Get scroll position for day/week views."""
+        """Get scroll position for day/week/list views."""
         if self._current_view == ViewType.DAY:
             return self._day_view.get_scroll_position()
         elif self._current_view == ViewType.WEEK:
             return self._week_view.get_scroll_position()
+        elif self._current_view == ViewType.LIST:
+            return self._list_view.get_scroll_position()
         return 0
     
     def set_scroll_position(self, position: int):
-        """Set scroll position for day/week views."""
+        """Set scroll position for day/week/list views."""
         self._day_view.set_scroll_position(position)
         self._week_view.set_scroll_position(position)
+        self._list_view.set_scroll_position(position)
     
     def refresh_styles(self):
         """Refresh styles after config change."""
         self._week_view.refresh_styles()
         self._month_view.refresh_styles()
+        self._list_view.refresh_styles()

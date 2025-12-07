@@ -281,6 +281,7 @@ class MainWindow(QMainWindow):
         self._calendar_widget.event_double_clicked.connect(self._on_event_double_clicked)
         self._calendar_widget.view_changed.connect(self._on_view_changed)
         self._calendar_widget.date_changed.connect(self._on_date_changed)
+        self._calendar_widget.visible_range_changed.connect(self._on_list_visible_range_changed)
         
         main_layout.addWidget(self._calendar_widget)
         self._splitter.addWidget(main_widget)
@@ -312,6 +313,8 @@ class MainWindow(QMainWindow):
         self._view_combo.addItem("Day", ViewType.DAY)
         self._view_combo.addItem("Week", ViewType.WEEK)
         self._view_combo.addItem("Month", ViewType.MONTH)
+        self._view_combo.insertSeparator(3)  # Add separator after Month
+        self._view_combo.addItem("List", ViewType.LIST)
         self._view_combo.setCurrentIndex(1)  # Default to week view
         self._view_combo.currentIndexChanged.connect(self._on_view_combo_changed)
         toolbar.addWidget(self._view_combo)
@@ -410,7 +413,7 @@ class MainWindow(QMainWindow):
         """Load persisted application state from JSON."""
         # View type
         view_str = self._ui_state.get("view_type", "week")
-        view_map = {"day": ViewType.DAY, "week": ViewType.WEEK, "month": ViewType.MONTH}
+        view_map = {"day": ViewType.DAY, "week": ViewType.WEEK, "month": ViewType.MONTH, "list": ViewType.LIST}
         view_type = view_map.get(view_str, ViewType.WEEK)
         
         # Current date
@@ -427,8 +430,8 @@ class MainWindow(QMainWindow):
         self._calendar_widget.set_date(current_date)
         self._calendar_widget.set_view(view_type)
         
-        # Update view combo
-        view_index = {ViewType.DAY: 0, ViewType.WEEK: 1, ViewType.MONTH: 2}
+        # Update view combo (index 4 for List due to separator at index 3)
+        view_index = {ViewType.DAY: 0, ViewType.WEEK: 1, ViewType.MONTH: 2, ViewType.LIST: 4}
         self._view_combo.setCurrentIndex(view_index.get(view_type, 1))
         
         # Restore scroll position (defer to after layout)
@@ -507,10 +510,26 @@ class MainWindow(QMainWindow):
                 text = f"{week_start.strftime('%B %d')} - {week_end.strftime('%d, %Y')}"
             else:
                 text = f"{week_start.strftime('%b %d')} - {week_end.strftime('%b %d, %Y')}"
-        else:
+        elif view_type == ViewType.LIST:
+            # For list view, show visible range (will be updated dynamically)
+            visible_range = self._calendar_widget.get_list_visible_range()
+            if visible_range[0] and visible_range[1]:
+                start_str = visible_range[0].strftime("%Y/%m/%d")
+                end_str = visible_range[1].strftime("%Y/%m/%d")
+                text = f"{start_str} - {end_str}"
+            else:
+                text = "No events"
+        else:  # MONTH
             text = current_date.strftime("%B %Y")
         
         self._date_label.setText(text)
+    
+    def _on_list_visible_range_changed(self, start: datetime, end: datetime):
+        """Handle visible range change in list view - update date label."""
+        if self._calendar_widget.get_current_view() == ViewType.LIST:
+            start_str = start.strftime("%Y/%m/%d")
+            end_str = end.strftime("%Y/%m/%d")
+            self._date_label.setText(f"{start_str} - {end_str}")
     
     def _on_view_combo_changed(self, index: int):
         """Handle view combo box change."""
