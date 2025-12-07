@@ -301,7 +301,12 @@ class MainWindow(QMainWindow):
         """Set up the navigation toolbar."""
         toolbar = QToolBar("Navigation")
         toolbar.setMovable(False)
+        toolbar.setContentsMargins( 0, 0, 4, 0 )
         self.addToolBar(toolbar)
+        
+        # Access the toolbar's internal layout and set margins (left, top, right, bottom)
+        if toolbar.layout():
+            toolbar.layout().setContentsMargins( 8, 12, 8, 8 )
         
         # === LEFT BLOCK ===
         # Date label (info first)
