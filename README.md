@@ -8,7 +8,7 @@ A simple desktop calendar application for Nextcloud (CalDAV) and ICS subscriptio
 
 - **CalDAV Integration**: Full read/write support for Nextcloud calendars
 - **ICS Subscriptions**: Read-only support for external ICS calendar feeds
-- **Multiple Views**: Day, Week, and Month views
+- **Multiple Views**: Day, Week, Month, and List views
 - **Event Management**: Create, edit, and delete events with recurrence support
 - **Calendar Visibility**: Toggle individual calendars on/off
 - **Custom Colors**: Assign custom colors to each calendar
@@ -139,7 +139,14 @@ Each subscription is defined as `[Subscription.Name]`:
 
 - **Previous/Next**: Use toolbar buttons or configured keyboard shortcuts
 - **Today**: Jump to current date
-- **View Switching**: Day / Week / Month buttons in toolbar
+- **View Switching**: Day / Week / Month / List in toolbar dropdown
+
+### List View
+
+The List view displays all events in a chronological scrollable list (±3 months range):
+- Shows full event details: date, time, title, location, description, and calendar name
+- **Previous/Next**: Scroll backward/forward by one page
+- **Today**: Scrolls to position the next upcoming event at the top
 
 ### Events
 
@@ -175,7 +182,7 @@ kubux-calendar/
     ├── main_window.py   # Main application window
     ├── event_dialog.py  # Event create/edit dialog
     └── widgets/
-        ├── calendar_widget.py # Day/Week/Month views
+        ├── calendar_widget.py # Day/Week/Month/List views
         └── event_widget.py    # Event display widget
 ```
 
