@@ -576,6 +576,9 @@ class MainWindow(QMainWindow):
             # Reinitialize data
             self._initialize_data()
             
+            # Refresh calendar widget styles
+            self._calendar_widget.refresh_styles()
+            
             # Update auto-refresh timer
             self._auto_refresh_timer.stop()
             if new_config.refresh_interval > 0:

@@ -43,6 +43,11 @@ def get_text_font() -> tuple[str, int]:
     return (_layout_config.text_font, _layout_config.text_font_size)
 
 
+def get_interface_font() -> tuple[str, int]:
+    """Get the configured interface font name and size."""
+    return (_layout_config.interface_font, _layout_config.interface_font_size)
+
+
 # Get local timezone offset dynamically
 import time as _time
 
@@ -686,13 +691,14 @@ class WeekView(QWidget):
     
     def _update_headers(self):
         day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        font_name, font_size = get_interface_font()
         for i, label in enumerate(self._header_labels):
             d = self._start_date + timedelta(days=i)
             label.setText(f"{day_names[i]} {d.day}")
             if d == date.today():
-                label.setStyleSheet("font-weight: bold; padding: 8px; background: #e3f2fd; color: #1976d2;")
+                label.setStyleSheet(f"font-family: '{font_name}'; font-size: {font_size}pt; font-weight: bold; padding: 8px; background: #e3f2fd; color: #1976d2;")
             else:
-                label.setStyleSheet("font-weight: bold; padding: 8px; background: #f5f5f5;")
+                label.setStyleSheet(f"font-family: '{font_name}'; font-size: {font_size}pt; font-weight: bold; padding: 8px; background: #f5f5f5;")
     
     def set_date(self, d: date):
         self._start_date = self._get_week_start(d)
@@ -752,6 +758,10 @@ class WeekView(QWidget):
         start = datetime.combine(self._start_date, dt_time.min)
         end = datetime.combine(self._start_date + timedelta(days=6), dt_time.max)
         return start, end
+    
+    def refresh_styles(self):
+        """Refresh header styles after config change."""
+        self._update_headers()
 
 
 class MonthDayCell(QFrame):
@@ -864,11 +874,14 @@ class MonthView(QWidget):
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(1)
         
+        self._header_labels = []
+        font_name, font_size = get_interface_font()
         for name in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]:
             label = QLabel(name)
             label.setAlignment(Qt.AlignCenter)
-            label.setStyleSheet("font-weight: bold; padding: 8px; background: #f5f5f5;")
+            label.setStyleSheet(f"font-family: '{font_name}'; font-size: {font_size}pt; font-weight: bold; padding: 8px; background: #f5f5f5;")
             header_layout.addWidget(label, 1)
+            self._header_labels.append(label)
         
         layout.addWidget(header)
         
@@ -950,6 +963,12 @@ class MonthView(QWidget):
         start = datetime.combine(self._cells[0].date, dt_time.min)
         end = datetime.combine(self._cells[-1].date, dt_time.max)
         return start, end
+    
+    def refresh_styles(self):
+        """Refresh header styles after config change."""
+        font_name, font_size = get_interface_font()
+        for label in self._header_labels:
+            label.setStyleSheet(f"font-family: '{font_name}'; font-size: {font_size}pt; font-weight: bold; padding: 8px; background: #f5f5f5;")
 
 
 class CalendarWidget(QWidget):
@@ -1072,3 +1091,8 @@ class CalendarWidget(QWidget):
         """Set scroll position for day/week views."""
         self._day_view.set_scroll_position(position)
         self._week_view.set_scroll_position(position)
+    
+    def refresh_styles(self):
+        """Refresh styles after config change."""
+        self._week_view.refresh_styles()
+        self._month_view.refresh_styles()
