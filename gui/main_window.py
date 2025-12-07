@@ -510,38 +510,41 @@ class MainWindow(QMainWindow):
         self._statusbar.showMessage(f"Loaded {len(events)} events", 3000)
     
     def _update_date_label(self):
-        """Update the date label in the toolbar."""
+        """Update the date label in the toolbar using yyyy/mm/dd format."""
         current_date = self._calendar_widget.get_current_date()
         view_type = self._calendar_widget.get_current_view()
-        localization = get_localization_config()
         
         if view_type == ViewType.DAY:
-            # Use localized month name
-            month_name = localization.get_month_name(current_date.month)
-            day_name = localization.get_day_name(current_date.weekday())
-            text = f"{day_name}, {month_name} {current_date.day}, {current_date.year}"
+            # Single date: yyyy/mm/dd
+            text = current_date.strftime("%Y/%m/%d")
         elif view_type == ViewType.WEEK:
             week_start = current_date - timedelta(days=current_date.weekday())
             week_end = week_start + timedelta(days=6)
-            if week_start.month == week_end.month:
-                month_name = localization.get_month_name(week_start.month)
-                text = f"{month_name} {week_start.day} - {week_end.day}, {week_end.year}"
+            if week_start.year == week_end.year and week_start.month == week_end.month:
+                # Same month: yyyy/mm/dd-dd
+                text = f"{week_start.strftime('%Y/%m/%d')}-{week_end.day:02d}"
             else:
-                month_start = localization.get_month_name(week_start.month)
-                month_end = localization.get_month_name(week_end.month)
-                text = f"{month_start} {week_start.day} - {month_end} {week_end.day}, {week_end.year}"
+                # Different months: yyyy/mm/dd - yyyy/mm/dd
+                text = f"{week_start.strftime('%Y/%m/%d')} - {week_end.strftime('%Y/%m/%d')}"
         elif view_type == ViewType.LIST:
             # For list view, show visible range (will be updated dynamically)
             visible_range = self._calendar_widget.get_list_visible_range()
             if visible_range[0] and visible_range[1]:
-                start_str = visible_range[0].strftime("%Y/%m/%d")
-                end_str = visible_range[1].strftime("%Y/%m/%d")
-                text = f"{start_str} - {end_str}"
+                start_date = visible_range[0].date()
+                end_date = visible_range[1].date()
+                if start_date == end_date:
+                    text = start_date.strftime("%Y/%m/%d")
+                elif start_date.year == end_date.year and start_date.month == end_date.month:
+                    text = f"{start_date.strftime('%Y/%m/%d')}-{end_date.day:02d}"
+                else:
+                    text = f"{start_date.strftime('%Y/%m/%d')} - {end_date.strftime('%Y/%m/%d')}"
             else:
                 text = "No events"
         else:  # MONTH
-            month_name = localization.get_month_name(current_date.month)
-            text = f"{month_name} {current_date.year}"
+            # Month view: yyyy/mm (first day of month)
+            first_of_month = current_date.replace(day=1)
+            last_day = (first_of_month.replace(month=first_of_month.month % 12 + 1, day=1) - timedelta(days=1)).day if first_of_month.month < 12 else 31
+            text = f"{current_date.strftime('%Y/%m')}/01-{last_day:02d}"
         
         self._date_label.setText(text)
     
