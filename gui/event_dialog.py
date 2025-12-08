@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLineEdit, QTextEdit, QDateTimeEdit, QCheckBox,
     QComboBox, QPushButton, QLabel, QGroupBox,
-    QSpinBox, QMessageBox, QFrame, QSizePolicy
+    QSpinBox, QMessageBox, QFrame, QSizePolicy, QScrollArea
 )
 from PySide6.QtCore import Qt, Signal, QDateTime
 from PySide6.QtGui import QFont, QCloseEvent, QFontMetrics
@@ -247,12 +247,25 @@ class EventDialog(QWidget):
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setSpacing(12)
+        layout.setSpacing(8)
+        layout.setContentsMargins(8, 8, 8, 8)
         
         if self.event_data and self.event_data.read_only:
             notice = QLabel("🔒 This event is read-only (from a subscription)")
             notice.setStyleSheet("background: #fff3cd; padding: 8px; border-radius: 4px; color: #856404;")
             layout.addWidget(notice)
+        
+        # Create scrollable content area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setFrameStyle(QFrame.NoFrame)
+        
+        # Content widget inside scroll area
+        scroll_content = QWidget()
+        content_layout = QVBoxLayout(scroll_content)
+        content_layout.setSpacing(8)
+        content_layout.setContentsMargins(0, 0, 0, 0)
         
         form = QFormLayout()
         form.setSpacing(8)
@@ -300,19 +313,19 @@ class EventDialog(QWidget):
         
         self._description_edit = QTextEdit()
         self._description_edit.setPlaceholderText("Description (optional)")
-        # Make description field expand vertically and have a reasonable minimum height
-        self._description_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # Set a reasonable minimum height for description (5 lines)
         fm = QFontMetrics(self._description_edit.font())
-        min_height = fm.height() * 5 + 10  # Minimum 5 lines + padding
+        min_height = fm.height() * 5 + 10
         self._description_edit.setMinimumHeight(min_height)
         form.addRow("Description:", self._description_edit)
         
-        layout.addLayout(form, 1)  # stretch factor 1 - form (with description) gets extra space
+        content_layout.addLayout(form)
         
         self._recurrence_widget = RecurrenceWidget()
-        layout.addWidget(self._recurrence_widget)
+        content_layout.addWidget(self._recurrence_widget)
         
-        # No addStretch() here - description field should grow, not empty space
+        scroll.setWidget(scroll_content)
+        layout.addWidget(scroll, 1)  # stretch factor 1 - scroll area gets extra space
         
         button_layout = QHBoxLayout()
         
