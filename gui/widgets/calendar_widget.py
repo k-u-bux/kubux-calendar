@@ -1435,7 +1435,16 @@ class CalendarWidget(QWidget):
         self.set_view(self._current_view)
     
     def set_view(self, view_type: ViewType):
+        # Capture reference datetime from the old view before switching
+        old_view = self._current_view
+        ref_datetime = self.get_reference_datetime()
+        
         self._current_view = view_type
+        
+        # Use reference datetime's date for the new view
+        if ref_datetime:
+            self._current_date = ref_datetime.date()
+        
         if view_type == ViewType.DAY:
             self._stack.setCurrentWidget(self._day_view)
             self._day_view.set_date(self._current_date)
@@ -1448,7 +1457,39 @@ class CalendarWidget(QWidget):
         else:  # LIST
             self._stack.setCurrentWidget(self._list_view)
             self._list_view.set_date(self._current_date)
+            # For list view switching to it: scroll to the reference datetime
+            if old_view != ViewType.LIST and ref_datetime:
+                from PySide6.QtCore import QTimer
+                # Defer scroll to after events are loaded
+                QTimer.singleShot(100, lambda: self._list_view.scroll_to_datetime(ref_datetime))
+        
         self.view_changed.emit(view_type)
+    
+    def get_reference_datetime(self) -> datetime:
+        """Get reference datetime for current view (for view-agnostic state persistence).
+        
+        Returns:
+            - Day view: start of current day
+            - Week view: start of current week (Monday)
+            - Month view: start of current month
+            - List view: first visible event datetime, or now if no events visible
+        """
+        if self._current_view == ViewType.DAY:
+            return datetime.combine(self._current_date, dt_time.min)
+        elif self._current_view == ViewType.WEEK:
+            # Start of week (Monday)
+            week_start = self._current_date - timedelta(days=self._current_date.weekday())
+            return datetime.combine(week_start, dt_time.min)
+        elif self._current_view == ViewType.MONTH:
+            # Start of month
+            return datetime.combine(self._current_date.replace(day=1), dt_time.min)
+        else:  # LIST
+            # First visible event datetime
+            first_visible = self._list_view.get_first_visible_datetime()
+            if first_visible:
+                return first_visible
+            # Fallback: current datetime
+            return datetime.now()
     
     def set_date(self, d: date):
         self._current_date = d
