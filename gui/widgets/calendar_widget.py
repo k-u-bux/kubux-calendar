@@ -1284,6 +1284,40 @@ class ListView(QWidget):
         
         return (first_visible, last_visible)
     
+    def get_first_visible_datetime(self) -> Optional[datetime]:
+        """Get the datetime of the first visible event (top of view)."""
+        visible_range = self.get_visible_date_range()
+        return visible_range[0]
+    
+    def scroll_to_datetime(self, target_dt: datetime):
+        """Scroll to position the first event at or after target_dt at the top."""
+        if not self._event_widgets:
+            return
+        
+        # Find the first event at or after target_dt
+        target_widget = None
+        for widget in self._event_widgets:
+            event_start = to_local_datetime(widget.event_data.start)
+            # Remove timezone info for comparison
+            event_start_naive = event_start.replace(tzinfo=None) if event_start.tzinfo else event_start
+            target_naive = target_dt.replace(tzinfo=None) if target_dt.tzinfo else target_dt
+            if event_start_naive >= target_naive:
+                target_widget = widget
+                break
+        
+        # If no event at or after target, use the last event
+        if target_widget is None and self._event_widgets:
+            target_widget = self._event_widgets[-1]
+        
+        if target_widget:
+            # Scroll so the target widget is at the top
+            from PySide6.QtCore import QTimer
+            def _scroll_to_widget():
+                widget_pos = target_widget.mapTo(self._content, target_widget.rect().topLeft())
+                self._scroll.verticalScrollBar().setValue(max(0, widget_pos.y() - 8))
+            # Defer to ensure layout is complete
+            QTimer.singleShot(50, _scroll_to_widget)
+    
     def get_date_range(self) -> tuple[datetime, datetime]:
         """Get the date range for fetching events (±3 months from current date)."""
         start = datetime.combine(self._current_date - timedelta(days=90), dt_time.min)
@@ -1449,6 +1483,14 @@ class CalendarWidget(QWidget):
     def get_list_visible_range(self) -> tuple[Optional[datetime], Optional[datetime]]:
         """Get the visible date range for list view."""
         return self._list_view.get_visible_date_range()
+    
+    def get_list_first_visible_datetime(self) -> Optional[datetime]:
+        """Get the datetime of the first visible event in list view."""
+        return self._list_view.get_first_visible_datetime()
+    
+    def scroll_list_to_datetime(self, target_dt: datetime):
+        """Scroll list view to position events at or after target_dt at top."""
+        self._list_view.scroll_to_datetime(target_dt)
     
     def go_today(self):
         if self._current_view == ViewType.LIST:

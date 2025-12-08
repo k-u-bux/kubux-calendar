@@ -451,9 +451,14 @@ class MainWindow(QMainWindow):
         view_index = {ViewType.DAY: 0, ViewType.WEEK: 1, ViewType.MONTH: 2, ViewType.LIST: 4}
         self._view_combo.setCurrentIndex(view_index.get(view_type, 1))
         
-        # Restore scroll position (defer to after layout)
+        # Restore scroll position (defer to after layout and data load)
         scroll_pos = self._ui_state.get("scroll_position", 0)
-        QTimer.singleShot(100, lambda: self._calendar_widget.set_scroll_position(scroll_pos))
+        list_top_datetime_str = self._ui_state.get("list_top_datetime")
+        
+        # Store for deferred scroll restoration
+        self._pending_restore_view_type = view_type
+        self._pending_restore_scroll_pos = scroll_pos
+        self._pending_restore_list_dt_str = list_top_datetime_str
         
         # Restore splitter sizes (sidebar width)
         splitter_sizes = self._ui_state.get("splitter_sizes")
@@ -475,9 +480,15 @@ class MainWindow(QMainWindow):
         current_date = self._calendar_widget.get_current_date()
         self._ui_state["current_date"] = current_date.isoformat()
         
-        # Scroll position
-        scroll_pos = self._calendar_widget.get_scroll_position()
-        self._ui_state["scroll_position"] = scroll_pos
+        # Scroll position - save separately for list view and day/week views
+        if view_type == ViewType.LIST:
+            # For list view, save the datetime of the first visible event
+            first_visible_dt = self._calendar_widget.get_list_first_visible_datetime()
+            if first_visible_dt:
+                self._ui_state["list_top_datetime"] = first_visible_dt.isoformat()
+        else:
+            scroll_pos = self._calendar_widget.get_scroll_position()
+            self._ui_state["scroll_position"] = scroll_pos
         
         # Splitter sizes (sidebar width)
         self._ui_state["splitter_sizes"] = self._splitter.sizes()
@@ -494,6 +505,9 @@ class MainWindow(QMainWindow):
             self._sidebar.refresh()
             self._refresh_events()
             self._statusbar.showMessage("Connected", 3000)
+            
+            # Restore scroll position after data is loaded
+            QTimer.singleShot(300, self._restore_scroll_position)
         else:
             self._statusbar.showMessage("Failed to connect to some calendars")
             QMessageBox.warning(
@@ -501,6 +515,27 @@ class MainWindow(QMainWindow):
                 "Connection Warning",
                 "Could not connect to all calendar sources. Some calendars may be unavailable."
             )
+    
+    def _restore_scroll_position(self):
+        """Restore scroll position after data load (deferred from _load_state)."""
+        view_type = getattr(self, '_pending_restore_view_type', None)
+        scroll_pos = getattr(self, '_pending_restore_scroll_pos', 0)
+        list_dt_str = getattr(self, '_pending_restore_list_dt_str', None)
+        
+        if view_type == ViewType.LIST:
+            if list_dt_str:
+                # Scroll to saved datetime
+                try:
+                    list_top_dt = datetime.fromisoformat(list_dt_str)
+                    self._calendar_widget.scroll_list_to_datetime(list_top_dt)
+                except:
+                    # Fallback: scroll to upcoming if datetime invalid
+                    self._calendar_widget.go_today()
+            else:
+                # No saved datetime - scroll to upcoming events
+                self._calendar_widget.go_today()
+        else:
+            self._calendar_widget.set_scroll_position(scroll_pos)
     
     def _refresh_events(self):
         """Refresh events for the current view."""
