@@ -85,36 +85,39 @@ def get_interface_font() -> tuple[str, int]:
     return (_layout_config.interface_font, _layout_config.interface_font_size)
 
 
-# Get local timezone offset dynamically
+# Get local timezone using pytz
+import pytz
 import time as _time
 
 
-def _get_local_tz_offset() -> timedelta:
-    """Get the current local timezone offset from UTC."""
-    # Check if DST is currently active
-    is_dst = _time.localtime().tm_isdst
-    if is_dst:
-        offset_seconds = -_time.altzone
-    else:
-        offset_seconds = -_time.timezone
-    return timedelta(seconds=offset_seconds)
-
-
-def to_local_hour(dt: datetime) -> float:
-    """Convert datetime to local timezone and return hour as float (e.g., 14.5 for 14:30)."""
-    if dt.tzinfo is not None:
-        # Convert from UTC to local
-        local_dt = dt + _get_local_tz_offset()
-    else:
-        local_dt = dt
-    return local_dt.hour + local_dt.minute / 60.0
+def _get_local_timezone():
+    """Get the local timezone as a pytz timezone object."""
+    local_tz_name = _time.tzname[0]
+    try:
+        return pytz.timezone(local_tz_name)
+    except:
+        # Fallback: calculate offset and use a fixed offset timezone
+        offset_seconds = -_time.timezone if not _time.daylight else -_time.altzone
+        return pytz.FixedOffset(offset_seconds // 60)
 
 
 def to_local_datetime(dt: datetime) -> datetime:
     """Convert datetime to local timezone."""
     if dt.tzinfo is not None:
-        return dt + _get_local_tz_offset()
+        # Convert UTC datetime to local timezone
+        try:
+            local_tz = pytz.timezone('Europe/Amsterdam')  # Use explicit timezone for reliability
+        except:
+            local_tz = _get_local_timezone()
+        local_dt = dt.astimezone(local_tz)
+        return local_dt
     return dt
+
+
+def to_local_hour(dt: datetime) -> float:
+    """Convert datetime to local timezone and return hour as float (e.g., 14.5 for 14:30)."""
+    local_dt = to_local_datetime(dt)
+    return local_dt.hour + local_dt.minute / 60.0
 
 
 class ViewType(Enum):
@@ -1027,38 +1030,49 @@ class ListEventWidget(QFrame):
     
     def _setup_ui(self):
         """Set up the widget with all event info."""
-        from .event_widget import get_text_font, get_contrasting_text_color, lighten_color
+        from .event_widget import get_text_font, get_contrasting_text_color, lighten_color, to_local_datetime as to_local_dt
         
-        layout = QVBoxLayout(self)
+        layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(4)
+        layout.setSpacing(12)
         
         text_font = get_text_font()
         
-        # First row: Date/time and title
-        header_layout = QHBoxLayout()
-        header_layout.setSpacing(12)
+        # Date/time column (two lines, width based on font metrics)
+        local_start = to_local_dt(self.event_data.start)
+        local_end = to_local_dt(self.event_data.end)
         
-        # Date and time
-        local_start = to_local_datetime(self.event_data.start)
-        local_end = to_local_datetime(self.event_data.end)
-        
+        # Build two-line date/time text
         if self.event_data.all_day:
-            date_text = local_start.strftime("%Y/%m/%d")
-            time_text = "All day"
+            # All-day: "YYYY/mm/dd" + "(Allday)"
+            line1 = local_start.strftime("%Y/%m/%d")
+            line2 = "(Allday)"
         else:
-            date_text = local_start.strftime("%Y/%m/%d")
-            time_text = f"{local_start.strftime('%H:%M')} - {local_end.strftime('%H:%M')}"
+            # Timed: "YYYY/mm/dd HH:mm" + "to: mm/dd HH:mm"
+            line1 = local_start.strftime("%Y/%m/%d %H:%M")
+            line2 = f"to: {local_end.strftime('%m/%d %H:%M')}"
         
-        date_label = QLabel(date_text)
-        date_label.setFont(text_font)
-        date_label.setFixedWidth(90)
-        header_layout.addWidget(date_label)
+        datetime_label = QLabel(f"{line1}\n{line2}")
+        datetime_label.setFont(text_font)
+        datetime_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         
-        time_label = QLabel(time_text)
-        time_label.setFont(text_font)
-        time_label.setFixedWidth(110)
-        header_layout.addWidget(time_label)
+        # Calculate width dynamically based on longest possible line
+        fm = QFontMetrics(text_font)
+        # Sample text for width calculation: "YYYY/mm/dd HH:mm" is the widest format
+        sample_text = "0000/00/00 00:00"
+        datetime_width = fm.horizontalAdvance(sample_text) + 8  # Add small padding
+        datetime_label.setFixedWidth(datetime_width)
+        
+        layout.addWidget(datetime_label, 0, Qt.AlignTop)
+        
+        # Content column (title, location, description)
+        content_layout = QVBoxLayout()
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(2)
+        
+        # Title row with calendar name
+        title_row = QHBoxLayout()
+        title_row.setSpacing(12)
         
         # Title (bold)
         title_font = QFont(text_font)
@@ -1066,24 +1080,23 @@ class ListEventWidget(QFrame):
         title_label = QLabel(self.event_data.summary)
         title_label.setFont(title_font)
         title_label.setWordWrap(False)
-        header_layout.addWidget(title_label, 1)
+        title_row.addWidget(title_label, 1)
         
         # Calendar name (right-aligned)
         cal_label = QLabel(self.event_data.calendar_name)
         cal_label.setFont(text_font)
         cal_label.setStyleSheet("color: rgba(0, 0, 0, 0.6);")
-        header_layout.addWidget(cal_label)
+        title_row.addWidget(cal_label)
         
-        layout.addLayout(header_layout)
+        content_layout.addLayout(title_row)
         
-        # Second row: Location (if present)
+        # Location (if present)
         if self.event_data.location:
             location_label = QLabel(f"📍 {self.event_data.location}")
             location_label.setFont(text_font)
-            location_label.setStyleSheet("margin-left: 212px;")  # Align with title
-            layout.addWidget(location_label)
+            content_layout.addWidget(location_label)
         
-        # Third row: Description (if present, truncated)
+        # Description (if present, truncated)
         if self.event_data.description:
             desc = self.event_data.description.replace('\n', ' ').replace('\r', '')
             if len(desc) > 200:
@@ -1091,8 +1104,10 @@ class ListEventWidget(QFrame):
             desc_label = QLabel(desc)
             desc_label.setFont(text_font)
             desc_label.setWordWrap(True)
-            desc_label.setStyleSheet("margin-left: 212px; color: rgba(0, 0, 0, 0.7);")
-            layout.addWidget(desc_label)
+            desc_label.setStyleSheet("color: rgba(0, 0, 0, 0.7);")
+            content_layout.addWidget(desc_label)
+        
+        layout.addLayout(content_layout, 1)
         
         self.setFrameStyle(QFrame.StyledPanel | QFrame.Plain)
         self.setCursor(Qt.PointingHandCursor)
