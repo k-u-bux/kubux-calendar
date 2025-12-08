@@ -120,9 +120,10 @@ class CalendarSidebarItem(QFrame):
 class CalendarSidebar(QWidget):
     """Sidebar showing all calendar sources with visibility toggles."""
     
-    def __init__(self, event_store: EventStore, parent=None):
+    def __init__(self, event_store: EventStore, interface_font: QFont = None, parent=None):
         super().__init__(parent)
         self.event_store = event_store
+        self._interface_font = interface_font
         self._items: dict[str, CalendarSidebarItem] = {}
         self._setup_ui()
     
@@ -132,11 +133,16 @@ class CalendarSidebar(QWidget):
         layout.setSpacing(4)
         
         # Header
-        header = QLabel("Calendars")
-        font = header.font()
-        font.setBold(True)
-        header.setFont(font)
-        layout.addWidget(header)
+        self._header = QLabel("Calendars")
+        if self._interface_font:
+            header_font = QFont(self._interface_font)
+            header_font.setBold(True)
+            self._header.setFont(header_font)
+        else:
+            font = self._header.font()
+            font.setBold(True)
+            self._header.setFont(font)
+        layout.addWidget(self._header)
         
         # Separator
         sep = QFrame()
@@ -194,9 +200,12 @@ class MainWindow(QMainWindow):
         set_colors_config(config.colors)
         set_labels_config(config.labels)
         
-        # Apply interface font to the application
-        interface_font = QFont(config.layout.interface_font, config.layout.interface_font_size)
-        QApplication.instance().setFont(interface_font)
+        # Apply text_font as application default (for tooltips, event content, etc.)
+        text_font = QFont(config.layout.text_font, config.layout.text_font_size)
+        QApplication.instance().setFont(text_font)
+        
+        # Store interface font for explicit use on UI elements
+        self._interface_font = QFont(config.layout.interface_font, config.layout.interface_font_size)
         
         # Initialize event store
         self.event_store = EventStore(config)
@@ -278,7 +287,8 @@ class MainWindow(QMainWindow):
         sidebar_scroll.setMinimumWidth(50)  # Allow sidebar to be made smaller
         sidebar_scroll.setMaximumWidth(400)  # Allow sidebar to be made wider
         
-        self._sidebar = CalendarSidebar(self.event_store)
+        self._sidebar = CalendarSidebar(self.event_store, interface_font=self._interface_font)
+        self._sidebar.setFont(self._interface_font)
         sidebar_scroll.setWidget(self._sidebar)
         self._splitter.addWidget(sidebar_scroll)
         
@@ -317,9 +327,9 @@ class MainWindow(QMainWindow):
         # === LEFT BLOCK ===
         # Date label (info first)
         self._date_label = QLabel()
-        font = self._date_label.font()
-        font.setBold(True)
-        self._date_label.setFont(font)
+        date_font = QFont(self._interface_font)
+        date_font.setBold(True)
+        self._date_label.setFont(date_font)
         self._date_label.setMinimumWidth(200)
         toolbar.addWidget(self._date_label)
         
@@ -327,6 +337,7 @@ class MainWindow(QMainWindow):
         
         # View switcher
         self._view_combo = QComboBox()
+        self._view_combo.setFont(self._interface_font)
         self._view_combo.addItem("Day", ViewType.DAY)
         self._view_combo.addItem("Week", ViewType.WEEK)
         self._view_combo.addItem("Month", ViewType.MONTH)
@@ -340,15 +351,18 @@ class MainWindow(QMainWindow):
         
         # Navigation buttons
         self._prev_btn = QPushButton("◀")
+        self._prev_btn.setFont(self._interface_font)
         self._prev_btn.setToolTip("Previous")
         self._prev_btn.clicked.connect(self._calendar_widget.go_previous)
         toolbar.addWidget(self._prev_btn)
         
         self._today_btn = QPushButton("Today")
+        self._today_btn.setFont(self._interface_font)
         self._today_btn.clicked.connect(self._calendar_widget.go_today)
         toolbar.addWidget(self._today_btn)
         
         self._next_btn = QPushButton("▶")
+        self._next_btn.setFont(self._interface_font)
         self._next_btn.setToolTip("Next")
         self._next_btn.clicked.connect(self._calendar_widget.go_next)
         toolbar.addWidget(self._next_btn)
@@ -360,7 +374,7 @@ class MainWindow(QMainWindow):
         
         # === CENTER: New Event button ===
         self._new_event_btn = QPushButton("New Event")
-        # self._new_event_btn.setStyleSheet("background: #007bff; color: white; padding: 6px 12px;")
+        self._new_event_btn.setFont(self._interface_font)
         self._new_event_btn.clicked.connect(self._on_new_event)
         toolbar.addWidget(self._new_event_btn)
         
@@ -371,16 +385,19 @@ class MainWindow(QMainWindow):
         
         # === RIGHT BLOCK: Actions ===
         self._reload_btn = QPushButton("Reload")
+        self._reload_btn.setFont(self._interface_font)
         self._reload_btn.setToolTip("Reload events from all calendars")
         self._reload_btn.clicked.connect(self._refresh_events)
         toolbar.addWidget(self._reload_btn)
         
         self._edit_config_btn = QPushButton("Edit Config")
+        self._edit_config_btn.setFont(self._interface_font)
         self._edit_config_btn.setToolTip("Open configuration file")
         self._edit_config_btn.clicked.connect(self._on_edit_config)
         toolbar.addWidget(self._edit_config_btn)
         
         self._quit_btn = QPushButton("Quit")
+        self._quit_btn.setFont(self._interface_font)
         self._quit_btn.setToolTip("Exit application")
         self._quit_btn.clicked.connect(self.close)
         toolbar.addWidget(self._quit_btn)
@@ -390,6 +407,7 @@ class MainWindow(QMainWindow):
     def _setup_statusbar(self):
         """Set up the status bar."""
         self._statusbar = QStatusBar()
+        self._statusbar.setFont(self._interface_font)
         self.setStatusBar(self._statusbar)
         self._statusbar.showMessage("Ready")
     
@@ -428,6 +446,8 @@ class MainWindow(QMainWindow):
     
     def _load_state(self):
         """Load persisted application state from JSON."""
+        import sys
+        
         # View type
         view_str = self._ui_state.get("view_type", "week")
         view_map = {"day": ViewType.DAY, "week": ViewType.WEEK, "month": ViewType.MONTH, "list": ViewType.LIST}
@@ -455,6 +475,8 @@ class MainWindow(QMainWindow):
         scroll_pos = self._ui_state.get("scroll_position", 0)
         list_top_datetime_str = self._ui_state.get("list_top_datetime")
         
+        print(f"DEBUG _load_state: view_type={view_type}, scroll_pos={scroll_pos}, list_dt={list_top_datetime_str}", file=sys.stderr)
+        
         # Store for deferred scroll restoration
         self._pending_restore_view_type = view_type
         self._pending_restore_scroll_pos = scroll_pos
@@ -468,6 +490,7 @@ class MainWindow(QMainWindow):
     def _save_state(self):
         """Save application state to JSON."""
         import base64
+        import sys
         
         # Window geometry (encode as base64 string for JSON)
         self._ui_state["geometry"] = base64.b64encode(self.saveGeometry().data()).decode('utf-8')
@@ -486,9 +509,11 @@ class MainWindow(QMainWindow):
             first_visible_dt = self._calendar_widget.get_list_first_visible_datetime()
             if first_visible_dt:
                 self._ui_state["list_top_datetime"] = first_visible_dt.isoformat()
+                print(f"DEBUG _save_state: list_top_datetime={first_visible_dt.isoformat()}", file=sys.stderr)
         else:
             scroll_pos = self._calendar_widget.get_scroll_position()
             self._ui_state["scroll_position"] = scroll_pos
+            print(f"DEBUG _save_state: scroll_position={scroll_pos}", file=sys.stderr)
         
         # Splitter sizes (sidebar width)
         self._ui_state["splitter_sizes"] = self._splitter.sizes()
@@ -506,8 +531,9 @@ class MainWindow(QMainWindow):
             self._refresh_events()
             self._statusbar.showMessage("Connected", 3000)
             
-            # Restore scroll position after data is loaded
-            QTimer.singleShot(300, self._restore_scroll_position)
+            # Restore scroll position after data is loaded (unless caller handles it)
+            if not getattr(self, '_skip_auto_scroll_restore', False):
+                QTimer.singleShot(300, self._restore_scroll_position)
         else:
             self._statusbar.showMessage("Failed to connect to some calendars")
             QMessageBox.warning(
@@ -518,9 +544,12 @@ class MainWindow(QMainWindow):
     
     def _restore_scroll_position(self):
         """Restore scroll position after data load (deferred from _load_state)."""
+        import sys
         view_type = getattr(self, '_pending_restore_view_type', None)
         scroll_pos = getattr(self, '_pending_restore_scroll_pos', 0)
         list_dt_str = getattr(self, '_pending_restore_list_dt_str', None)
+        
+        print(f"DEBUG _restore_scroll_position: view_type={view_type}, scroll_pos={scroll_pos}, list_dt={list_dt_str}", file=sys.stderr)
         
         if view_type == ViewType.LIST:
             if list_dt_str:
@@ -535,6 +564,7 @@ class MainWindow(QMainWindow):
                 # No saved datetime - scroll to upcoming events
                 self._calendar_widget.go_today()
         else:
+            print(f"DEBUG _restore_scroll_position: calling set_scroll_position({scroll_pos})", file=sys.stderr)
             self._calendar_widget.set_scroll_position(scroll_pos)
     
     def _refresh_events(self):
@@ -622,7 +652,6 @@ class MainWindow(QMainWindow):
         """Handle config file change - reload configuration."""
         import sys
         print(f"DEBUG: Config file changed: {path}", file=sys.stderr)
-        self._statusbar.showMessage("Config file changed, reloading...")
         
         # Some editors (like vim) delete and recreate the file, which removes it from the watcher
         # Re-add the path if it exists
@@ -631,57 +660,164 @@ class MainWindow(QMainWindow):
             self._config_watcher.addPath(str(config_path))
         
         # Delay reload slightly to ensure file is fully written
-        QTimer.singleShot(500, self._reload_config)
+        QTimer.singleShot(500, self._load_pending_config)
     
-    def _reload_config(self):
-        """Reload configuration and reinitialize calendar sources."""
+    def _load_pending_config(self):
+        """Load new config and apply or defer depending on open dialogs."""
         import sys
         try:
-            # Load new config
             new_config = Config.load()
-            self.config = new_config
             
-            # Update layout, localization, colors, and labels config
+            # Capture current scroll position NOW before any processing
+            current_scroll_pos = self._calendar_widget.get_scroll_position()
+            current_view = self._calendar_widget.get_current_view()
+            current_date = self._calendar_widget.get_current_date()
+            current_list_dt = None
+            if current_view == ViewType.LIST:
+                current_list_dt = self._calendar_widget.get_list_first_visible_datetime()
+            
+            print(f"DEBUG _load_pending_config: captured scroll_pos={current_scroll_pos}, view={current_view}", file=sys.stderr)
+            
+            if self._event_dialogs:
+                # Dialogs are open - defer config application
+                self._pending_config = new_config
+                self._pending_scroll_capture = {
+                    'scroll_pos': current_scroll_pos,
+                    'view': current_view,
+                    'date': current_date,
+                    'list_dt': current_list_dt
+                }
+                self._statusbar.showMessage("Config changed. Will apply when edit dialogs close.", 5000)
+                print("DEBUG: Config change deferred until dialogs close", file=sys.stderr)
+            else:
+                # No dialogs open - apply immediately with captured scroll position
+                self._apply_config(new_config, captured_scroll={
+                    'scroll_pos': current_scroll_pos,
+                    'view': current_view,
+                    'date': current_date,
+                    'list_dt': current_list_dt
+                })
+                
+        except Exception as e:
+            error_msg = f"Failed to load config: {e}"
+            print(f"ERROR: {error_msg}", file=sys.stderr)
+            self._statusbar.showMessage(error_msg, 5000)
+    
+    def _on_event_dialog_closed(self, dialog: EventDialog):
+        """Handle event dialog close - check if we should apply pending config."""
+        if dialog in self._event_dialogs:
+            self._event_dialogs.remove(dialog)
+        
+        # If all dialogs closed and we have pending config, apply it
+        if not self._event_dialogs and hasattr(self, '_pending_config') and self._pending_config:
+            pending = self._pending_config
+            pending_scroll = getattr(self, '_pending_scroll_capture', None)
+            self._pending_config = None
+            self._pending_scroll_capture = None
+            self._apply_config(pending, captured_scroll=pending_scroll)
+    
+    def _apply_config(self, new_config: Config, captured_scroll: dict = None):
+        """Apply new configuration by rebuilding the UI in place."""
+        import sys
+        print("DEBUG: Applying new config...", file=sys.stderr)
+        
+        try:
+            # Save current UI state before rebuild (primarily for geometry)
+            self._save_state()
+            
+            # Update config reference
+            self.config = new_config
+            self._state_file = new_config.state_file
+            
+            # Update global config modules
             set_layout_config(new_config.layout)
             set_localization_config(new_config.localization)
             set_colors_config(new_config.colors)
             set_labels_config(new_config.labels)
             
-            # Update interface font
-            interface_font = QFont(new_config.layout.interface_font, new_config.layout.interface_font_size)
-            QApplication.instance().setFont(interface_font)
+            # Update fonts
+            text_font = QFont(new_config.layout.text_font, new_config.layout.text_font_size)
+            QApplication.instance().setFont(text_font)
+            self._interface_font = QFont(new_config.layout.interface_font, new_config.layout.interface_font_size)
             
-            # Reinitialize event store with new config
+            # Stop auto-refresh timer during rebuild
+            self._auto_refresh_timer.stop()
+            
+            # Clear existing UI (keep window shell)
+            self._clear_ui()
+            
+            # Reinitialize event store
             self.event_store = EventStore(new_config)
             self.event_store.set_on_change_callback(self._on_data_changed)
             
-            # Update sidebar's reference to event store
-            self._sidebar.event_store = self.event_store
+            # Rebuild UI with new config
+            self._setup_ui()
+            self._setup_toolbar()
+            self._setup_shortcuts()
+            self._setup_statusbar()
             
-            # Reinitialize data
+            # Restore state - use captured scroll data if provided
+            self._load_ui_state()
+            self._load_state()
+            
+            # Override pending scroll restoration with captured data if available
+            if captured_scroll:
+                self._pending_restore_view_type = captured_scroll['view']
+                self._pending_restore_scroll_pos = captured_scroll['scroll_pos']
+                self._pending_restore_list_dt_str = captured_scroll['list_dt'].isoformat() if captured_scroll['list_dt'] else None
+                # Also apply the current date
+                self._calendar_widget.set_date(captured_scroll['date'])
+                print(f"DEBUG _apply_config: using captured scroll_pos={captured_scroll['scroll_pos']}", file=sys.stderr)
+            
+            # Initialize data (skip automatic scroll restoration - we'll do it explicitly)
+            self._skip_auto_scroll_restore = True
             self._initialize_data()
+            self._skip_auto_scroll_restore = False
             
-            # Refresh calendar widget styles
-            self._calendar_widget.refresh_styles()
-            
-            # Update auto-refresh timer
-            self._auto_refresh_timer.stop()
+            # Restart auto-refresh timer if configured
             if new_config.refresh_interval > 0:
                 self._auto_refresh_timer.start(new_config.refresh_interval * 1000)
-                print(f"DEBUG: Auto-refresh updated to {new_config.refresh_interval} seconds", file=sys.stderr)
+                print(f"DEBUG: Auto-refresh enabled every {new_config.refresh_interval} seconds", file=sys.stderr)
             
-            self._statusbar.showMessage("Configuration reloaded successfully", 3000)
-            print("DEBUG: Config reloaded successfully", file=sys.stderr)
+            # Re-add config path to watcher (may have been removed during file editing)
+            config_path = Config.get_default_config_path()
+            if config_path.exists() and str(config_path) not in self._config_watcher.files():
+                self._config_watcher.addPath(str(config_path))
+                print(f"DEBUG: Re-added config path to watcher: {config_path}", file=sys.stderr)
+            
+            # Restore scroll position after UI has settled (longer delay for config reload)
+            QTimer.singleShot(500, self._restore_scroll_position)
+            
+            self._statusbar.showMessage("Configuration applied successfully", 3000)
+            print("DEBUG: Config applied successfully", file=sys.stderr)
             
         except Exception as e:
-            error_msg = f"Failed to reload config: {e}"
+            error_msg = f"Failed to apply config: {e}"
             print(f"ERROR: {error_msg}", file=sys.stderr)
             self._statusbar.showMessage(error_msg, 5000)
             QMessageBox.warning(
                 self,
-                "Config Reload Error",
-                f"Failed to reload configuration:\n{e}\n\nPrevious configuration is still active."
+                "Config Apply Error",
+                f"Failed to apply configuration:\n{e}"
             )
+    
+    def _clear_ui(self):
+        """Clear existing UI components to prepare for rebuild."""
+        # Remove central widget
+        old_central = self.centralWidget()
+        if old_central:
+            old_central.deleteLater()
+        self.setCentralWidget(None)
+        
+        # Remove toolbar
+        for toolbar in self.findChildren(QToolBar):
+            self.removeToolBar(toolbar)
+            toolbar.deleteLater()
+        
+        # Remove statusbar (will be recreated)
+        old_statusbar = self.statusBar()
+        if old_statusbar:
+            self.setStatusBar(None)
     
     def _on_slot_double_clicked(self, dt: datetime):
         """Handle double-click on empty time slot to create event."""
@@ -718,7 +854,7 @@ class MainWindow(QMainWindow):
         
         dialog.event_saved.connect(self._on_event_saved)
         dialog.event_deleted.connect(self._on_event_deleted)
-        dialog.closed.connect(lambda: self._event_dialogs.remove(dialog) if dialog in self._event_dialogs else None)
+        dialog.closed.connect(lambda d=dialog: self._on_event_dialog_closed(d))
         
         self._event_dialogs.append(dialog)
         dialog.show()
