@@ -797,7 +797,14 @@ class MonthDayCell(QFrame):
     
     def _setup_ui(self):
         self.setFrameStyle(QFrame.Box | QFrame.Plain)
-        self.setMinimumSize(100, 80)
+        # Calculate minimum size based on font metrics
+        fm = QFontMetrics(self.font())
+        line_height = fm.height()
+        # Minimum: day number + space for 2 event lines + padding
+        min_height = line_height + 2 * _get_single_line_event_height() + 12
+        # Minimum width: enough for day number "00" + padding
+        min_width = fm.horizontalAdvance("00") + 16
+        self.setMinimumSize(max(min_width, 60), max(min_height, 60))
         self.setCursor(Qt.PointingHandCursor)
         
         layout = QVBoxLayout(self)

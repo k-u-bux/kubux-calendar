@@ -36,7 +36,11 @@ class ClickableColorBox(QFrame):
     def __init__(self, color: str, parent=None):
         super().__init__(parent)
         self._color = color
-        self.setFixedSize(16, 16)
+        # Size based on font metrics - approximately 1 line height
+        from PySide6.QtGui import QFontMetrics
+        fm = QFontMetrics(self.font())
+        size = max(fm.height(), 16)  # Minimum 16px for usability
+        self.setFixedSize(size, size)
         self.setCursor(Qt.PointingHandCursor)
         self._update_style()
     

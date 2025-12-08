@@ -14,10 +14,10 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLineEdit, QTextEdit, QDateTimeEdit, QCheckBox,
     QComboBox, QPushButton, QLabel, QGroupBox,
-    QSpinBox, QMessageBox, QFrame
+    QSpinBox, QMessageBox, QFrame, QSizePolicy
 )
 from PySide6.QtCore import Qt, Signal, QDateTime
-from PySide6.QtGui import QFont, QCloseEvent
+from PySide6.QtGui import QFont, QCloseEvent, QFontMetrics
 
 from backend.caldav_client import EventData, RecurrenceRule
 from backend.event_store import EventStore, CalendarSource
@@ -300,14 +300,19 @@ class EventDialog(QWidget):
         
         self._description_edit = QTextEdit()
         self._description_edit.setPlaceholderText("Description (optional)")
+        # Make description field expand vertically and have a reasonable minimum height
+        self._description_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        fm = QFontMetrics(self._description_edit.font())
+        min_height = fm.height() * 5 + 10  # Minimum 5 lines + padding
+        self._description_edit.setMinimumHeight(min_height)
         form.addRow("Description:", self._description_edit)
         
-        layout.addLayout(form)
+        layout.addLayout(form, 1)  # stretch factor 1 - form (with description) gets extra space
         
         self._recurrence_widget = RecurrenceWidget()
         layout.addWidget(self._recurrence_widget)
         
-        layout.addStretch()
+        # No addStretch() here - description field should grow, not empty space
         
         button_layout = QHBoxLayout()
         

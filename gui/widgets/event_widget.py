@@ -305,18 +305,35 @@ class EventWidget(QFrame):
         super().mouseDoubleClickEvent(mouse_event)
     
     def sizeHint(self) -> QSize:
-        """Return the preferred size for this widget."""
+        """Return the preferred size for this widget based on font metrics."""
+        fm = QFontMetrics(self.font())
+        line_height = fm.height()
+        
         if self.compact:
-            return QSize(150, 24)
+            # Compact: 1-2 lines (title + optional location) + padding
+            num_lines = 2 if (self.show_location and self.event_data.location) else 1
+            height = num_lines * line_height + 8  # 4px padding top/bottom
+            return QSize(150, height)
         else:
-            return QSize(150, 80)
+            # Full: time + title + location + calendar = up to 4 lines + padding
+            num_lines = 2  # time header + title (minimum)
+            if self.event_data.location:
+                num_lines += 1
+            num_lines += 1  # calendar name
+            height = num_lines * line_height + 12  # 6px padding top/bottom
+            return QSize(150, height)
     
     def minimumSizeHint(self) -> QSize:
-        """Return the minimum size for this widget."""
+        """Return the minimum size for this widget based on font metrics."""
+        fm = QFontMetrics(self.font())
+        line_height = fm.height()
+        
         if self.compact:
-            return QSize(50, 20)
+            # Minimum: 1 line + minimal padding
+            return QSize(50, line_height + 4)
         else:
-            return QSize(80, 40)
+            # Minimum: 2 lines (time + title) + minimal padding
+            return QSize(80, 2 * line_height + 8)
     
     def paintEvent(self, event) -> None:
         """Override paintEvent to draw indicator triangles for recurring and read-only events."""
