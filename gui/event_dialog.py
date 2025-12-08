@@ -7,7 +7,6 @@ This is an independent window (not a modal dialog) for editing event details.
 from datetime import datetime, timedelta, date, time as dt_time
 from typing import Optional
 import pytz
-import time as _time
 
 import json
 
@@ -22,34 +21,7 @@ from PySide6.QtGui import QFont, QCloseEvent
 
 from backend.caldav_client import EventData, RecurrenceRule
 from backend.event_store import EventStore, CalendarSource
-
-
-def _get_local_tz_offset() -> timedelta:
-    """Get the current local timezone offset from UTC."""
-    is_dst = _time.localtime().tm_isdst
-    if is_dst:
-        offset_seconds = -_time.altzone
-    else:
-        offset_seconds = -_time.timezone
-    return timedelta(seconds=offset_seconds)
-
-
-def utc_to_local(dt: datetime) -> datetime:
-    """Convert a UTC datetime to local timezone (returns naive datetime)."""
-    if dt.tzinfo is not None:
-        # It's in UTC, convert to local
-        local_dt = dt + _get_local_tz_offset()
-        return local_dt.replace(tzinfo=None)
-    return dt
-
-
-def local_to_utc(dt: datetime) -> datetime:
-    """Convert a local naive datetime to UTC (returns aware datetime)."""
-    if dt.tzinfo is None:
-        # It's a naive local time, convert to UTC
-        utc_dt = dt - _get_local_tz_offset()
-        return pytz.UTC.localize(utc_dt)
-    return dt
+from backend.timezone_utils import utc_to_local_naive as utc_to_local, local_naive_to_utc as local_to_utc
 
 
 class RecurrenceWidget(QGroupBox):

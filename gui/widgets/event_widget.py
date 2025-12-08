@@ -37,35 +37,9 @@ def get_text_font() -> QFont:
     """Get the configured text font for events."""
     return QFont(_layout_config.text_font, _layout_config.text_font_size)
 
-# Get local timezone
-import pytz
-import time as _time
 
-
-def _get_local_timezone():
-    """Get the local timezone as a pytz timezone object."""
-    import datetime as dt_module
-    # Use the system's local timezone
-    local_tz_name = _time.tzname[0]
-    try:
-        return pytz.timezone(local_tz_name)
-    except:
-        # Fallback: calculate offset and use a fixed offset timezone
-        offset_seconds = -_time.timezone if not _time.daylight else -_time.altzone
-        return pytz.FixedOffset(offset_seconds // 60)
-
-
-def to_local_datetime(dt: datetime) -> datetime:
-    """Convert datetime to local timezone."""
-    if dt.tzinfo is not None:
-        # Convert UTC datetime to local timezone
-        try:
-            local_tz = pytz.timezone('Europe/Amsterdam')  # Use explicit timezone for reliability
-        except:
-            local_tz = _get_local_timezone()
-        local_dt = dt.astimezone(local_tz)
-        return local_dt
-    return dt
+# Import timezone utilities from shared module
+from backend.timezone_utils import to_local_datetime
 
 
 def get_contrasting_text_color(bg_color: str) -> str:

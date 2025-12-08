@@ -85,39 +85,8 @@ def get_interface_font() -> tuple[str, int]:
     return (_layout_config.interface_font, _layout_config.interface_font_size)
 
 
-# Get local timezone using pytz
-import pytz
-import time as _time
-
-
-def _get_local_timezone():
-    """Get the local timezone as a pytz timezone object."""
-    local_tz_name = _time.tzname[0]
-    try:
-        return pytz.timezone(local_tz_name)
-    except:
-        # Fallback: calculate offset and use a fixed offset timezone
-        offset_seconds = -_time.timezone if not _time.daylight else -_time.altzone
-        return pytz.FixedOffset(offset_seconds // 60)
-
-
-def to_local_datetime(dt: datetime) -> datetime:
-    """Convert datetime to local timezone."""
-    if dt.tzinfo is not None:
-        # Convert UTC datetime to local timezone
-        try:
-            local_tz = pytz.timezone('Europe/Amsterdam')  # Use explicit timezone for reliability
-        except:
-            local_tz = _get_local_timezone()
-        local_dt = dt.astimezone(local_tz)
-        return local_dt
-    return dt
-
-
-def to_local_hour(dt: datetime) -> float:
-    """Convert datetime to local timezone and return hour as float (e.g., 14.5 for 14:30)."""
-    local_dt = to_local_datetime(dt)
-    return local_dt.hour + local_dt.minute / 60.0
+# Import timezone utilities from shared module
+from backend.timezone_utils import to_local_datetime, to_local_hour
 
 
 class ViewType(Enum):
