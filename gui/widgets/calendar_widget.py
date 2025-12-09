@@ -142,6 +142,7 @@ class AllDayEventCell(QWidget):
         widget.clicked.connect(self.event_clicked.emit)
         widget.double_clicked.connect(self.event_double_clicked.emit)
         self._layout.addWidget(widget)
+        self._layout.setAlignment(Qt.AlignTop)
         self._event_widgets.append(widget)
     
     def clear_events(self):
