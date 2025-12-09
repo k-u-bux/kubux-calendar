@@ -136,7 +136,7 @@ class AllDayEventCell(QWidget):
     
     def add_event(self, event: EventData):
         self._events.append(event)
-        widget = EventWidget(event, compact=True, show_time=False, parent=self)
+        widget = EventWidget(event, compact=True, show_time=False, show_location=False, parent=self)
         event_height = _get_single_line_event_height()
         widget.setFixedHeight(event_height - 4)
         widget.clicked.connect(self.event_clicked.emit)

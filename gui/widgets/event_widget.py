@@ -389,7 +389,7 @@ class AllDayEventWidget(EventWidget):
     """
     
     def __init__(self, event_data: EventData, parent: QWidget = None):
-        super().__init__(event_data, compact=True, show_time=False, parent=parent)
+        super().__init__(event_data, compact=True, show_time=False, show_location=False, parent=parent)
         # Set height based on font metrics (1 line + padding)
         from PySide6.QtGui import QFontMetrics
         fm = QFontMetrics(self.font())
