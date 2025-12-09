@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QScrollArea, QFrame, QSizePolicy, QStackedWidget
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont, QFontMetrics, QMouseEvent
 
 from backend.caldav_client import EventData
@@ -225,6 +225,7 @@ class DayColumnWidget(QWidget):
         self._event_widgets: list[EventWidget] = []
         self._event_layout: list[tuple[EventData, int, int]] = []  # (event, column, total_columns)
         self._setup_ui()
+        self._setup_time_indicator()
     
     def _setup_ui(self):
         # Fixed height for 24 hours
@@ -240,8 +241,41 @@ class DayColumnWidget(QWidget):
             line.setStyleSheet("background-color: #e8e8e8;")
             line.setGeometry(0, hour * HOUR_HEIGHT, 2000, 1)
     
+    def _setup_time_indicator(self):
+        """Set up the current time indicator line."""
+        # Create the time indicator line
+        self._time_indicator = QFrame(self)
+        self._time_indicator.setFrameStyle(QFrame.HLine | QFrame.Plain)
+        colors = get_colors_config()
+        self._time_indicator.setStyleSheet(f"background-color: {colors.current_time_line};")
+        self._time_indicator.setFixedHeight(3)
+        self._time_indicator.raise_()  # Ensure it's on top of other elements
+        
+        # Create timer to update every minute
+        self._time_timer = QTimer(self)
+        self._time_timer.timeout.connect(self._update_time_indicator)
+        self._time_timer.start(60000)  # Update every 60 seconds
+        
+        # Initial update
+        self._update_time_indicator()
+    
+    def _update_time_indicator(self):
+        """Update the position of the current time indicator."""
+        if self._date != date.today():
+            self._time_indicator.hide()
+            return
+        
+        # Show and position the indicator
+        self._time_indicator.show()
+        now = datetime.now()
+        current_hour = now.hour + now.minute / 60.0
+        y_pos = int(current_hour * HOUR_HEIGHT)
+        self._time_indicator.setGeometry(0, y_pos, self.width(), 2)
+        self._time_indicator.raise_()  # Keep on top
+    
     def set_date(self, new_date: date):
         self._date = new_date
+        self._update_time_indicator()  # Update visibility based on new date
         self._refresh_events()
     
     def add_event(self, event: EventData):
@@ -352,6 +386,9 @@ class DayColumnWidget(QWidget):
             widget.show()
         
         self._position_event_widgets()
+        
+        # Ensure time indicator stays on top of event widgets
+        self._time_indicator.raise_()
     
     def _position_event_widgets(self):
         """Position all event widgets based on their layout."""
@@ -392,6 +429,7 @@ class DayColumnWidget(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._position_event_widgets()
+        self._update_time_indicator()  # Update width on resize
     
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:

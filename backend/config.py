@@ -81,6 +81,7 @@ class ColorsConfig:
     hour_line: str = "#e8e8e8"
     cell_border: str = "#e0e0e0"
     allday_cell_background: str = "#fafafa"
+    current_time_line: str = "#d32f2f"      # Red line indicating current time
     
     # Header/Navigation Colors
     header_background: str = "#f5f5f5"
@@ -362,6 +363,7 @@ class Config:
             hour_line=colors_data.get('hour_line', ColorsConfig.hour_line),
             cell_border=colors_data.get('cell_border', ColorsConfig.cell_border),
             allday_cell_background=colors_data.get('allday_cell_background', ColorsConfig.allday_cell_background),
+            current_time_line=colors_data.get('current_time_line', ColorsConfig.current_time_line),
             header_background=colors_data.get('header_background', ColorsConfig.header_background),
             today_highlight_background=colors_data.get('today_highlight_background', ColorsConfig.today_highlight_background),
             today_highlight_text=colors_data.get('today_highlight_text', ColorsConfig.today_highlight_text),
