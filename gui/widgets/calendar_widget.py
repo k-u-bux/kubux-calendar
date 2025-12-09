@@ -1185,6 +1185,8 @@ class ListView(QWidget):
         self._event_widgets: list[ListEventWidget] = []
         self._current_date = date.today()
         self._sorted_events: list[EventData] = []  # Keep sorted list for navigation
+        self._pending_scroll_datetime: Optional[datetime] = None  # Scroll target applied after events load
+        self._last_scroll_datetime: Optional[datetime] = None  # Track last successful scroll target
         self._setup_ui()
     
     def _setup_ui(self):
@@ -1249,13 +1251,19 @@ class ListView(QWidget):
         # Re-add stretch
         self._content_layout.addStretch()
         
-        # Emit visible range after layout is complete
+        # Apply pending scroll if set (after events are loaded)
         from PySide6.QtCore import QTimer
+        if self._pending_scroll_datetime:
+            target_dt = self._pending_scroll_datetime
+            self._pending_scroll_datetime = None  # Clear before applying
+            QTimer.singleShot(50, lambda: self.scroll_to_datetime(target_dt))
+        
+        # Emit visible range after layout is complete
         def _emit_visible_range():
             visible_range = self.get_visible_date_range()
             if visible_range[0] and visible_range[1]:
                 self.visible_range_changed.emit(visible_range[0], visible_range[1])
-        QTimer.singleShot(50, _emit_visible_range)
+        QTimer.singleShot(100, _emit_visible_range)
     
     def get_visible_date_range(self) -> tuple[Optional[datetime], Optional[datetime]]:
         """Get the date range of currently visible events."""
@@ -1291,6 +1299,9 @@ class ListView(QWidget):
     
     def scroll_to_datetime(self, target_dt: datetime):
         """Scroll to position the first event at or after target_dt at the top."""
+        # Track the scroll target for view switching
+        self._last_scroll_datetime = target_dt
+        
         if not self._event_widgets:
             return
         
@@ -1457,11 +1468,10 @@ class CalendarWidget(QWidget):
         else:  # LIST
             self._stack.setCurrentWidget(self._list_view)
             self._list_view.set_date(self._current_date)
-            # For list view switching to it: scroll to the reference datetime
+            # For list view switching to it: set pending scroll target
+            # It will be applied after events are loaded in _refresh_display()
             if old_view != ViewType.LIST and ref_datetime:
-                from PySide6.QtCore import QTimer
-                # Defer scroll to after events are loaded
-                QTimer.singleShot(100, lambda: self._list_view.scroll_to_datetime(ref_datetime))
+                self._list_view._pending_scroll_datetime = ref_datetime
         
         self.view_changed.emit(view_type)
     
@@ -1484,11 +1494,14 @@ class CalendarWidget(QWidget):
             # Start of month
             return datetime.combine(self._current_date.replace(day=1), dt_time.min)
         else:  # LIST
-            # First visible event datetime
+            # Use tracked scroll datetime if available (more reliable than checking visible widgets)
+            if self._list_view._last_scroll_datetime:
+                return self._list_view._last_scroll_datetime
+            # Fallback to first visible event datetime
             first_visible = self._list_view.get_first_visible_datetime()
             if first_visible:
                 return first_visible
-            # Fallback: current datetime
+            # Final fallback: current datetime
             return datetime.now()
     
     def set_date(self, d: date):
