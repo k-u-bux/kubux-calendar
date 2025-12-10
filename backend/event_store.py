@@ -507,22 +507,64 @@ class EventStore:
     
     def refresh(self, calendar_id: Optional[str] = None) -> None:
         """
-        Refresh calendar data.
+        Refresh calendar data from all sources (CalDAV and ICS).
+        
+        Forces a fresh reconnection to CalDAV servers to ensure we get the latest data.
         
         Args:
             calendar_id: Specific calendar to refresh, or None for all
         """
+        import sys
+        print(f"DEBUG: Refresh called, calendar_id={calendar_id}", file=sys.stderr)
+        
         if calendar_id:
             calendar = self._calendars.get(calendar_id)
-            if calendar and calendar.source_type == "ics" and calendar._ics_subscription:
-                calendar._ics_subscription.fetch()
+            if calendar:
+                if calendar.source_type == "ics" and calendar._ics_subscription:
+                    calendar._ics_subscription.fetch()
+                elif calendar.source_type == "caldav":
+                    # Force reconnect to get fresh data from server
+                    client = self._caldav_clients.get(calendar.account_name)
+                    if client:
+                        print(f"DEBUG: Reconnecting CalDAV client for {calendar.account_name}", file=sys.stderr)
+                        if client.reconnect():
+                            # Re-fetch all calendars from this account to get fresh objects
+                            calendars = client.get_calendars()
+                            for cal in calendars:
+                                cal_id = f"caldav:{calendar.account_name}:{cal.id}"
+                                if cal_id == calendar_id and cal_id in self._calendars:
+                                    # Update the internal caldav calendar reference
+                                    self._calendars[cal_id]._caldav_calendar = cal
+                                    print(f"DEBUG: Refreshed CalDAV calendar: {cal_id}", file=sys.stderr)
+                        else:
+                            print(f"DEBUG: Failed to reconnect CalDAV client for {calendar.account_name}", file=sys.stderr)
         else:
-            # Refresh all ICS subscriptions
+            # Refresh ALL sources
+            
+            # 1. Refresh all CalDAV calendars by forcing reconnection
+            for account_name, client in self._caldav_clients.items():
+                try:
+                    print(f"DEBUG: Reconnecting CalDAV client for {account_name}", file=sys.stderr)
+                    if client.reconnect():
+                        calendars = client.get_calendars()
+                        for cal in calendars:
+                            cal_id = f"caldav:{account_name}:{cal.id}"
+                            if cal_id in self._calendars:
+                                # Update the internal caldav calendar reference with fresh object
+                                self._calendars[cal_id]._caldav_calendar = cal
+                                print(f"DEBUG: Refreshed CalDAV calendar: {cal_id}", file=sys.stderr)
+                    else:
+                        print(f"DEBUG: Failed to reconnect CalDAV client for {account_name}", file=sys.stderr)
+                except Exception as e:
+                    print(f"DEBUG: Error refreshing CalDAV account {account_name}: {e}", file=sys.stderr)
+            
+            # 2. Refresh all ICS subscriptions
             self._ics_manager.fetch_all()
         
         # Invalidate cache so fresh data is fetched on next get_events call
         self.invalidate_cache()
         self._notify_change()
+        print(f"DEBUG: Refresh complete, cache invalidated", file=sys.stderr)
     
     def _load_state(self) -> None:
         """Load visibility and color state from file."""

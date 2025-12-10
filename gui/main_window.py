@@ -387,7 +387,7 @@ class MainWindow(QMainWindow):
         self._reload_btn = QPushButton("Reload")
         self._reload_btn.setFont(self._interface_font)
         self._reload_btn.setToolTip("Reload events from all calendars")
-        self._reload_btn.clicked.connect(self._refresh_events)
+        self._reload_btn.clicked.connect(self._on_reload_clicked)
         toolbar.addWidget(self._reload_btn)
         
         self._edit_config_btn = QPushButton("Edit Config")
@@ -645,8 +645,21 @@ class MainWindow(QMainWindow):
         self._refresh_events()
     
     def _on_auto_refresh(self):
-        """Handle auto-refresh timer tick."""
-        self._refresh_events()
+        """Handle auto-refresh timer tick - fetch fresh data from server."""
+        import sys
+        print("DEBUG: Auto-refresh triggered - calling event_store.refresh()", file=sys.stderr)
+        self.event_store.refresh()
+    
+    def _on_reload_clicked(self):
+        """Handle reload button click - force refresh from server."""
+        import sys
+        print("DEBUG: Reload clicked - calling event_store.refresh()", file=sys.stderr)
+        self._statusbar.showMessage("Reloading from server...")
+        QApplication.processEvents()
+        
+        # This will reconnect to CalDAV servers and re-fetch ICS subscriptions,
+        # then invalidate cache and call _on_data_changed() -> _refresh_events()
+        self.event_store.refresh()
     
     def _on_config_file_changed(self, path: str):
         """Handle config file change - reload configuration."""

@@ -158,6 +158,23 @@ class CalDAVClient:
             print(f"Failed to connect to CalDAV server: {e}")
             return False
     
+    def reconnect(self) -> bool:
+        """
+        Force a fresh reconnection to the CalDAV server.
+        
+        Clears all cached data and establishes a new connection.
+        
+        Returns:
+            True if reconnection successful, False otherwise.
+        """
+        # Clear cached data
+        self._client = None
+        self._principal = None
+        self._calendars = {}
+        
+        # Establish fresh connection
+        return self.connect()
+    
     def get_calendars(self) -> list[CalendarInfo]:
         """
         Get list of all calendars for this account.
