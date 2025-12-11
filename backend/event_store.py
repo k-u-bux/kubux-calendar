@@ -285,12 +285,23 @@ class EventStore:
                         event._source_calendar_id = calendar.id
                     all_events.extend(events)
         
+        # Add local (pending sync) events that haven't been synced yet
+        for event in self._local_events.values():
+            event_start = event.start.replace(tzinfo=None) if event.start.tzinfo else event.start
+            event_end = event.end.replace(tzinfo=None) if event.end.tzinfo else event.end
+            start_naive = start.replace(tzinfo=None) if start.tzinfo else start
+            end_naive = end.replace(tzinfo=None) if end.tzinfo else end
+            
+            # Check if local event is in range
+            if event_end >= start_naive and event_start <= end_naive:
+                all_events.append(event)
+        
         # Update cache
         self._cached_events = all_events
         self._cache_start = start
         self._cache_end = end
         
-        print(f"DEBUG: Cached {len(all_events)} events", file=sys.stderr)
+        print(f"DEBUG: Cached {len(all_events)} events (including {len(self._local_events)} local)", file=sys.stderr)
     
     def invalidate_cache(self) -> None:
         """Invalidate the event cache. Call this when events are modified."""
@@ -384,7 +395,10 @@ class EventStore:
         recurrence: Optional[RecurrenceRule] = None
     ) -> Optional[Event]:
         """
-        Create a new event.
+        Create a new event (offline-first).
+        
+        Creates a local event immediately and queues sync to server.
+        The event will have sync_status="pending" until synced.
         
         Args:
             calendar_id: Target calendar ID
@@ -397,7 +411,7 @@ class EventStore:
             recurrence: Optional recurrence rule
         
         Returns:
-            Created Event object, or None on failure.
+            Created Event object (local), or None on failure.
         """
         calendar = self._calendars.get(calendar_id)
         if calendar is None or not calendar.writable:
@@ -406,26 +420,40 @@ class EventStore:
         if calendar.source_type != "caldav":
             return None  # Can only create in CalDAV calendars
         
-        client = self._caldav_clients.get(calendar.account_name)
-        if client is None or calendar._caldav_calendar is None:
-            return None
+        # Generate UID for new event
+        event_uid = str(uuid.uuid4())
         
+        # Create local event immediately
         event = Event(
-            uid="",  # Will be generated
+            uid=event_uid,
             summary=summary,
             start=start,
             end=end,
             description=description,
             location=location,
             all_day=all_day,
-            recurrence=recurrence
+            recurrence=recurrence,
+            calendar_id=calendar._caldav_calendar.id if calendar._caldav_calendar else "",
+            calendar_name=calendar.name,
+            calendar_color=calendar.color,
+            source_type="caldav",
+            read_only=False,
+            sync_status="pending",  # Mark as pending sync
         )
+        event._source_calendar_id = calendar_id
         
-        result = client.create_event(calendar._caldav_calendar, event)
-        if result:
-            self.invalidate_cache()  # Clear cache so new event is fetched
-            self._notify_change()
-        return result
+        # Store locally
+        self._local_events[event_uid] = event
+        
+        # Add to sync queue
+        event_data = self._event_to_dict(event)
+        self._sync_queue.add_create(calendar_id, event_uid, event_data)
+        
+        # Invalidate cache so event shows up
+        self.invalidate_cache()
+        self._notify_change()
+        
+        return event
     
     def update_event(self, event: Event) -> bool:
         """
