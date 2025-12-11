@@ -2,19 +2,29 @@
 Event Widget for displaying individual calendar events.
 
 Shows event blocks in the calendar view with color coding and event info.
+Supports drag-and-drop for moving events and resize handles for changing duration.
 """
 
 from datetime import datetime, timedelta
+from enum import Enum
 
 from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout,
     QFrame, QSizePolicy
 )
-from PySide6.QtCore import Qt, Signal, QSize, QPointF
+from PySide6.QtCore import Qt, Signal, QSize, QPointF, QPoint
 from PySide6.QtGui import QColor, QPalette, QFont, QMouseEvent, QPainter, QPolygonF, QBrush, QPen, QFontMetrics
 
 from backend.caldav_client import EventData
 from backend.config import LayoutConfig, ColorsConfig
+
+
+class DragMode(Enum):
+    """Type of drag operation."""
+    NONE = "none"
+    MOVE = "move"           # Moving the entire event
+    RESIZE_TOP = "resize_top"      # Resizing by dragging top edge
+    RESIZE_BOTTOM = "resize_bottom"  # Resizing by dragging bottom edge
 
 # Module-level configs (set by MainWindow at startup via calendar_widget)
 _layout_config: LayoutConfig = LayoutConfig()
@@ -391,6 +401,141 @@ class EventWidget(QFrame):
             painter.drawPolygon(readonly_points)
         
         painter.end()
+
+
+class DraggableEventWidget(EventWidget):
+    """
+    EventWidget with drag-and-drop and resize support.
+    
+    In Day/Week views: drag to move event to different time, resize edges to change duration.
+    In Month view: drag to change date (keeps time).
+    """
+    
+    # Signals for drag operations
+    drag_started = Signal(EventData, DragMode)  # Event data, drag mode
+    drag_moved = Signal(EventData, DragMode, QPoint)  # Event data, mode, global position
+    drag_finished = Signal(EventData, DragMode, QPoint)  # Event data, mode, final global position
+    
+    # Resize zone height in pixels
+    RESIZE_ZONE_HEIGHT = 8
+    
+    # Drag threshold in pixels (to distinguish from click)
+    DRAG_THRESHOLD = 5
+    
+    def __init__(
+        self,
+        event_data: EventData,
+        compact: bool = False,
+        show_time: bool = True,
+        show_location: bool = True,
+        parent: QWidget = None
+    ):
+        super().__init__(event_data, compact, show_time, show_location, parent)
+        
+        # Drag state
+        self._drag_mode = DragMode.NONE
+        self._press_pos: QPoint = None
+        self._press_global_pos: QPoint = None
+        self._is_dragging = False
+        
+        # Enable mouse tracking for cursor changes
+        self.setMouseTracking(True)
+    
+    def _get_drag_mode_at_pos(self, pos: QPoint) -> DragMode:
+        """Determine what drag mode should be used based on mouse position."""
+        # Read-only events cannot be dragged
+        if self.event_data.read_only:
+            return DragMode.NONE
+        
+        h = self.height()
+        y = pos.y()
+        
+        # Check resize zones (top and bottom edges)
+        if y <= self.RESIZE_ZONE_HEIGHT:
+            return DragMode.RESIZE_TOP
+        elif y >= h - self.RESIZE_ZONE_HEIGHT:
+            return DragMode.RESIZE_BOTTOM
+        else:
+            return DragMode.MOVE
+    
+    def _update_cursor(self, mode: DragMode) -> None:
+        """Update cursor based on drag mode."""
+        if mode == DragMode.RESIZE_TOP or mode == DragMode.RESIZE_BOTTOM:
+            self.setCursor(Qt.SizeVerCursor)
+        elif mode == DragMode.MOVE:
+            self.setCursor(Qt.OpenHandCursor)
+        else:
+            self.setCursor(Qt.PointingHandCursor)
+    
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        """Handle mouse move for cursor changes and dragging."""
+        if self._press_pos is not None and event.buttons() & Qt.LeftButton:
+            # Check if we've exceeded the drag threshold
+            if not self._is_dragging:
+                distance = (event.pos() - self._press_pos).manhattanLength()
+                if distance >= self.DRAG_THRESHOLD:
+                    self._is_dragging = True
+                    self.setCursor(Qt.ClosedHandCursor)
+                    self.drag_started.emit(self.event_data, self._drag_mode)
+            
+            if self._is_dragging:
+                # Emit drag move with global position
+                self.drag_moved.emit(self.event_data, self._drag_mode, event.globalPosition().toPoint())
+        else:
+            # Not dragging - just update cursor based on position
+            mode = self._get_drag_mode_at_pos(event.pos())
+            self._update_cursor(mode)
+        
+        # Don't call super() during drag to prevent event propagation issues
+        if not self._is_dragging:
+            super().mouseMoveEvent(event)
+    
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        """Handle mouse press - start potential drag."""
+        if event.button() == Qt.LeftButton and not self.event_data.read_only:
+            self._press_pos = event.pos()
+            self._press_global_pos = event.globalPosition().toPoint()
+            self._drag_mode = self._get_drag_mode_at_pos(event.pos())
+            self._is_dragging = False
+            # Don't emit clicked yet - wait to see if this is a drag
+        else:
+            super().mousePressEvent(event)
+    
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        """Handle mouse release - complete drag or emit click."""
+        if event.button() == Qt.LeftButton:
+            if self._is_dragging:
+                # Complete drag operation
+                self.drag_finished.emit(
+                    self.event_data,
+                    self._drag_mode,
+                    event.globalPosition().toPoint()
+                )
+                self.setCursor(Qt.OpenHandCursor)
+            else:
+                # Was a click, not a drag
+                self.clicked.emit(self.event_data)
+            
+            # Reset drag state
+            self._press_pos = None
+            self._press_global_pos = None
+            self._drag_mode = DragMode.NONE
+            self._is_dragging = False
+        else:
+            super().mouseReleaseEvent(event)
+    
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        """Handle double-click - reset drag state and emit signal."""
+        self._press_pos = None
+        self._is_dragging = False
+        self._drag_mode = DragMode.NONE
+        super().mouseDoubleClickEvent(event)
+    
+    def leaveEvent(self, event) -> None:
+        """Reset cursor when mouse leaves widget."""
+        if not self._is_dragging:
+            self.setCursor(Qt.PointingHandCursor)
+        super().leaveEvent(event)
 
 
 class AllDayEventWidget(EventWidget):
