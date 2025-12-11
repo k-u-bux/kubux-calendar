@@ -171,6 +171,14 @@ class LabelsConfig:
 
 
 @dataclass
+class SyncConfig:
+    """Configuration for sync queue behavior."""
+    initial_interval: int = 10      # Initial sync retry interval in seconds
+    max_interval: int = 300         # Maximum sync retry interval in seconds (5 min)
+    backoff_multiplier: float = 2.0 # Multiplier for exponential backoff
+
+
+@dataclass
 class LocalizationConfig:
     """Configuration for localized day and month names."""
     # Default to English abbreviated day names
@@ -208,6 +216,7 @@ class Config:
     localization: LocalizationConfig = field(default_factory=LocalizationConfig)
     colors: ColorsConfig = field(default_factory=ColorsConfig)
     labels: LabelsConfig = field(default_factory=LabelsConfig)
+    sync: SyncConfig = field(default_factory=SyncConfig)
     nextcloud_accounts: list[NextcloudAccount] = field(default_factory=list)
     ics_subscriptions: list[ICSSubscription] = field(default_factory=list)
     
@@ -382,6 +391,14 @@ class Config:
             readonly_notice_text=colors_data.get('readonly_notice_text', ColorsConfig.readonly_notice_text),
         )
         
+        # Parse Sync section
+        sync_data = data.get('Sync', {})
+        sync = SyncConfig(
+            initial_interval=sync_data.get('initial_interval', SyncConfig.initial_interval),
+            max_interval=sync_data.get('max_interval', SyncConfig.max_interval),
+            backoff_multiplier=sync_data.get('backoff_multiplier', SyncConfig.backoff_multiplier),
+        )
+        
         # Parse Labels section
         labels_data = data.get('Labels', {})
         labels = LabelsConfig(
@@ -440,6 +457,7 @@ class Config:
             localization=localization,
             colors=colors,
             labels=labels,
+            sync=sync,
             nextcloud_accounts=nextcloud_accounts,
             ics_subscriptions=ics_subscriptions
         )

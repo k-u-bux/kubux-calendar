@@ -222,10 +222,11 @@ class MainWindow(QMainWindow):
         self._auto_refresh_timer = QTimer(self)
         self._auto_refresh_timer.timeout.connect(self._on_auto_refresh)
         
-        # Sync timer for pending changes (runs every 10 seconds)
+        # Sync timer for pending changes (uses exponential backoff)
         self._sync_timer = QTimer(self)
         self._sync_timer.timeout.connect(self._on_sync_timer)
-        self._sync_timer.start(10000)  # 10 seconds
+        self._current_sync_interval = config.sync.initial_interval  # Start with initial interval
+        self._sync_timer.start(self._current_sync_interval * 1000)  # Convert to milliseconds
         
         # Config file watcher
         self._config_watcher = QFileSystemWatcher(self)
@@ -656,14 +657,27 @@ class MainWindow(QMainWindow):
         self.event_store.refresh()
     
     def _on_sync_timer(self):
-        """Handle sync timer tick - attempt to sync pending changes."""
+        """Handle sync timer tick - attempt to sync pending changes with exponential backoff."""
+        import sys
+        
         pending_count = self.event_store.get_pending_sync_count()
         if pending_count > 0:
-            import sys
-            print(f"DEBUG: Sync timer - {pending_count} pending changes", file=sys.stderr)
+            print(f"DEBUG: Sync timer - {pending_count} pending changes (interval: {self._current_sync_interval}s)", file=sys.stderr)
             success, failed = self.event_store.sync_pending_changes()
+            
             if success > 0:
                 print(f"DEBUG: Synced {success} changes, {failed} failed", file=sys.stderr)
+                # Reset to initial interval on success
+                self._current_sync_interval = self.config.sync.initial_interval
+                print(f"DEBUG: Reset sync interval to {self._current_sync_interval}s", file=sys.stderr)
+            elif failed > 0:
+                # Increase interval on failure (exponential backoff)
+                new_interval = int(self._current_sync_interval * self.config.sync.backoff_multiplier)
+                self._current_sync_interval = min(new_interval, self.config.sync.max_interval)
+                print(f"DEBUG: Backoff - next sync interval: {self._current_sync_interval}s", file=sys.stderr)
+            
+            # Update timer with new interval
+            self._sync_timer.setInterval(self._current_sync_interval * 1000)
         
         # Update status bar
         self._update_sync_status()
