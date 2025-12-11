@@ -10,10 +10,13 @@ A simple desktop calendar application for Nextcloud (CalDAV) and ICS subscriptio
 - **ICS Subscriptions**: Read-only support for external ICS calendar feeds
 - **Multiple Views**: Day, Week, Month, and List views
 - **Event Management**: Create, edit, and delete events with recurrence support
+- **Offline-First**: Events are created locally first, then synced to server in background
 - **Calendar Visibility**: Toggle individual calendars on/off
 - **Custom Colors**: Assign custom colors to each calendar
 - **All-Day Events**: Full support for all-day and multi-day events
 - **Recurring Events**: Display and manage recurring events
+- **Current Time Indicator**: Red line showing current time in day/week views
+- **Auto-Refresh**: Configurable automatic refresh from server
 - **Localization**: Customize day and month names for any language
 - **Password Integration**: Secure password retrieval via external programs (e.g., `pass`)
 - **Keyboard Navigation**: Configurable keyboard shortcuts
@@ -99,9 +102,11 @@ color = "#ff6b6b"
 
 #### General Section
 
-| Option | Description |
-|--------|-------------|
-| `password_program` | Path to password manager (e.g., `/usr/bin/pass`) |
+| Option | Default | Description |
+|--------|---------|-------------|
+| `password_program` | `/usr/bin/pass` | Path to password manager |
+| `refresh_interval` | 300 | Auto-refresh from server (seconds, 0 to disable) |
+| `state_file` | `~/.local/state/kubux-calendar/state.json` | Path to state file |
 
 #### Layout Section
 
@@ -146,6 +151,18 @@ Each Nextcloud account is defined as `[Nextcloud.AccountName]`:
 | `password_key` | Key passed to `password_program` to retrieve password |
 | `color` | Default hex color for calendars (optional) |
 
+#### Sync Section
+
+Configure offline sync behavior with exponential backoff:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `initial_interval` | 10 | Initial sync retry interval (seconds) |
+| `max_interval` | 300 | Maximum sync retry interval (seconds) |
+| `backoff_multiplier` | 2.0 | Multiplier applied on each failed sync |
+
+Example: With defaults, retries occur at 10s, 20s, 40s, 80s, 160s, 300s (capped). Resets to 10s on success.
+
 #### ICS Subscriptions
 
 Each subscription is defined as `[Subscription.Name]`:
@@ -180,6 +197,7 @@ The List view displays all events in a chronological scrollable list (±3 months
 ### Visual Indicators
 
 Events display small triangle indicators in the corners:
+- **Top-right triangle**: Pending sync (event not yet synced to server)
 - **Bottom-left triangle**: Recurring event
 - **Bottom-right triangle**: Read-only event (from ICS subscription)
 
@@ -200,6 +218,7 @@ kubux-calendar/
 │   ├── caldav_client.py # CalDAV/Nextcloud communication
 │   ├── ics_subscription.py # ICS feed handling
 │   ├── event_store.py   # Unified event cache & storage
+│   ├── sync_queue.py    # Offline sync queue with persistence
 │   └── config.py        # Configuration management
 └── gui/
     ├── main_window.py   # Main application window

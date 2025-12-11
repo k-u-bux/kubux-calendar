@@ -180,6 +180,10 @@ class EventStore:
             except Exception as e:
                 print(f"Error initializing ICS subscription {sub_config.name}: {e}")
         
+        # Set initial sync time after successful initialization
+        if success:
+            self._last_sync_time = datetime.now()
+        
         return success
     
     def get_calendars(self, visible_only: bool = False) -> list[CalendarSource]:

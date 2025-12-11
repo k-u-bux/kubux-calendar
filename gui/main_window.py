@@ -535,7 +535,9 @@ class MainWindow(QMainWindow):
         if self.event_store.initialize():
             self._sidebar.refresh()
             self._refresh_events()
-            self._statusbar.showMessage("Connected", 3000)
+            
+            # Show sync status in status bar (replaces "Connected" message)
+            self._update_sync_status()
             
             # Restore scroll position after data is loaded (unless caller handles it)
             if not getattr(self, '_skip_auto_scroll_restore', False):
