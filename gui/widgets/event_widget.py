@@ -350,7 +350,8 @@ class EventWidget(QFrame):
         super().paintEvent(event)
         
         # Determine if we need to draw any triangles
-        has_pending_sync = self.event_data.sync_status != "synced"
+        # sync_status: "" = not tracked, "pending" = waiting for sync, "syncing" = in progress, "synced" = done, "failed" = error
+        has_pending_sync = self.event_data.sync_status in ("pending", "syncing", "failed")
         if not self.event_data.is_recurring and not self.event_data.read_only and not has_pending_sync:
             return
         

@@ -437,8 +437,33 @@ class DayColumnWidget(QWidget):
         self._drag_original_end = to_local_datetime(event.end)
     
     def _on_drag_moved(self, event: EventData, mode: DragMode, global_pos):
-        """Handle drag move - could show preview here."""
-        pass  # Visual feedback could be added here
+        """Handle drag move - show time tooltip as visual feedback."""
+        local_pos = self.mapFromGlobal(global_pos)
+        y = local_pos.y()
+        new_time = self._y_to_time(y)
+        
+        # Calculate what times would be after drag
+        if self._drag_original_start and self._drag_original_end:
+            orig_start = self._drag_original_start
+            orig_end = self._drag_original_end
+            duration = orig_end - orig_start
+            
+            if mode == DragMode.MOVE:
+                new_start = datetime.combine(self._date, new_time)
+                new_end = new_start + duration
+                time_str = f"{new_start.strftime('%H:%M')} - {new_end.strftime('%H:%M')}"
+            elif mode == DragMode.RESIZE_TOP:
+                new_start_time = new_time
+                time_str = f"{new_start_time.strftime('%H:%M')} - {orig_end.strftime('%H:%M')}"
+            elif mode == DragMode.RESIZE_BOTTOM:
+                new_end_time = new_time
+                time_str = f"{orig_start.strftime('%H:%M')} - {new_end_time.strftime('%H:%M')}"
+            else:
+                return
+            
+            # Show tooltip at cursor position
+            from PySide6.QtWidgets import QToolTip
+            QToolTip.showText(global_pos, time_str, self)
     
     def _on_drag_finished(self, event: EventData, mode: DragMode, global_pos):
         """Handle drag completion - calculate new times and emit signal."""

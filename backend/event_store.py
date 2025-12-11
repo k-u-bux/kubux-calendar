@@ -380,6 +380,10 @@ class EventStore:
             if source_cal_id and source_cal_id in self._calendars:
                 event.calendar_color = self._calendars[source_cal_id].color
             
+            # Update sync status from queue
+            if self.has_pending_sync(event.uid):
+                event.sync_status = "pending"
+            
             filtered_events.append(event)
         
         # Sort by start time
@@ -461,7 +465,10 @@ class EventStore:
     
     def update_event(self, event: Event) -> bool:
         """
-        Update an existing event.
+        Update an existing event (offline-first).
+        
+        Queues the change for sync and returns immediately.
+        The sync timer will handle actual server communication.
         
         Args:
             event: Event with updated data
@@ -472,7 +479,7 @@ class EventStore:
         if event.read_only:
             return False
         
-        # Find the client for this event
+        # Find the calendar for this event
         calendar = self._calendars.get(f"caldav:{event.calendar_name}:{event.calendar_id}")
         if calendar is None:
             # Try to find by iterating
@@ -485,15 +492,18 @@ class EventStore:
         if calendar is None or calendar.source_type != "caldav":
             return False
         
-        client = self._caldav_clients.get(calendar.account_name)
-        if client is None:
-            return False
+        # Mark as pending sync
+        event.sync_status = "pending"
         
-        result = client.update_event(event)
-        if result:
-            self.invalidate_cache()  # Clear cache so updated event is fetched
-            self._notify_change()
-        return result
+        # Queue the change for background sync (non-blocking)
+        event_data = self._event_to_dict(event)
+        self._sync_queue.add_update(calendar.id, event.uid, event_data)
+        
+        # Invalidate cache so the pending event shows with updated data
+        self.invalidate_cache()
+        self._notify_change()
+        
+        return True
     
     def delete_event(self, event: Event) -> bool:
         """
@@ -776,29 +786,64 @@ class EventStore:
         return result is not None
     
     def _sync_update(self, change: PendingChange) -> bool:
-        """Sync an UPDATE operation to the server."""
-        # For updates, we need the original caldav_event reference
-        # This is tricky because we may not have it if the app restarted
-        # For now, try to find the event on the server and update it
+        """
+        Sync an UPDATE operation to the server.
+        
+        Uses reconciliation: fetch server event and compare.
+        If data matches, consider it synced. If not, apply changes.
+        """
+        import sys
+        
         calendar = self._calendars.get(change.calendar_id)
         if calendar is None or calendar._caldav_calendar is None:
+            print(f"DEBUG _sync_update: calendar not found: {change.calendar_id}", file=sys.stderr)
             return False
         
         client = self._caldav_clients.get(calendar.account_name)
         if client is None:
+            print(f"DEBUG _sync_update: client not found: {calendar.account_name}", file=sys.stderr)
             return False
         
-        event = self._event_from_dict(change.event_data)
-        if event is None:
+        queued_event = self._event_from_dict(change.event_data)
+        if queued_event is None:
+            print(f"DEBUG _sync_update: failed to deserialize event data", file=sys.stderr)
             return False
         
-        # If we have the caldav_event reference, use it
-        if event._caldav_event is not None:
-            return client.update_event(event)
+        # Fetch current server event by UID
+        server_event = client.get_event_by_uid(calendar._caldav_calendar, change.event_uid)
+        if server_event is None:
+            print(f"DEBUG _sync_update: event not found on server: {change.event_uid}", file=sys.stderr)
+            return False
         
-        # Otherwise, we need to refetch and update
-        # This is a limitation of the current implementation
-        return False
+        # Reconciliation: compare key fields
+        # Convert all times to UTC for proper comparison
+        from backend.timezone_utils import to_utc_datetime
+        
+        def to_utc_for_compare(dt):
+            """Convert datetime to UTC, handle None."""
+            if dt is None:
+                return None
+            utc_dt = to_utc_datetime(dt)
+            # Strip tzinfo for naive comparison
+            return utc_dt.replace(tzinfo=None)
+        
+        queued_start = to_utc_for_compare(queued_event.start)
+        queued_end = to_utc_for_compare(queued_event.end)
+        server_start = to_utc_for_compare(server_event.start)
+        server_end = to_utc_for_compare(server_event.end)
+        
+        # Check if server event matches queued data (already synced)
+        if (server_event.summary == queued_event.summary and
+            server_start == queued_start and
+            server_end == queued_end and
+            server_event.description == queued_event.description and
+            server_event.location == queued_event.location):
+            print(f"DEBUG _sync_update: server event matches queued data - already synced", file=sys.stderr)
+            return True  # Consider it synced
+        
+        # Data differs - apply queued changes to server
+        print(f"DEBUG _sync_update: applying queued changes to server", file=sys.stderr)
+        return client.update_event_data(calendar._caldav_calendar, change.event_uid, queued_event)
     
     def _sync_delete(self, change: PendingChange) -> bool:
         """Sync a DELETE operation to the server."""

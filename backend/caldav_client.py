@@ -627,6 +627,76 @@ class CalDAVClient:
             print(f"Error updating event: {e}")
             return False
     
+    def get_event_by_uid(self, calendar: CalendarInfo, uid: str) -> Optional[EventData]:
+        """
+        Fetch a specific event by its UID.
+        
+        Args:
+            calendar: The calendar to search
+            uid: The event UID
+        
+        Returns:
+            EventData if found, None otherwise.
+        """
+        if calendar._caldav_calendar is None:
+            return None
+        
+        try:
+            # Search for the event by UID
+            caldav_event = calendar._caldav_calendar.event_by_uid(uid)
+            if caldav_event:
+                return self._parse_caldav_event(caldav_event, calendar)
+        except Exception as e:
+            # Event not found or other error
+            import sys
+            print(f"DEBUG: get_event_by_uid({uid}): {e}", file=sys.stderr)
+        
+        return None
+    
+    def update_event_data(self, calendar: CalendarInfo, uid: str, event_data: EventData) -> bool:
+        """
+        Update an event by UID using provided event data.
+        
+        Fetches the event from server, applies changes, and saves.
+        
+        Args:
+            calendar: The calendar containing the event
+            uid: The event UID
+            event_data: The new event data to apply
+        
+        Returns:
+            True if successful, False otherwise.
+        """
+        if calendar._caldav_calendar is None:
+            return False
+        
+        try:
+            # Fetch the event from server
+            caldav_event = calendar._caldav_calendar.event_by_uid(uid)
+            if not caldav_event:
+                return False
+            
+            # Create a temporary EventData with the caldav reference
+            temp_event = EventData(
+                uid=uid,
+                summary=event_data.summary,
+                start=event_data.start,
+                end=event_data.end,
+                description=event_data.description,
+                location=event_data.location,
+                all_day=event_data.all_day,
+                recurrence=event_data.recurrence,
+                _caldav_event=caldav_event
+            )
+            
+            # Use the regular update method
+            return self.update_event(temp_event)
+        
+        except Exception as e:
+            import sys
+            print(f"DEBUG: update_event_data({uid}): {e}", file=sys.stderr)
+            return False
+    
     def delete_event(self, event: EventData) -> bool:
         """
         Delete an event.

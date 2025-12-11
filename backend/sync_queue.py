@@ -320,10 +320,10 @@ class SyncQueue:
             self._save()
     
     def get_pending_changes(self) -> list[PendingChange]:
-        """Get all pending changes (not currently syncing)."""
+        """Get all changes ready for sync (PENDING or FAILED, not currently syncing)."""
         return [
             c for c in self._pending.values() 
-            if c.status == SyncStatus.PENDING and c.retry_count < self.MAX_RETRIES
+            if c.status in (SyncStatus.PENDING, SyncStatus.FAILED) and c.retry_count < self.MAX_RETRIES
         ]
     
     def get_all_changes(self) -> list[PendingChange]:
