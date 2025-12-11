@@ -5,6 +5,7 @@ Provides a single interface to access events from all sources (CalDAV and ICS).
 """
 
 import json
+import uuid
 from datetime import datetime, timedelta
 from typing import Optional, Callable
 from dataclasses import dataclass, field, asdict
@@ -14,6 +15,7 @@ import pytz
 from .config import Config, NextcloudAccount, ICSSubscription as ICSSubscriptionConfig
 from .caldav_client import CalDAVClient, CalendarInfo, EventData, RecurrenceRule
 from .ics_subscription import ICSSubscription, ICSSubscriptionManager
+from .sync_queue import SyncQueue, SyncOperation, SyncStatus, PendingChange
 
 
 @dataclass
@@ -74,8 +76,22 @@ class EventStore:
         # State file path
         self._state_file = config.state_file
         
+        # Sync queue for offline-first operations
+        queue_file = config.state_file.parent / "sync_queue.json"
+        self._sync_queue = SyncQueue(queue_file)
+        self._sync_queue.set_on_change_callback(self._on_sync_queue_changed)
+        
+        # Track last successful sync time
+        self._last_sync_time: Optional[datetime] = None
+        
+        # Local events (created locally, not yet on server)
+        self._local_events: dict[str, Event] = {}  # event_uid -> Event
+        
         # Callback for notifying GUI of changes
         self._on_change_callback: Optional[Callable[[], None]] = None
+        
+        # Callback for sync status updates
+        self._on_sync_status_callback: Optional[Callable[[int, Optional[datetime]], None]] = None
     
     def set_on_change_callback(self, callback: Callable[[], None]) -> None:
         """Set a callback to be invoked when data changes."""
@@ -611,3 +627,237 @@ class EventStore:
         for cal_id, color in self._colors.items():
             if cal_id in self._calendars:
                 self._calendars[cal_id].color = color
+    
+    # ==================== Sync Queue Methods ====================
+    
+    def set_on_sync_status_callback(self, callback: Callable[[int, Optional[datetime]], None]) -> None:
+        """
+        Set callback for sync status updates.
+        
+        Args:
+            callback: Function(pending_count, last_sync_time)
+        """
+        self._on_sync_status_callback = callback
+    
+    def _on_sync_queue_changed(self) -> None:
+        """Handle sync queue changes - notify listeners."""
+        self._notify_sync_status()
+    
+    def _notify_sync_status(self) -> None:
+        """Notify listeners of sync status change."""
+        if self._on_sync_status_callback:
+            self._on_sync_status_callback(
+                self._sync_queue.get_pending_count(),
+                self._last_sync_time
+            )
+    
+    def get_pending_sync_count(self) -> int:
+        """Get number of pending changes waiting to sync."""
+        return self._sync_queue.get_pending_count()
+    
+    def get_last_sync_time(self) -> Optional[datetime]:
+        """Get time of last successful sync."""
+        return self._last_sync_time
+    
+    def has_pending_sync(self, event_uid: str) -> bool:
+        """Check if an event has pending sync changes."""
+        # Handle expanded recurring events (UID_timestamp format)
+        base_uid = event_uid.split('_')[0] if '_' in event_uid else event_uid
+        return self._sync_queue.has_pending_for_event(base_uid)
+    
+    def sync_pending_changes(self) -> tuple[int, int]:
+        """
+        Attempt to sync all pending changes to the server.
+        
+        Returns:
+            Tuple of (successful_count, failed_count)
+        """
+        import sys
+        pending = self._sync_queue.get_pending_changes()
+        if not pending:
+            return (0, 0)
+        
+        print(f"DEBUG: Syncing {len(pending)} pending changes", file=sys.stderr)
+        
+        success_count = 0
+        fail_count = 0
+        
+        for change in pending:
+            try:
+                self._sync_queue.mark_syncing(change.id)
+                
+                if change.operation == SyncOperation.CREATE:
+                    result = self._sync_create(change)
+                elif change.operation == SyncOperation.UPDATE:
+                    result = self._sync_update(change)
+                elif change.operation == SyncOperation.DELETE:
+                    result = self._sync_delete(change)
+                elif change.operation == SyncOperation.DELETE_INSTANCE:
+                    result = self._sync_delete_instance(change)
+                else:
+                    result = False
+                
+                if result:
+                    self._sync_queue.mark_synced(change.id)
+                    # Remove from local events if it was there
+                    if change.event_uid in self._local_events:
+                        del self._local_events[change.event_uid]
+                    success_count += 1
+                else:
+                    self._sync_queue.mark_failed(change.id, "Sync operation failed")
+                    fail_count += 1
+                    
+            except Exception as e:
+                print(f"DEBUG: Sync error for {change.id}: {e}", file=sys.stderr)
+                self._sync_queue.mark_failed(change.id, str(e))
+                fail_count += 1
+        
+        # Update last sync time if any succeeded
+        if success_count > 0:
+            self._last_sync_time = datetime.now()
+            self.invalidate_cache()
+            self._notify_change()
+        
+        self._notify_sync_status()
+        return (success_count, fail_count)
+    
+    def _sync_create(self, change: PendingChange) -> bool:
+        """Sync a CREATE operation to the server."""
+        calendar = self._calendars.get(change.calendar_id)
+        if calendar is None or calendar._caldav_calendar is None:
+            return False
+        
+        client = self._caldav_clients.get(calendar.account_name)
+        if client is None:
+            return False
+        
+        # Reconstruct EventData from stored data
+        event = self._event_from_dict(change.event_data)
+        if event is None:
+            return False
+        
+        result = client.create_event(calendar._caldav_calendar, event)
+        return result is not None
+    
+    def _sync_update(self, change: PendingChange) -> bool:
+        """Sync an UPDATE operation to the server."""
+        # For updates, we need the original caldav_event reference
+        # This is tricky because we may not have it if the app restarted
+        # For now, try to find the event on the server and update it
+        calendar = self._calendars.get(change.calendar_id)
+        if calendar is None or calendar._caldav_calendar is None:
+            return False
+        
+        client = self._caldav_clients.get(calendar.account_name)
+        if client is None:
+            return False
+        
+        event = self._event_from_dict(change.event_data)
+        if event is None:
+            return False
+        
+        # If we have the caldav_event reference, use it
+        if event._caldav_event is not None:
+            return client.update_event(event)
+        
+        # Otherwise, we need to refetch and update
+        # This is a limitation of the current implementation
+        return False
+    
+    def _sync_delete(self, change: PendingChange) -> bool:
+        """Sync a DELETE operation to the server."""
+        event = self._event_from_dict(change.event_data)
+        if event is None or event._caldav_event is None:
+            return False
+        
+        for cal in self._calendars.values():
+            if cal.source_type == "caldav" and cal._caldav_calendar:
+                client = self._caldav_clients.get(cal.account_name)
+                if client:
+                    return client.delete_event(event)
+        
+        return False
+    
+    def _sync_delete_instance(self, change: PendingChange) -> bool:
+        """Sync a DELETE_INSTANCE operation to the server."""
+        event = self._event_from_dict(change.event_data)
+        if event is None or event._caldav_event is None or change.instance_start is None:
+            return False
+        
+        instance_start = datetime.fromisoformat(change.instance_start)
+        
+        for cal in self._calendars.values():
+            if cal.source_type == "caldav" and cal._caldav_calendar:
+                client = self._caldav_clients.get(cal.account_name)
+                if client:
+                    return client.delete_recurring_instance(event, instance_start)
+        
+        return False
+    
+    def _event_to_dict(self, event: Event) -> dict:
+        """Serialize an Event to a dictionary for storage."""
+        return {
+            "uid": event.uid,
+            "summary": event.summary,
+            "start": event.start.isoformat(),
+            "end": event.end.isoformat(),
+            "description": event.description,
+            "location": event.location,
+            "all_day": event.all_day,
+            "calendar_id": event.calendar_id,
+            "calendar_name": event.calendar_name,
+            "calendar_color": event.calendar_color,
+            "source_type": event.source_type,
+            "read_only": event.read_only,
+            "recurrence": self._recurrence_to_dict(event.recurrence) if event.recurrence else None,
+        }
+    
+    def _event_from_dict(self, data: dict) -> Optional[Event]:
+        """Deserialize an Event from a dictionary."""
+        try:
+            recurrence = None
+            if data.get("recurrence"):
+                recurrence = self._recurrence_from_dict(data["recurrence"])
+            
+            return Event(
+                uid=data["uid"],
+                summary=data["summary"],
+                start=datetime.fromisoformat(data["start"]),
+                end=datetime.fromisoformat(data["end"]),
+                description=data.get("description", ""),
+                location=data.get("location", ""),
+                all_day=data.get("all_day", False),
+                calendar_id=data.get("calendar_id", ""),
+                calendar_name=data.get("calendar_name", ""),
+                calendar_color=data.get("calendar_color", "#4285f4"),
+                source_type=data.get("source_type", "caldav"),
+                read_only=data.get("read_only", False),
+                recurrence=recurrence,
+            )
+        except Exception as e:
+            print(f"Error deserializing event: {e}", file=__import__('sys').stderr)
+            return None
+    
+    def _recurrence_to_dict(self, rule: RecurrenceRule) -> dict:
+        """Serialize a RecurrenceRule to a dictionary."""
+        return {
+            "frequency": rule.frequency,
+            "interval": rule.interval,
+            "count": rule.count,
+            "until": rule.until.isoformat() if rule.until else None,
+            "by_day": rule.by_day,
+            "by_month_day": rule.by_month_day,
+            "by_month": rule.by_month,
+        }
+    
+    def _recurrence_from_dict(self, data: dict) -> RecurrenceRule:
+        """Deserialize a RecurrenceRule from a dictionary."""
+        return RecurrenceRule(
+            frequency=data["frequency"],
+            interval=data.get("interval", 1),
+            count=data.get("count"),
+            until=datetime.fromisoformat(data["until"]) if data.get("until") else None,
+            by_day=data.get("by_day"),
+            by_month_day=data.get("by_month_day"),
+            by_month=data.get("by_month"),
+        )

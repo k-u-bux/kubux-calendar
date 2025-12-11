@@ -99,6 +99,9 @@ class EventData:
     source_type: str = "caldav"  # "caldav" or "ics"
     read_only: bool = False
     
+    # Sync status: "synced", "pending", "failed"
+    sync_status: str = "synced"
+    
     # Internal reference for updates
     _caldav_event: Optional[caldav.Event] = field(default=None, repr=False)
     _raw_ical: Optional[str] = field(default=None, repr=False)

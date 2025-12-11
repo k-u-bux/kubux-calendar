@@ -222,6 +222,11 @@ class MainWindow(QMainWindow):
         self._auto_refresh_timer = QTimer(self)
         self._auto_refresh_timer.timeout.connect(self._on_auto_refresh)
         
+        # Sync timer for pending changes (runs every 10 seconds)
+        self._sync_timer = QTimer(self)
+        self._sync_timer.timeout.connect(self._on_sync_timer)
+        self._sync_timer.start(10000)  # 10 seconds
+        
         # Config file watcher
         self._config_watcher = QFileSystemWatcher(self)
         config_path = Config.get_default_config_path()
@@ -649,6 +654,33 @@ class MainWindow(QMainWindow):
         import sys
         print("DEBUG: Auto-refresh triggered - calling event_store.refresh()", file=sys.stderr)
         self.event_store.refresh()
+    
+    def _on_sync_timer(self):
+        """Handle sync timer tick - attempt to sync pending changes."""
+        pending_count = self.event_store.get_pending_sync_count()
+        if pending_count > 0:
+            import sys
+            print(f"DEBUG: Sync timer - {pending_count} pending changes", file=sys.stderr)
+            success, failed = self.event_store.sync_pending_changes()
+            if success > 0:
+                print(f"DEBUG: Synced {success} changes, {failed} failed", file=sys.stderr)
+        
+        # Update status bar
+        self._update_sync_status()
+    
+    def _update_sync_status(self):
+        """Update status bar with sync status."""
+        pending_count = self.event_store.get_pending_sync_count()
+        last_sync = self.event_store.get_last_sync_time()
+        
+        if pending_count > 0:
+            self._statusbar.showMessage(f"{pending_count} changes pending synchronization")
+        elif last_sync:
+            # Get count of loaded events
+            start, end = self._calendar_widget.get_date_range()
+            events = self.event_store.get_events(start, end)
+            time_str = last_sync.strftime("%H:%M")
+            self._statusbar.showMessage(f"Last sync at {time_str}, loaded {len(events)} events")
     
     def _on_reload_clicked(self):
         """Handle reload button click - force refresh from server."""

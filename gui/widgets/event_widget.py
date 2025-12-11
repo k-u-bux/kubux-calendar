@@ -336,11 +336,12 @@ class EventWidget(QFrame):
             return QSize(80, 2 * line_height + 8)
     
     def paintEvent(self, event) -> None:
-        """Override paintEvent to draw indicator triangles for recurring and read-only events."""
+        """Override paintEvent to draw indicator triangles for recurring, read-only, and sync status."""
         super().paintEvent(event)
         
         # Determine if we need to draw any triangles
-        if not self.event_data.is_recurring and not self.event_data.read_only:
+        has_pending_sync = self.event_data.sync_status != "synced"
+        if not self.event_data.is_recurring and not self.event_data.read_only and not has_pending_sync:
             return
         
         painter = QPainter(self)
@@ -358,6 +359,17 @@ class EventWidget(QFrame):
         triangle_color = get_contrasting_text_color(bg_color)
         
         painter.setPen(Qt.NoPen)
+        
+        # Draw sync pending indicator triangle in upper-right corner (black)
+        if has_pending_sync:
+            painter.setBrush(QBrush(QColor("#000000")))
+            sync_points = QPolygonF([
+                QPointF(w, 0),                              # Top-right corner
+                QPointF(w - triangle_size, 0),              # Left along top
+                QPointF(w, triangle_size)                   # Down along right edge
+            ])
+            painter.drawPolygon(sync_points)
+        
         painter.setBrush(QBrush(QColor(triangle_color)))
         
         # Draw recurring indicator triangle in bottom-left corner
