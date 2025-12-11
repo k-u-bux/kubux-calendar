@@ -236,6 +236,7 @@ class DayColumnWidget(QWidget):
         self._drag_start_y: int = 0
         self._drag_original_start: Optional[datetime] = None
         self._drag_original_end: Optional[datetime] = None
+        self._drag_grab_offset_y: int = 0  # Offset from event top to grab point (pixels)
         
         self._setup_ui()
         self._setup_time_indicator()
@@ -429,18 +430,27 @@ class DayColumnWidget(QWidget):
         
         return dt_time(hour=snapped_minutes // 60, minute=snapped_minutes % 60)
     
-    def _on_drag_started(self, event: EventData, mode: DragMode):
-        """Handle drag start."""
+    def _on_drag_started(self, event: EventData, mode: DragMode, y_offset_in_widget: int = 0):
+        """Handle drag start.
+        
+        Args:
+            event: The event being dragged
+            mode: The drag mode (MOVE, RESIZE_TOP, RESIZE_BOTTOM)
+            y_offset_in_widget: Y offset from the widget's top to the grab point (pixels)
+        """
         self._dragging_event = event
         self._drag_mode = mode
         self._drag_original_start = to_local_datetime(event.start)
         self._drag_original_end = to_local_datetime(event.end)
+        
+        # Store the grab offset (distance from event top to where user clicked)
+        # This ensures grab-and-release-without-moving keeps event in place
+        self._drag_grab_offset_y = y_offset_in_widget
     
     def _on_drag_moved(self, event: EventData, mode: DragMode, global_pos):
         """Handle drag move - show time tooltip as visual feedback."""
         local_pos = self.mapFromGlobal(global_pos)
         y = local_pos.y()
-        new_time = self._y_to_time(y)
         
         # Calculate what times would be after drag
         if self._drag_original_start and self._drag_original_end:
@@ -449,13 +459,18 @@ class DayColumnWidget(QWidget):
             duration = orig_end - orig_start
             
             if mode == DragMode.MOVE:
+                # Subtract grab offset so the event follows the original grab point
+                adjusted_y = y - self._drag_grab_offset_y
+                new_time = self._y_to_time(adjusted_y)
                 new_start = datetime.combine(self._date, new_time)
                 new_end = new_start + duration
                 time_str = f"{new_start.strftime('%H:%M')} - {new_end.strftime('%H:%M')}"
             elif mode == DragMode.RESIZE_TOP:
+                new_time = self._y_to_time(y)
                 new_start_time = new_time
                 time_str = f"{new_start_time.strftime('%H:%M')} - {orig_end.strftime('%H:%M')}"
             elif mode == DragMode.RESIZE_BOTTOM:
+                new_time = self._y_to_time(y)
                 new_end_time = new_time
                 time_str = f"{orig_start.strftime('%H:%M')} - {new_end_time.strftime('%H:%M')}"
             else:
@@ -465,17 +480,42 @@ class DayColumnWidget(QWidget):
             from PySide6.QtWidgets import QToolTip
             QToolTip.showText(global_pos, time_str, self)
     
+    def _find_target_day_column(self, global_pos) -> tuple[date, int]:
+        """Find which DayColumnWidget is under the global position.
+        
+        Returns:
+            Tuple of (target_date, local_y) where the event should be placed.
+        """
+        from PySide6.QtWidgets import QApplication
+        
+        # Default to this widget if we can't find another
+        target_date = self._date
+        local_pos = self.mapFromGlobal(global_pos)
+        local_y = local_pos.y()
+        
+        # Find widget under cursor
+        widget_at_pos = QApplication.widgetAt(global_pos)
+        if widget_at_pos is None:
+            return (target_date, local_y)
+        
+        # Walk up the widget tree to find a DayColumnWidget
+        current = widget_at_pos
+        while current is not None:
+            if isinstance(current, DayColumnWidget):
+                target_date = current._date
+                local_y = current.mapFromGlobal(global_pos).y()
+                break
+            current = current.parentWidget()
+        
+        return (target_date, local_y)
+    
     def _on_drag_finished(self, event: EventData, mode: DragMode, global_pos):
         """Handle drag completion - calculate new times and emit signal."""
         if self._dragging_event is None:
             return
         
-        # Convert global position to local Y coordinate
-        local_pos = self.mapFromGlobal(global_pos)
-        y = local_pos.y()
-        
-        # Get snapped time
-        new_time = self._y_to_time(y)
+        # Find target day column (for cross-day dragging in week view)
+        target_date, y = self._find_target_day_column(global_pos)
         
         # Calculate new start and end based on drag mode
         orig_start = self._drag_original_start
@@ -483,10 +523,15 @@ class DayColumnWidget(QWidget):
         duration = orig_end - orig_start
         
         if mode == DragMode.MOVE:
-            # Move entire event - keep duration
-            new_start = datetime.combine(self._date, new_time)
+            # Subtract grab offset so event stays aligned with where user grabbed
+            adjusted_y = y - self._drag_grab_offset_y
+            new_time = self._y_to_time(adjusted_y)
+            # Move entire event - keep duration (use target_date for cross-day drops)
+            new_start = datetime.combine(target_date, new_time)
             new_end = new_start + duration
         elif mode == DragMode.RESIZE_TOP:
+            # For resize, use mouse Y directly (no offset adjustment)
+            new_time = self._y_to_time(y)
             # Change start time, keep end
             new_start = datetime.combine(self._date, new_time)
             new_end = datetime.combine(self._date, orig_end.time())
@@ -494,6 +539,8 @@ class DayColumnWidget(QWidget):
             if new_start >= new_end:
                 new_start = new_end - timedelta(minutes=_layout_config.drag_snap_minutes)
         elif mode == DragMode.RESIZE_BOTTOM:
+            # For resize, use mouse Y directly (no offset adjustment)
+            new_time = self._y_to_time(y)
             # Change end time, keep start
             new_start = datetime.combine(self._date, orig_start.time())
             new_end = datetime.combine(self._date, new_time)

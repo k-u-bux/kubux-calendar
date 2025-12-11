@@ -413,7 +413,7 @@ class DraggableEventWidget(EventWidget):
     """
     
     # Signals for drag operations
-    drag_started = Signal(EventData, DragMode)  # Event data, drag mode
+    drag_started = Signal(EventData, DragMode, int)  # Event data, drag mode, y offset within widget
     drag_moved = Signal(EventData, DragMode, QPoint)  # Event data, mode, global position
     drag_finished = Signal(EventData, DragMode, QPoint)  # Event data, mode, final global position
     
@@ -477,7 +477,8 @@ class DraggableEventWidget(EventWidget):
                 if distance >= self.DRAG_THRESHOLD:
                     self._is_dragging = True
                     self.setCursor(Qt.ClosedHandCursor)
-                    self.drag_started.emit(self.event_data, self._drag_mode)
+                    # Pass y offset within widget so parent can calculate grab offset
+                    self.drag_started.emit(self.event_data, self._drag_mode, self._press_pos.y())
             
             if self._is_dragging:
                 # Emit drag move with global position
