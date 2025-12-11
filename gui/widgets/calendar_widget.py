@@ -395,7 +395,14 @@ class DayColumnWidget(QWidget):
         self._event_widgets.clear()
         
         for event, col, total_cols in self._event_layout:
-            widget = EventWidget(event, compact=True, parent=self)
+            # Use DraggableEventWidget for editable events, EventWidget for read-only
+            if event.read_only:
+                widget = EventWidget(event, compact=True, parent=self)
+            else:
+                widget = DraggableEventWidget(event, compact=True, parent=self)
+                widget.drag_started.connect(self._on_drag_started)
+                widget.drag_moved.connect(self._on_drag_moved)
+                widget.drag_finished.connect(self._on_drag_finished)
             widget.clicked.connect(self.event_clicked.emit)
             widget.double_clicked.connect(self.event_double_clicked.emit)
             self._event_widgets.append(widget)
@@ -405,6 +412,80 @@ class DayColumnWidget(QWidget):
         
         # Ensure time indicator stays on top of event widgets
         self._time_indicator.raise_()
+    
+    def _y_to_time(self, y: int) -> dt_time:
+        """Convert Y position to time, snapped to configured interval."""
+        snap_minutes = _layout_config.drag_snap_minutes
+        # Convert Y to hours (float)
+        hours = y / HOUR_HEIGHT
+        hours = max(0, min(24, hours))
+        
+        # Convert to minutes
+        total_minutes = int(hours * 60)
+        
+        # Snap to nearest interval
+        snapped_minutes = round(total_minutes / snap_minutes) * snap_minutes
+        snapped_minutes = max(0, min(24 * 60 - 1, snapped_minutes))
+        
+        return dt_time(hour=snapped_minutes // 60, minute=snapped_minutes % 60)
+    
+    def _on_drag_started(self, event: EventData, mode: DragMode):
+        """Handle drag start."""
+        self._dragging_event = event
+        self._drag_mode = mode
+        self._drag_original_start = to_local_datetime(event.start)
+        self._drag_original_end = to_local_datetime(event.end)
+    
+    def _on_drag_moved(self, event: EventData, mode: DragMode, global_pos):
+        """Handle drag move - could show preview here."""
+        pass  # Visual feedback could be added here
+    
+    def _on_drag_finished(self, event: EventData, mode: DragMode, global_pos):
+        """Handle drag completion - calculate new times and emit signal."""
+        if self._dragging_event is None:
+            return
+        
+        # Convert global position to local Y coordinate
+        local_pos = self.mapFromGlobal(global_pos)
+        y = local_pos.y()
+        
+        # Get snapped time
+        new_time = self._y_to_time(y)
+        
+        # Calculate new start and end based on drag mode
+        orig_start = self._drag_original_start
+        orig_end = self._drag_original_end
+        duration = orig_end - orig_start
+        
+        if mode == DragMode.MOVE:
+            # Move entire event - keep duration
+            new_start = datetime.combine(self._date, new_time)
+            new_end = new_start + duration
+        elif mode == DragMode.RESIZE_TOP:
+            # Change start time, keep end
+            new_start = datetime.combine(self._date, new_time)
+            new_end = datetime.combine(self._date, orig_end.time())
+            # Don't allow start after end
+            if new_start >= new_end:
+                new_start = new_end - timedelta(minutes=_layout_config.drag_snap_minutes)
+        elif mode == DragMode.RESIZE_BOTTOM:
+            # Change end time, keep start
+            new_start = datetime.combine(self._date, orig_start.time())
+            new_end = datetime.combine(self._date, new_time)
+            # Don't allow end before start
+            if new_end <= new_start:
+                new_end = new_start + timedelta(minutes=_layout_config.drag_snap_minutes)
+        else:
+            # No change
+            self._dragging_event = None
+            return
+        
+        # Emit signal with new times
+        self.event_time_changed.emit(event, new_start, new_end)
+        
+        # Reset drag state
+        self._dragging_event = None
+        self._drag_mode = DragMode.NONE
     
     def _position_event_widgets(self):
         """Position all event widgets based on their layout."""
@@ -471,6 +552,7 @@ class DayView(QWidget):
     slot_double_clicked = Signal(datetime)
     event_clicked = Signal(EventData)
     event_double_clicked = Signal(EventData)
+    event_time_changed = Signal(EventData, datetime, datetime)  # For drag-and-drop
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -554,6 +636,7 @@ class DayView(QWidget):
         self._day_column.slot_double_clicked.connect(self.slot_double_clicked.emit)
         self._day_column.event_clicked.connect(self.event_clicked.emit)
         self._day_column.event_double_clicked.connect(self.event_double_clicked.emit)
+        self._day_column.event_time_changed.connect(self.event_time_changed.emit)
         
         scroll.setWidget(self._day_column)
         self._scroll = scroll
@@ -630,6 +713,7 @@ class WeekView(QWidget):
     slot_double_clicked = Signal(datetime)
     event_clicked = Signal(EventData)
     event_double_clicked = Signal(EventData)
+    event_time_changed = Signal(EventData, datetime, datetime)  # For drag-and-drop
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -738,6 +822,7 @@ class WeekView(QWidget):
             col.slot_double_clicked.connect(self.slot_double_clicked.emit)
             col.event_clicked.connect(self.event_clicked.emit)
             col.event_double_clicked.connect(self.event_double_clicked.emit)
+            col.event_time_changed.connect(self.event_time_changed.emit)
             content_layout.addWidget(col, 1)
             self._day_columns.append(col)
         
@@ -1455,6 +1540,7 @@ class CalendarWidget(QWidget):
     slot_double_clicked = Signal(datetime)
     event_clicked = Signal(EventData)
     event_double_clicked = Signal(EventData)
+    event_time_changed = Signal(EventData, datetime, datetime)  # For drag-and-drop
     view_changed = Signal(ViewType)
     date_changed = Signal(date)
     visible_range_changed = Signal(datetime, datetime)  # For list view date label updates
@@ -1481,6 +1567,7 @@ class CalendarWidget(QWidget):
             view.slot_double_clicked.connect(self.slot_double_clicked.emit)
             view.event_clicked.connect(self.event_clicked.emit)
             view.event_double_clicked.connect(self.event_double_clicked.emit)
+            view.event_time_changed.connect(self.event_time_changed.emit)
         
         self._month_view.day_clicked.connect(lambda d: self.slot_clicked.emit(datetime.combine(d, dt_time(hour=9))))
         self._month_view.day_double_clicked.connect(lambda d: self.slot_double_clicked.emit(datetime.combine(d, dt_time(hour=9))))

@@ -307,6 +307,7 @@ class MainWindow(QMainWindow):
         self._calendar_widget.slot_double_clicked.connect(self._on_slot_double_clicked)
         self._calendar_widget.event_clicked.connect(self._on_event_clicked)
         self._calendar_widget.event_double_clicked.connect(self._on_event_double_clicked)
+        self._calendar_widget.event_time_changed.connect(self._on_event_time_changed)
         self._calendar_widget.view_changed.connect(self._on_view_changed)
         self._calendar_widget.date_changed.connect(self._on_date_changed)
         self._calendar_widget.visible_range_changed.connect(self._on_list_visible_range_changed)
@@ -890,6 +891,77 @@ class MainWindow(QMainWindow):
     def _on_event_double_clicked(self, event: EventData):
         """Handle double-click on event to edit."""
         self._open_event_dialog(event=event)
+    
+    def _on_event_time_changed(self, event: EventData, new_start: datetime, new_end: datetime):
+        """Handle event time change from drag-and-drop."""
+        import sys
+        
+        # Skip if times haven't actually changed
+        from backend.timezone_utils import to_local_datetime
+        old_start = to_local_datetime(event.start)
+        old_end = to_local_datetime(event.end)
+        
+        # Compare times (ignoring timezone for comparison)
+        if (new_start.replace(tzinfo=None) == old_start.replace(tzinfo=None) and
+            new_end.replace(tzinfo=None) == old_end.replace(tzinfo=None)):
+            return
+        
+        print(f"DEBUG: Event time changed: {event.summary}", file=sys.stderr)
+        print(f"DEBUG: Old: {old_start} - {old_end}", file=sys.stderr)
+        print(f"DEBUG: New: {new_start} - {new_end}", file=sys.stderr)
+        
+        # Handle recurring events - TODO: show dialog asking "this instance or all?"
+        # For now, we modify all instances (the series)
+        if event.is_recurring:
+            # TODO: Show a dialog asking whether to modify this instance or all instances
+            # For now, just update the series
+            pass
+        
+        # Get the event from the store to modify it
+        stored_event = self.event_store.get_event(event.uid, event.calendar_id)
+        if stored_event:
+            # Update the event times
+            # Convert local times to timezone-aware for storage
+            import pytz
+            local_tz = pytz.timezone('Europe/Amsterdam')  # TODO: get from config or system
+            try:
+                # Get system timezone
+                import time
+                local_tz_name = time.tzname[0]
+                local_tz = pytz.timezone(local_tz_name)
+            except:
+                pass
+            
+            new_start_aware = local_tz.localize(new_start) if new_start.tzinfo is None else new_start
+            new_end_aware = local_tz.localize(new_end) if new_end.tzinfo is None else new_end
+            
+            # Create updated event data
+            updated_event = EventData(
+                uid=event.uid,
+                summary=event.summary,
+                start=new_start_aware,
+                end=new_end_aware,
+                all_day=event.all_day,
+                location=event.location,
+                description=event.description,
+                calendar_name=event.calendar_name,
+                calendar_id=event.calendar_id,
+                calendar_color=event.calendar_color,
+                rrule=event.rrule,
+                recurrence_id=event.recurrence_id,
+                is_recurring=event.is_recurring,
+                read_only=event.read_only
+            )
+            
+            # Save through event store
+            success = self.event_store.update_event(updated_event)
+            if success:
+                self._refresh_events()
+                self._statusbar.showMessage(f"Event '{event.summary}' moved", 3000)
+            else:
+                self._statusbar.showMessage(f"Failed to save event changes", 3000)
+                # Refresh to restore original display
+                self._refresh_events()
     
     def _on_new_event(self):
         """Handle new event button click."""
