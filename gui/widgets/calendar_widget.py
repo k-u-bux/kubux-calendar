@@ -15,7 +15,10 @@ from PySide6.QtGui import QFont, QFontMetrics, QMouseEvent
 
 from backend.caldav_client import EventData
 from backend.config import LayoutConfig, LocalizationConfig, ColorsConfig, LabelsConfig
-from .event_widget import EventWidget, set_event_layout_config, set_event_colors_config
+from .event_widget import (
+    EventWidget, DraggableEventWidget, DragMode,
+    set_event_layout_config, set_event_colors_config
+)
 
 # Module-level configs (set by MainWindow at startup)
 _layout_config: LayoutConfig = LayoutConfig()
@@ -211,21 +214,34 @@ class DayColumnWidget(QWidget):
     """
     A single day column with absolute positioning for events.
     Events span according to their duration. Overlapping events are placed side by side.
+    Supports drag-and-drop for moving/resizing events.
     """
     
     slot_clicked = Signal(datetime)
     slot_double_clicked = Signal(datetime)
     event_clicked = Signal(EventData)
     event_double_clicked = Signal(EventData)
+    event_time_changed = Signal(EventData, datetime, datetime)  # event, new_start, new_end
     
     def __init__(self, for_date: date, parent=None):
         super().__init__(parent)
         self._date = for_date
         self._events: list[EventData] = []
-        self._event_widgets: list[EventWidget] = []
+        self._event_widgets: list[DraggableEventWidget] = []
         self._event_layout: list[tuple[EventData, int, int]] = []  # (event, column, total_columns)
+        
+        # Drag state
+        self._dragging_event: Optional[EventData] = None
+        self._drag_mode: DragMode = DragMode.NONE
+        self._drag_start_y: int = 0
+        self._drag_original_start: Optional[datetime] = None
+        self._drag_original_end: Optional[datetime] = None
+        
         self._setup_ui()
         self._setup_time_indicator()
+        
+        # Enable mouse tracking for drag handling
+        self.setMouseTracking(True)
     
     def _setup_ui(self):
         # Fixed height for 24 hours
