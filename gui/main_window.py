@@ -692,11 +692,10 @@ class MainWindow(QMainWindow):
         if pending_count > 0:
             self._statusbar.showMessage(f"{pending_count} changes pending synchronization")
         elif last_sync:
-            # Get count of loaded events
-            start, end = self._calendar_widget.get_date_range()
-            events = self.event_store.get_events(start, end)
+            # Show count of cached events (not just visible ones)
+            cached_count = self.event_store.get_cached_event_count()
             time_str = last_sync.strftime("%H:%M")
-            self._statusbar.showMessage(f"Last sync at {time_str}, loaded {len(events)} events")
+            self._statusbar.showMessage(f"Last sync at {time_str}, {cached_count} events cached")
     
     def _on_reload_clicked(self):
         """Handle reload button click - force refresh from server."""

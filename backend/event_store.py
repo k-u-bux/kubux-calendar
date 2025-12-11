@@ -691,6 +691,10 @@ class EventStore:
         """Get time of last successful sync."""
         return self._last_sync_time
     
+    def get_cached_event_count(self) -> int:
+        """Get the number of events currently in the cache."""
+        return len(self._cached_events)
+    
     def has_pending_sync(self, event_uid: str) -> bool:
         """Check if an event has pending sync changes."""
         # Handle expanded recurring events (UID_timestamp format)
