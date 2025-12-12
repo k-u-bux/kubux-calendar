@@ -6,11 +6,19 @@ A simple desktop calendar application for Nextcloud (CalDAV) and ICS subscriptio
 
 ## Features
 
+- **Explicit Sync Status**: **Always know if your local view matches the server state**
+  - Visual indicators show pending changes at a glance (triangle in event corners)
+  - Status bar displays last sync time and count of pending operations
+  - Never wonder if your changes have been saved to the server
+  - Unlike many calendar apps that hide sync state, this app is completely transparent
+- **Offline-First**: Work instantly, sync in background
+  - Create, edit, and delete events immediately (no waiting for server)
+  - Changes are queued and synced automatically with exponential backoff
+  - Pending changes persist across app restarts
 - **CalDAV Integration**: Full read/write support for Nextcloud calendars
 - **ICS Subscriptions**: Read-only support for external ICS calendar feeds
 - **Multiple Views**: Day, Week, Month, and List views
 - **Event Management**: Create, edit, and delete events with recurrence support
-- **Offline-First**: Events are created locally first, then synced to server in background
 - **Calendar Visibility**: Toggle individual calendars on/off
 - **Custom Colors**: Assign custom colors to each calendar
 - **All-Day Events**: Full support for all-day and multi-day events
@@ -23,6 +31,31 @@ A simple desktop calendar application for Nextcloud (CalDAV) and ICS subscriptio
 - **Event Caching**: Pre-fetches ±2 months of events for fast navigation
 - **Live Config Reload**: Automatically reloads when the config file changes (no restart needed)
 - **Persistent UI State**: Remembers window size, sidebar width, view, and scroll position
+
+## Sync Status Transparency
+
+**A key differentiator:** Unlike many calendar applications that leave you wondering whether your local view accurately reflects the server state, Kubux Calendar is **completely transparent** about synchronization.
+
+### You Always Know:
+- **What's synced**: Events without indicators are confirmed on the server
+- **What's pending**: Events with a black triangle (top-right) are queued for sync
+- **When it synced**: Status bar shows "Last sync at HH:MM" 
+- **What's queuing**: Status bar shows "N changes pending synchronization"
+
+### Why This Matters:
+Most calendar apps hide their sync state, leaving you to guess:
+- "Did my edit save?"
+- "Is this event really deleted?"
+- "Am I looking at stale data?"
+
+Kubux Calendar eliminates this uncertainty. The application is designed on the principle that **you should never have to wonder** if your local view matches reality.
+
+### How It Works:
+1. **Immediate feedback**: Create/edit/delete operations complete instantly (offline-first)
+2. **Visual queuing**: Pending changes are marked with a black triangle indicator
+3. **Background sync**: Changes sync to server automatically with exponential backoff
+4. **Status reporting**: Status bar always shows sync state and time
+5. **Persistent queue**: Pending changes survive app restarts
 
 ## Screenshot
 
@@ -196,10 +229,16 @@ The List view displays all events in a chronological scrollable list (±3 months
 
 ### Visual Indicators
 
-Events display small triangle indicators in the corners:
-- **Top-right triangle**: Pending sync (event not yet synced to server)
-- **Bottom-left triangle**: Recurring event
-- **Bottom-right triangle**: Read-only event (from ICS subscription)
+**Transparency at a glance:** Events display small triangle indicators in the corners to show their status:
+
+- **Top-right triangle (black)**: **Pending sync** - This event has changes queued but not yet confirmed on the server
+  - Create/edit/delete operations show this indicator immediately
+  - Disappears once the server confirms the change
+  - **This is your guarantee**: If you see this triangle, the change is queued and will sync
+- **Bottom-left triangle**: **Recurring event** - Part of a repeating series
+- **Bottom-right triangle**: **Read-only** - Event from ICS subscription (cannot be edited)
+
+**No indicator = Fully synced.** If an event has no top-right triangle, you can be certain it accurately reflects the server state.
 
 ### Sidebar
 
