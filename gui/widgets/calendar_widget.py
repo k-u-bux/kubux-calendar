@@ -995,6 +995,9 @@ class MonthDayCell(QFrame):
     double_clicked = Signal(date)
     event_clicked = Signal(EventData)
     event_double_clicked = Signal(EventData)
+    event_drag_started = Signal(EventData, DragMode, int)
+    event_drag_moved = Signal(EventData, DragMode, object)  # QPoint
+    event_drag_finished = Signal(EventData, DragMode, object)  # QPoint
     
     def __init__(self, d: date, is_current_month: bool = True, parent=None):
         super().__init__(parent)
@@ -1054,7 +1057,15 @@ class MonthDayCell(QFrame):
     
     def add_event(self, event: EventData):
         # Month view: title only, no location
-        widget = EventWidget(event, compact=True, show_time=False, show_location=False)
+        # Use DraggableEventWidget for editable events
+        if event.read_only:
+            widget = EventWidget(event, compact=True, show_time=False, show_location=False)
+        else:
+            widget = DraggableEventWidget(event, compact=True, show_time=False, show_location=False)
+            widget.drag_started.connect(self.event_drag_started.emit)
+            widget.drag_moved.connect(lambda e, m, p: self.event_drag_moved.emit(e, m, p))
+            widget.drag_finished.connect(lambda e, m, p: self.event_drag_finished.emit(e, m, p))
+        
         event_height = _get_single_line_event_height()
         widget.setMaximumHeight(event_height)
         widget.clicked.connect(self.event_clicked.emit)
@@ -1085,6 +1096,7 @@ class MonthView(QWidget):
     day_double_clicked = Signal(date)
     event_clicked = Signal(EventData)
     event_double_clicked = Signal(EventData)
+    event_time_changed = Signal(EventData, datetime, datetime)  # For drag-and-drop
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1092,6 +1104,9 @@ class MonthView(QWidget):
         self._month = date.today().month
         self._events: list[EventData] = []
         self._cells: list[MonthDayCell] = []
+        self._dragging_event: Optional[EventData] = None
+        self._drag_original_start: Optional[datetime] = None
+        self._drag_original_end: Optional[datetime] = None
         self._setup_ui()
     
     def _setup_ui(self):
@@ -1135,6 +1150,8 @@ class MonthView(QWidget):
                 cell.double_clicked.connect(self.day_double_clicked.emit)
                 cell.event_clicked.connect(self.event_clicked.emit)
                 cell.event_double_clicked.connect(self.event_double_clicked.emit)
+                cell.event_drag_started.connect(self._on_drag_started)
+                cell.event_drag_finished.connect(self._on_drag_finished)
                 self._grid_layout.addWidget(cell, row, col)
                 self._cells.append(cell)
         
@@ -1196,6 +1213,58 @@ class MonthView(QWidget):
         start = datetime.combine(self._cells[0].date, dt_time.min)
         end = datetime.combine(self._cells[-1].date, dt_time.max)
         return start, end
+    
+    def _on_drag_started(self, event: EventData, mode: DragMode, y_offset: int):
+        """Handle drag start - store original times."""
+        self._dragging_event = event
+        self._drag_original_start = to_local_datetime(event.start)
+        self._drag_original_end = to_local_datetime(event.end)
+    
+    def _find_target_day_cell(self, global_pos) -> Optional[date]:
+        """Find which MonthDayCell is under the global position."""
+        from PySide6.QtWidgets import QApplication
+        
+        widget_at_pos = QApplication.widgetAt(global_pos)
+        if widget_at_pos is None:
+            return None
+        
+        # Walk up the widget tree to find a MonthDayCell
+        current = widget_at_pos
+        while current is not None:
+            if isinstance(current, MonthDayCell):
+                return current._date
+            current = current.parentWidget()
+        
+        return None
+    
+    def _on_drag_finished(self, event: EventData, mode: DragMode, global_pos):
+        """Handle drag completion - change only the date, keep original time."""
+        if self._dragging_event is None or self._drag_original_start is None:
+            return
+        
+        # Find target day cell
+        target_date = self._find_target_day_cell(global_pos)
+        if target_date is None:
+            # Dropped outside any cell - cancel
+            self._dragging_event = None
+            return
+        
+        # Calculate new times: change date, keep original time and duration
+        orig_start = self._drag_original_start
+        orig_end = self._drag_original_end
+        duration = orig_end - orig_start
+        
+        # Combine target date with original time
+        new_start = datetime.combine(target_date, orig_start.time())
+        new_end = new_start + duration
+        
+        # Emit signal with new times
+        self.event_time_changed.emit(event, new_start, new_end)
+        
+        # Reset drag state
+        self._dragging_event = None
+        self._drag_original_start = None
+        self._drag_original_end = None
     
     def refresh_styles(self):
         """Refresh header styles after config change."""
@@ -1645,6 +1714,7 @@ class CalendarWidget(QWidget):
         self._month_view.day_double_clicked.connect(lambda d: self.slot_double_clicked.emit(datetime.combine(d, dt_time(hour=9))))
         self._month_view.event_clicked.connect(self.event_clicked.emit)
         self._month_view.event_double_clicked.connect(self.event_double_clicked.emit)
+        self._month_view.event_time_changed.connect(self.event_time_changed.emit)
         
         # List view only emits event clicks (no slot clicks - new events via toolbar)
         self._list_view.event_clicked.connect(self.event_clicked.emit)
