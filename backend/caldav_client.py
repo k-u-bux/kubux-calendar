@@ -717,6 +717,38 @@ class CalDAVClient:
             print(f"Error deleting event: {e}")
             return False
     
+    def delete_event_by_uid(self, calendar: CalendarInfo, uid: str) -> bool:
+        """
+        Delete an event by its UID.
+        
+        Fetches the event from server and deletes it.
+        
+        Args:
+            calendar: The calendar containing the event
+            uid: The event UID
+        
+        Returns:
+            True if successful, False otherwise.
+        """
+        if calendar._caldav_calendar is None:
+            return False
+        
+        try:
+            # Fetch the event from server
+            caldav_event = calendar._caldav_calendar.event_by_uid(uid)
+            if not caldav_event:
+                import sys
+                print(f"DEBUG: delete_event_by_uid({uid}): event not found", file=sys.stderr)
+                return False
+            
+            # Delete it
+            caldav_event.delete()
+            return True
+        except Exception as e:
+            import sys
+            print(f"DEBUG: delete_event_by_uid({uid}): {e}", file=sys.stderr)
+            return False
+    
     def delete_recurring_instance(self, event: EventData, instance_start: datetime) -> bool:
         """
         Delete a specific instance of a recurring event by adding an EXDATE.

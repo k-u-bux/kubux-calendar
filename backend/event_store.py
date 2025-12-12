@@ -507,57 +507,81 @@ class EventStore:
     
     def delete_event(self, event: Event) -> bool:
         """
-        Delete an event.
+        Delete an event (offline-first).
+        
+        Marks event as pending deletion and queues for sync.
+        The event will be removed from display after successful sync.
         
         Args:
             event: Event to delete
         
         Returns:
-            True if successful, False otherwise.
+            True if successfully queued, False otherwise.
         """
         if event.read_only:
             return False
         
-        # Find the client for this event
+        # Find the calendar for this event
+        calendar = None
         for cal in self._calendars.values():
             if cal.source_type == "caldav" and cal._caldav_calendar and \
                cal._caldav_calendar.id == event.calendar_id:
-                client = self._caldav_clients.get(cal.account_name)
-                if client:
-                    result = client.delete_event(event)
-                    if result:
-                        self.invalidate_cache()  # Clear cache so deleted event is removed
-                        self._notify_change()
-                    return result
+                calendar = cal
+                break
         
-        return False
+        if calendar is None or calendar.source_type != "caldav":
+            return False
+        
+        # Mark event as pending deletion
+        event.sync_status = "pending"
+        
+        # Queue the deletion for background sync (non-blocking)
+        event_data = self._event_to_dict(event)
+        self._sync_queue.add_delete(calendar.id, event.uid, event_data)
+        
+        # Keep event in cache with pending status (will be removed after sync)
+        self._notify_change()
+        
+        return True
     
     def delete_recurring_instance(self, event: Event, instance_start: datetime) -> bool:
         """
-        Delete a specific instance of a recurring event.
+        Delete a specific instance of a recurring event (offline-first).
+        
+        Marks instance as pending deletion and queues for sync.
         
         Args:
             event: The recurring event
             instance_start: Start time of the instance to delete
         
         Returns:
-            True if successful, False otherwise.
+            True if successfully queued, False otherwise.
         """
         if event.read_only or not event.is_recurring:
             return False
         
+        # Find the calendar for this event
+        calendar = None
         for cal in self._calendars.values():
             if cal.source_type == "caldav" and cal._caldav_calendar and \
                cal._caldav_calendar.id == event.calendar_id:
-                client = self._caldav_clients.get(cal.account_name)
-                if client:
-                    result = client.delete_recurring_instance(event, instance_start)
-                    if result:
-                        self.invalidate_cache()  # Clear cache so deleted instance is removed
-                        self._notify_change()
-                    return result
+                calendar = cal
+                break
         
-        return False
+        if calendar is None or calendar.source_type != "caldav":
+            return False
+        
+        # Mark event as pending deletion
+        event.sync_status = "pending"
+        
+        # Queue the instance deletion for background sync (non-blocking)
+        event_data = self._event_to_dict(event)
+        self._sync_queue.add_delete_instance(calendar.id, event.uid, event_data, instance_start)
+        
+        # Keep event in cache with pending status (instance will be removed after sync)
+        self._notify_change()
+        
+        return True
     
     def get_writable_calendars(self) -> list[CalendarSource]:
         """Get all calendars that can be written to."""
@@ -847,17 +871,28 @@ class EventStore:
     
     def _sync_delete(self, change: PendingChange) -> bool:
         """Sync a DELETE operation to the server."""
-        event = self._event_from_dict(change.event_data)
-        if event is None or event._caldav_event is None:
+        import sys
+        
+        # Get calendar info from the change
+        calendar = self._calendars.get(change.calendar_id)
+        if calendar is None or calendar._caldav_calendar is None:
+            print(f"DEBUG _sync_delete: calendar not found: {change.calendar_id}", file=sys.stderr)
             return False
         
-        for cal in self._calendars.values():
-            if cal.source_type == "caldav" and cal._caldav_calendar:
-                client = self._caldav_clients.get(cal.account_name)
-                if client:
-                    return client.delete_event(event)
+        client = self._caldav_clients.get(calendar.account_name)
+        if client is None:
+            print(f"DEBUG _sync_delete: client not found: {calendar.account_name}", file=sys.stderr)
+            return False
         
-        return False
+        # Delete by UID (fetches from server then deletes)
+        # Pass the CalendarInfo (calendar._caldav_calendar), not CalendarSource
+        result = client.delete_event_by_uid(calendar._caldav_calendar, change.event_uid)
+        if result:
+            print(f"DEBUG _sync_delete: successfully deleted event {change.event_uid}", file=sys.stderr)
+        else:
+            print(f"DEBUG _sync_delete: failed to delete event {change.event_uid}", file=sys.stderr)
+        
+        return result
     
     def _sync_delete_instance(self, change: PendingChange) -> bool:
         """Sync a DELETE_INSTANCE operation to the server."""

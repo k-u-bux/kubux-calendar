@@ -320,10 +320,15 @@ class SyncQueue:
             self._save()
     
     def get_pending_changes(self) -> list[PendingChange]:
-        """Get all changes ready for sync (PENDING or FAILED, not currently syncing)."""
+        """
+        Get all changes ready for sync (PENDING or FAILED, not currently syncing).
+        
+        Note: Failed items will keep retrying indefinitely (with exponential backoff).
+        The retry_count is tracked for logging but doesn't limit retries.
+        """
         return [
-            c for c in self._pending.values() 
-            if c.status in (SyncStatus.PENDING, SyncStatus.FAILED) and c.retry_count < self.MAX_RETRIES
+            c for c in self._pending.values()
+            if c.status in (SyncStatus.PENDING, SyncStatus.FAILED)
         ]
     
     def get_all_changes(self) -> list[PendingChange]:
