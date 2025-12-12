@@ -12,6 +12,13 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 import pytz
 
+
+def _debug_print(message: str) -> None:
+    """Print debug message with timestamp."""
+    import sys
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    print(f"[{timestamp}] {message}", file=sys.stderr)
+
 from .config import Config, NextcloudAccount, ICSSubscription as ICSSubscriptionConfig
 from .caldav_client import CalDAVClient, CalendarInfo, EventData, RecurrenceRule
 from .ics_subscription import ICSSubscription, ICSSubscriptionManager
@@ -256,8 +263,7 @@ class EventStore:
     
     def _fetch_events_into_cache(self, start: datetime, end: datetime) -> None:
         """Fetch events from all sources and store in cache."""
-        import sys
-        print(f"DEBUG: Fetching events into cache for range {start.date()} to {end.date()}", file=sys.stderr)
+        _debug_print(f"Fetching events into cache for range {start.date()} to {end.date()}")
         
         all_events = []
         
@@ -305,7 +311,7 @@ class EventStore:
         self._cache_start = start
         self._cache_end = end
         
-        print(f"DEBUG: Cached {len(all_events)} events (including {len(self._local_events)} local)", file=sys.stderr)
+        _debug_print(f"Cached {len(all_events)} events (including {len(self._local_events)} local)")
     
     def invalidate_cache(self) -> None:
         """Invalidate the event cache. Call this when events are modified."""
@@ -646,6 +652,10 @@ class EventStore:
         # Invalidate cache so fresh data is fetched on next get_events call
         self.invalidate_cache()
         self._notify_change()
+        
+        # Update last sync time
+        self._last_sync_time = datetime.now()
+        
         print(f"DEBUG: Refresh complete, cache invalidated", file=sys.stderr)
     
     def _load_state(self) -> None:
