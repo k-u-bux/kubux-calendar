@@ -74,7 +74,7 @@ class ICSSubscription:
                 }
             )
             response.raise_for_status()
-            
+            response.encoding = 'utf-8'
             self._raw_data = response.text
             self._calendar = ICSCalendar(self._raw_data)
             self._last_fetch = datetime.now(pytz.UTC)
