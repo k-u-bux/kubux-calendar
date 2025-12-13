@@ -263,7 +263,11 @@ class EventDialog(QWidget):
         
         if self.event_data and self.event_data.read_only:
             notice = QLabel(self.event_store.config.labels.readonly_notice)
-            notice.setStyleSheet("background: #fff3cd; padding: 8px; border-radius: 4px; color: #856404;")
+            notice.setStyleSheet(
+                f"background: {self.event_store.config.colors.readonly_notice_background}; "
+                f"padding: 8px; border-radius: 4px; "
+                f"color: {self.event_store.config.colors.readonly_notice_text};"
+            )
             layout.addWidget(notice)
         
         # Create scrollable content area
@@ -342,7 +346,10 @@ class EventDialog(QWidget):
         
         if not self.is_new and not (self.event_data and self.event_data.read_only):
             self._delete_btn = QPushButton(self.event_store.config.labels.button_delete)
-            self._delete_btn.setStyleSheet("background: #dc3545; color: white;")
+            self._delete_btn.setStyleSheet(
+                f"background: {self.event_store.config.colors.button_delete_background}; "
+                f"color: {self.event_store.config.colors.button_delete_text};"
+            )
             self._delete_btn.clicked.connect(self._on_delete)
             button_layout.addWidget(self._delete_btn)
         
@@ -354,7 +361,10 @@ class EventDialog(QWidget):
         
         if not (self.event_data and self.event_data.read_only):
             self._save_btn = QPushButton(self.event_store.config.labels.button_save)
-            self._save_btn.setStyleSheet("background: #007bff; color: white;")
+            self._save_btn.setStyleSheet(
+                f"background: {self.event_store.config.colors.button_save_background}; "
+                f"color: {self.event_store.config.colors.button_save_text};"
+            )
             self._save_btn.clicked.connect(self._on_save)
             self._save_btn.setDefault(True)
             button_layout.addWidget(self._save_btn)

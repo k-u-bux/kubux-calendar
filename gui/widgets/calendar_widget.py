@@ -135,7 +135,8 @@ class AllDayEventCell(QWidget):
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(2, 2, 2, 2)
         self._layout.setSpacing(2)
-        self.setStyleSheet("background-color: #fafafa; border-bottom: 1px solid #e0e0e0;")
+        colors = get_colors_config()
+        self.setStyleSheet(f"background-color: {colors.allday_cell_background}; border-bottom: 1px solid {colors.cell_border};")
     
     def add_event(self, event: EventData):
         self._events.append(event)
@@ -245,17 +246,18 @@ class DayColumnWidget(QWidget):
         self.setMouseTracking(True)
     
     def _setup_ui(self):
+        colors = get_colors_config()
         # Fixed height for 24 hours
         self.setMinimumHeight(24 * HOUR_HEIGHT)
         self.setMaximumHeight(24 * HOUR_HEIGHT)
-        self.setStyleSheet("background-color: white; border: 1px solid #e0e0e0;")
+        self.setStyleSheet(f"background-color: {colors.day_column_background}; border: 1px solid {colors.cell_border};")
         self.setCursor(Qt.PointingHandCursor)
         
         # Draw hour lines
         for hour in range(1, 24):
             line = QFrame(self)
             line.setFrameStyle(QFrame.HLine | QFrame.Plain)
-            line.setStyleSheet("background-color: #e8e8e8;")
+            line.setStyleSheet(f"background-color: {colors.hour_line};")
             line.setGeometry(0, hour * HOUR_HEIGHT, 2000, 1)
     
     def _setup_time_indicator(self):
@@ -810,8 +812,9 @@ class WeekView(QWidget):
         from PySide6.QtWidgets import QApplication, QStyle
         scrollbar_width = QApplication.style().pixelMetric(QStyle.PM_ScrollBarExtent)
         
+        colors = get_colors_config()
         header = QWidget()
-        header.setStyleSheet("background: #f5f5f5;")
+        header.setStyleSheet(f"background: {colors.header_background};")
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(time_col_width, 0, scrollbar_width, 0)  # Match time column + scrollbar
         header_layout.setSpacing(1)
@@ -820,7 +823,7 @@ class WeekView(QWidget):
         for i in range(7):
             label = QLabel()
             label.setAlignment(Qt.AlignCenter)
-            label.setStyleSheet("font-weight: bold; padding: 8px; background: #f5f5f5;")
+            label.setStyleSheet(f"font-weight: bold; padding: 8px; background: {colors.header_background};")
             header_layout.addWidget(label, 1)
             self._header_labels.append(label)
         
@@ -833,8 +836,9 @@ class WeekView(QWidget):
         all_day_layout.setSpacing(0)
         
         # Spacer to align with time column
+        colors = get_colors_config()
         all_day_spacer = QWidget()
-        all_day_spacer.setStyleSheet("background: #f5f5f5;")
+        all_day_spacer.setStyleSheet(f"background: {colors.header_background};")
         all_day_spacer.setFixedWidth(time_col_width)
         all_day_layout.addWidget(all_day_spacer)
         
@@ -859,10 +863,11 @@ class WeekView(QWidget):
         content_layout.setSpacing(0)
         
         # Time labels
+        colors = get_colors_config()
         time_widget = QWidget()
         time_widget.setFixedWidth(time_col_width)
         time_widget.setFixedHeight(24 * HOUR_HEIGHT)
-        time_widget.setStyleSheet(" background: #f5f5f5;")
+        time_widget.setStyleSheet(f" background: {colors.header_background};")
         time_layout = QVBoxLayout(time_widget)
         time_layout.setContentsMargins(0, 0, 0, 0)
         time_layout.setSpacing(0)
@@ -1038,15 +1043,16 @@ class MonthDayCell(QFrame):
         self._update_style()
     
     def _update_style(self):
-        bg = "#ffffff" if self.is_current_month else "#f5f5f5"
-        text = "#000000" if self.is_current_month else "#999999"
+        colors = get_colors_config()
+        bg = colors.month_cell_current if self.is_current_month else colors.month_cell_other
+        text = colors.month_text_current if self.is_current_month else colors.month_text_other
         
         if self._date == date.today():
-            self._day_label.setStyleSheet("color: #1976d2; font-weight: bold; background: #e3f2fd; border-radius: 10px; padding: 2px 6px;")
+            self._day_label.setStyleSheet(f"color: {colors.today_highlight_text}; font-weight: bold; background: {colors.today_highlight_background}; border-radius: 10px; padding: 2px 6px;")
         else:
             self._day_label.setStyleSheet(f"color: {text};")
         
-        self.setStyleSheet(f"background-color: {bg}; border: 1px solid #e0e0e0;")
+        self.setStyleSheet(f"background-color: {bg}; border: 1px solid {colors.cell_border};")
     
     def set_date(self, d: date, is_current_month: bool = True):
         self._date = d
@@ -1123,11 +1129,12 @@ class MonthView(QWidget):
         self._header_labels = []
         font_name, font_size = get_interface_font()
         localization = get_localization_config()
+        colors = get_colors_config()
         for i in range(7):
             day_name = localization.get_day_name(i)
             label = QLabel(day_name)
             label.setAlignment(Qt.AlignCenter)
-            label.setStyleSheet(f"font-family: '{font_name}'; font-size: {font_size}pt; font-weight: bold; padding: 8px; background: #f5f5f5;")
+            label.setStyleSheet(f"font-family: '{font_name}'; font-size: {font_size}pt; font-weight: bold; padding: 8px; background: {colors.header_background};")
             header_layout.addWidget(label, 1)
             self._header_labels.append(label)
         
@@ -1269,8 +1276,9 @@ class MonthView(QWidget):
     def refresh_styles(self):
         """Refresh header styles after config change."""
         font_name, font_size = get_interface_font()
+        colors = get_colors_config()
         for label in self._header_labels:
-            label.setStyleSheet(f"font-family: '{font_name}'; font-size: {font_size}pt; font-weight: bold; padding: 8px; background: #f5f5f5;")
+            label.setStyleSheet(f"font-family: '{font_name}'; font-size: {font_size}pt; font-weight: bold; padding: 8px; background: {colors.header_background};")
 
 
 class ListEventWidget(QFrame):
@@ -1340,9 +1348,10 @@ class ListEventWidget(QFrame):
         title_row.addWidget(title_label, 1)
         
         # Calendar name (right-aligned)
+        colors = get_colors_config()
         cal_label = QLabel(self.event_data.calendar_name)
         cal_label.setFont(text_font)
-        cal_label.setStyleSheet("color: rgba(0, 0, 0, 0.6);")
+        cal_label.setStyleSheet(f"color: {colors.secondary_text};")
         title_row.addWidget(cal_label)
         
         content_layout.addLayout(title_row)
@@ -1361,7 +1370,7 @@ class ListEventWidget(QFrame):
             desc_label = QLabel(desc)
             desc_label.setFont(text_font)
             desc_label.setWordWrap(True)
-            desc_label.setStyleSheet("color: rgba(0, 0, 0, 0.7);")
+            desc_label.setStyleSheet(f"color: {colors.tertiary_text};")
             content_layout.addWidget(desc_label)
         
         layout.addLayout(content_layout, 1)

@@ -33,9 +33,10 @@ class ClickableColorBox(QFrame):
     
     color_changed = Signal(str)
     
-    def __init__(self, color: str, parent=None):
+    def __init__(self, color: str, border_color: str = "#999999", parent=None):
         super().__init__(parent)
         self._color = color
+        self._border_color = border_color
         # Size based on font metrics - approximately 1 line height
         from PySide6.QtGui import QFontMetrics
         fm = QFontMetrics(self.font())
@@ -45,7 +46,7 @@ class ClickableColorBox(QFrame):
         self._update_style()
     
     def _update_style(self):
-        self.setStyleSheet(f"background-color: {self._color}; border-radius: 3px; border: 1px solid #999;")
+        self.setStyleSheet(f"background-color: {self._color}; border-radius: 3px; border: 1px solid {self._border_color};")
     
     def set_color(self, color: str):
         self._color = color
