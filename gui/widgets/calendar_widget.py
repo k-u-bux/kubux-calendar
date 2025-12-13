@@ -302,9 +302,9 @@ class DayColumnWidget(QWidget):
     def __init__(self, for_date: date, parent=None):
         super().__init__(parent)
         self._date = for_date
-        self._events: list[EventData] = []
+        self._portions: list[EventPortion] = []
         self._event_widgets: list[DraggableEventWidget] = []
-        self._event_layout: list[tuple[EventData, int, int]] = []  # (event, column, total_columns)
+        self._event_layout: list[tuple[EventPortion, int, int]] = []  # (portion, column, total_columns)
         
         # Drag state
         self._dragging_event: Optional[EventData] = None
@@ -372,11 +372,12 @@ class DayColumnWidget(QWidget):
         self._update_time_indicator()  # Update visibility based on new date
         self._refresh_events()
     
-    def add_event(self, event: EventData):
-        self._events.append(event)
+    def add_portion(self, portion: EventPortion):
+        """Add an event portion to this day column."""
+        self._portions.append(portion)
     
-    def finalize_events(self):
-        """Call after all events are added to calculate layout and create widgets."""
+    def finalize_portions(self):
+        """Call after all portions are added to calculate layout and create widgets."""
         self._calculate_layout()
         self._create_event_widgets()
     
