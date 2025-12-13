@@ -370,7 +370,7 @@ class DayColumnWidget(QWidget):
     def set_date(self, new_date: date):
         self._date = new_date
         self._update_time_indicator()  # Update visibility based on new date
-        self._refresh_events()
+        # Note: Event refresh handled by parent view (DayView/WeekView)
     
     def add_portion(self, portion: EventPortion):
         """Add an event portion to this day column."""
@@ -610,21 +610,29 @@ class DayColumnWidget(QWidget):
         elif mode == DragMode.RESIZE_TOP:
             # For resize, use mouse Y directly (no offset adjustment)
             new_time = self._y_to_time(y)
-            # Change start time, keep end
+            # Change start time on THIS day, keep original end date/time
             new_start = datetime.combine(self._date, new_time)
-            new_end = datetime.combine(self._date, orig_end.time())
-            # Don't allow start after end
-            if new_start >= new_end:
-                new_start = new_end - timedelta(minutes=_layout_config.drag_snap_minutes)
+            new_end = orig_end  # Preserve original end (including date!)
+            # Don't allow start after end (strip timezone for comparison)
+            start_cmp = new_start.replace(tzinfo=None) if new_start.tzinfo else new_start
+            end_cmp = new_end.replace(tzinfo=None) if new_end.tzinfo else new_end
+            if start_cmp >= end_cmp:
+                # Set start to minimum interval before end
+                end_naive = new_end.replace(tzinfo=None) if new_end.tzinfo else new_end
+                new_start = end_naive - timedelta(minutes=_layout_config.drag_snap_minutes)
         elif mode == DragMode.RESIZE_BOTTOM:
             # For resize, use mouse Y directly (no offset adjustment)
             new_time = self._y_to_time(y)
-            # Change end time, keep start
-            new_start = datetime.combine(self._date, orig_start.time())
+            # Change end time on THIS day, keep original start date/time
+            new_start = orig_start  # Preserve original start (including date!)
             new_end = datetime.combine(self._date, new_time)
-            # Don't allow end before start
-            if new_end <= new_start:
-                new_end = new_start + timedelta(minutes=_layout_config.drag_snap_minutes)
+            # Don't allow end before start (strip timezone for comparison)
+            start_cmp = new_start.replace(tzinfo=None) if new_start.tzinfo else new_start
+            end_cmp = new_end.replace(tzinfo=None) if new_end.tzinfo else new_end
+            if end_cmp <= start_cmp:
+                # Set end to minimum interval after start
+                start_naive = new_start.replace(tzinfo=None) if new_start.tzinfo else new_start
+                new_end = start_naive + timedelta(minutes=_layout_config.drag_snap_minutes)
         else:
             # No change
             self._dragging_event = None
