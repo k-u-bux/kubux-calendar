@@ -73,12 +73,14 @@ class CalendarSidebarItem(QFrame):
         calendar: CalendarSource,
         on_toggle: callable,
         on_color_change: callable,
+        subscription_icon: str = "📡",
         parent=None
     ):
         super().__init__(parent)
         self.calendar = calendar
         self.on_toggle = on_toggle
         self.on_color_change = on_color_change
+        self.subscription_icon = subscription_icon
         self._setup_ui()
     
     def _setup_ui(self):
@@ -99,7 +101,7 @@ class CalendarSidebarItem(QFrame):
         
         # Source type indicator
         if self.calendar.source_type == "ics":
-            type_label = QLabel("📡")
+            type_label = QLabel(self.subscription_icon)
             type_label.setToolTip("ICS Subscription (read-only)")
             layout.addWidget(type_label)
     
@@ -133,7 +135,7 @@ class CalendarSidebar(QWidget):
         layout.setSpacing(4)
         
         # Header
-        self._header = QLabel("Calendars")
+        self._header = QLabel(self.event_store.config.labels.sidebar_header)
         if self._interface_font:
             header_font = QFont(self._interface_font)
             header_font.setBold(True)
@@ -168,7 +170,8 @@ class CalendarSidebar(QWidget):
             item = CalendarSidebarItem(
                 calendar,
                 self._on_calendar_toggle,
-                self._on_calendar_color_change
+                self._on_calendar_color_change,
+                subscription_icon=self.event_store.config.labels.subscription_icon
             )
             self._list_layout.addWidget(item)
             self._items[calendar.id] = item
@@ -252,7 +255,7 @@ class MainWindow(QMainWindow):
     
     def _setup_window(self):
         """Configure main window properties."""
-        self.setWindowTitle("Kubux Calendar")
+        self.setWindowTitle(self.config.labels.window_title)
         self.setMinimumSize(800, 600)
         
         # Load UI state from JSON file
@@ -345,11 +348,11 @@ class MainWindow(QMainWindow):
         # View switcher
         self._view_combo = QComboBox()
         self._view_combo.setFont(self._interface_font)
-        self._view_combo.addItem("Day", ViewType.DAY)
-        self._view_combo.addItem("Week", ViewType.WEEK)
-        self._view_combo.addItem("Month", ViewType.MONTH)
+        self._view_combo.addItem(self.config.labels.view_day, ViewType.DAY)
+        self._view_combo.addItem(self.config.labels.view_week, ViewType.WEEK)
+        self._view_combo.addItem(self.config.labels.view_month, ViewType.MONTH)
         self._view_combo.insertSeparator(3)  # Add separator after Month
-        self._view_combo.addItem("List", ViewType.LIST)
+        self._view_combo.addItem(self.config.labels.view_list, ViewType.LIST)
         self._view_combo.setCurrentIndex(1)  # Default to week view
         self._view_combo.currentIndexChanged.connect(self._on_view_combo_changed)
         toolbar.addWidget(self._view_combo)
@@ -357,18 +360,18 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
         
         # Navigation buttons
-        self._prev_btn = QPushButton("◀")
+        self._prev_btn = QPushButton(self.config.labels.button_prev)
         self._prev_btn.setFont(self._interface_font)
         self._prev_btn.setToolTip("Previous")
         self._prev_btn.clicked.connect(self._calendar_widget.go_previous)
         toolbar.addWidget(self._prev_btn)
         
-        self._today_btn = QPushButton("Today")
+        self._today_btn = QPushButton(self.config.labels.button_today)
         self._today_btn.setFont(self._interface_font)
         self._today_btn.clicked.connect(self._calendar_widget.go_today)
         toolbar.addWidget(self._today_btn)
         
-        self._next_btn = QPushButton("▶")
+        self._next_btn = QPushButton(self.config.labels.button_next)
         self._next_btn.setFont(self._interface_font)
         self._next_btn.setToolTip("Next")
         self._next_btn.clicked.connect(self._calendar_widget.go_next)
@@ -380,7 +383,7 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(left_spacer)
         
         # === CENTER: New Event button ===
-        self._new_event_btn = QPushButton("New Event")
+        self._new_event_btn = QPushButton(self.config.labels.button_new_event)
         self._new_event_btn.setFont(self._interface_font)
         self._new_event_btn.clicked.connect(self._on_new_event)
         toolbar.addWidget(self._new_event_btn)
@@ -391,19 +394,19 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(right_spacer)
         
         # === RIGHT BLOCK: Actions ===
-        self._reload_btn = QPushButton("Reload")
+        self._reload_btn = QPushButton(self.config.labels.button_reload)
         self._reload_btn.setFont(self._interface_font)
         self._reload_btn.setToolTip("Reload events from all calendars")
         self._reload_btn.clicked.connect(self._on_reload_clicked)
         toolbar.addWidget(self._reload_btn)
         
-        self._edit_config_btn = QPushButton("Edit Config")
+        self._edit_config_btn = QPushButton(self.config.labels.button_edit_config)
         self._edit_config_btn.setFont(self._interface_font)
         self._edit_config_btn.setToolTip("Open configuration file")
         self._edit_config_btn.clicked.connect(self._on_edit_config)
         toolbar.addWidget(self._edit_config_btn)
         
-        self._quit_btn = QPushButton("Quit")
+        self._quit_btn = QPushButton(self.config.labels.button_quit)
         self._quit_btn.setFont(self._interface_font)
         self._quit_btn.setToolTip("Exit application")
         self._quit_btn.clicked.connect(self.close)

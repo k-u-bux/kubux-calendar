@@ -31,8 +31,10 @@ class RecurrenceWidget(QGroupBox):
     DAY_CODES = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
     DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     
-    def __init__(self, parent=None):
-        super().__init__("Recurrence", parent)
+    def __init__(self, labels_config=None, parent=None):
+        from backend.config import LabelsConfig
+        self.labels = labels_config or LabelsConfig()
+        super().__init__(self.labels.recurrence_title, parent)
         self.setCheckable(True)
         self.setChecked(False)
         self._setup_ui()
@@ -42,8 +44,13 @@ class RecurrenceWidget(QGroupBox):
         
         # Frequency
         self._freq_combo = QComboBox()
-        self._freq_combo.addItems(["Daily", "Weekly", "Monthly", "Yearly"])
-        layout.addRow("Repeat:", self._freq_combo)
+        self._freq_combo.addItems([
+            self.labels.freq_daily,
+            self.labels.freq_weekly,
+            self.labels.freq_monthly,
+            self.labels.freq_yearly
+        ])
+        layout.addRow(self.labels.recurrence_repeat, self._freq_combo)
         
         # Interval
         interval_layout = QHBoxLayout()
@@ -54,7 +61,7 @@ class RecurrenceWidget(QGroupBox):
         self._interval_label = QLabel("day(s)")
         interval_layout.addWidget(self._interval_label)
         interval_layout.addStretch()
-        layout.addRow("Every:", interval_layout)
+        layout.addRow(self.labels.recurrence_every, interval_layout)
         
         # Week day checkboxes (shown only for weekly recurrence)
         # Use a container for the entire row so we can hide label + checkboxes together
@@ -63,7 +70,7 @@ class RecurrenceWidget(QGroupBox):
         weekday_row_layout.setContentsMargins(0, 0, 0, 0)
         weekday_row_layout.setSpacing(8)
         
-        weekday_label = QLabel("On days:")
+        weekday_label = QLabel(self.labels.recurrence_on_days)
         weekday_row_layout.addWidget(weekday_label)
         
         self._weekday_checks: list[QCheckBox] = []
@@ -82,21 +89,25 @@ class RecurrenceWidget(QGroupBox):
         
         # End condition
         self._end_combo = QComboBox()
-        self._end_combo.addItems(["Never", "After N occurrences", "Until date"])
+        self._end_combo.addItems([
+            self.labels.end_never,
+            self.labels.end_after_count,
+            self.labels.end_until_date
+        ])
         self._end_combo.currentIndexChanged.connect(self._update_end_widget)
-        layout.addRow("Ends:", self._end_combo)
+        layout.addRow(self.labels.recurrence_ends, self._end_combo)
         
         self._count_spin = QSpinBox()
         self._count_spin.setRange(1, 999)
         self._count_spin.setValue(10)
         self._count_spin.hide()
-        layout.addRow("Occurrences:", self._count_spin)
+        layout.addRow(self.labels.recurrence_occurrences, self._count_spin)
         
         self._until_edit = QDateTimeEdit()
         self._until_edit.setCalendarPopup(True)
         self._until_edit.setDateTime(QDateTime.currentDateTime().addMonths(1))
         self._until_edit.hide()
-        layout.addRow("Until:", self._until_edit)
+        layout.addRow(self.labels.recurrence_until, self._until_edit)
     
     def _update_interval_label(self):
         freq = self._freq_combo.currentText().lower()
@@ -195,9 +206,9 @@ class EventDialog(QWidget):
     
     def _setup_window(self):
         if self.is_new:
-            self.setWindowTitle("New Event")
+            self.setWindowTitle(self.event_store.config.labels.dialog_new_event)
         else:
-            self.setWindowTitle(f"Edit: {self.event_data.summary}")
+            self.setWindowTitle(f"{self.event_store.config.labels.dialog_edit_event}: {self.event_data.summary}")
         self.setWindowFlags(Qt.Window)
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.setMinimumSize(400, 500)
@@ -251,7 +262,7 @@ class EventDialog(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         
         if self.event_data and self.event_data.read_only:
-            notice = QLabel("🔒 This event is read-only (from a subscription)")
+            notice = QLabel(self.event_store.config.labels.readonly_notice)
             notice.setStyleSheet("background: #fff3cd; padding: 8px; border-radius: 4px; color: #856404;")
             layout.addWidget(notice)
         
@@ -272,7 +283,7 @@ class EventDialog(QWidget):
         
         self._title_edit = QLineEdit()
         self._title_edit.setPlaceholderText("Event title")
-        form.addRow("Title:", self._title_edit)
+        form.addRow(self.event_store.config.labels.field_title, self._title_edit)
         
         self._calendar_combo = QComboBox()
         self._calendars = self.event_store.get_writable_calendars()
@@ -280,7 +291,7 @@ class EventDialog(QWidget):
             self._calendar_combo.addItem(f"{cal.name} ({cal.account_name})", cal.id)
         
         if self.is_new:
-            form.addRow("Calendar:", self._calendar_combo)
+            form.addRow(self.event_store.config.labels.field_calendar, self._calendar_combo)
             # Set last used calendar as default
             last_calendar_id = self._dialog_state.get("last_calendar_id")
             if last_calendar_id:
@@ -290,9 +301,9 @@ class EventDialog(QWidget):
                         break
         else:
             cal_label = QLabel(f"{self.event_data.calendar_name}")
-            form.addRow("Calendar:", cal_label)
+            form.addRow(self.event_store.config.labels.field_calendar, cal_label)
         
-        self._all_day_check = QCheckBox("All-day event")
+        self._all_day_check = QCheckBox(self.event_store.config.labels.checkbox_allday)
         self._all_day_check.stateChanged.connect(self._on_all_day_changed)
         form.addRow("", self._all_day_check)
         
@@ -300,16 +311,16 @@ class EventDialog(QWidget):
         self._start_edit.setCalendarPopup(True)
         self._start_edit.setDisplayFormat("yyyy-MM-dd HH:mm")
         self._start_edit.dateTimeChanged.connect(self._on_start_changed)
-        form.addRow("Start:", self._start_edit)
+        form.addRow(self.event_store.config.labels.field_start, self._start_edit)
         
         self._end_edit = QDateTimeEdit()
         self._end_edit.setCalendarPopup(True)
         self._end_edit.setDisplayFormat("yyyy-MM-dd HH:mm")
-        form.addRow("End:", self._end_edit)
+        form.addRow(self.event_store.config.labels.field_end, self._end_edit)
         
         self._location_edit = QLineEdit()
         self._location_edit.setPlaceholderText("Location (optional)")
-        form.addRow("Location:", self._location_edit)
+        form.addRow(self.event_store.config.labels.field_location, self._location_edit)
         
         self._description_edit = QTextEdit()
         self._description_edit.setPlaceholderText("Description (optional)")
@@ -317,11 +328,11 @@ class EventDialog(QWidget):
         fm = QFontMetrics(self._description_edit.font())
         min_height = fm.height() * 5 + 10
         self._description_edit.setMinimumHeight(min_height)
-        form.addRow("Description:", self._description_edit)
+        form.addRow(self.event_store.config.labels.field_description, self._description_edit)
         
         content_layout.addLayout(form)
         
-        self._recurrence_widget = RecurrenceWidget()
+        self._recurrence_widget = RecurrenceWidget(labels_config=self.event_store.config.labels)
         content_layout.addWidget(self._recurrence_widget)
         
         scroll.setWidget(scroll_content)
@@ -330,19 +341,19 @@ class EventDialog(QWidget):
         button_layout = QHBoxLayout()
         
         if not self.is_new and not (self.event_data and self.event_data.read_only):
-            self._delete_btn = QPushButton("Delete")
+            self._delete_btn = QPushButton(self.event_store.config.labels.button_delete)
             self._delete_btn.setStyleSheet("background: #dc3545; color: white;")
             self._delete_btn.clicked.connect(self._on_delete)
             button_layout.addWidget(self._delete_btn)
         
         button_layout.addStretch()
         
-        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn = QPushButton(self.event_store.config.labels.button_cancel)
         self._cancel_btn.clicked.connect(self.close)
         button_layout.addWidget(self._cancel_btn)
         
         if not (self.event_data and self.event_data.read_only):
-            self._save_btn = QPushButton("Save")
+            self._save_btn = QPushButton(self.event_store.config.labels.button_save)
             self._save_btn.setStyleSheet("background: #007bff; color: white;")
             self._save_btn.clicked.connect(self._on_save)
             self._save_btn.setDefault(True)

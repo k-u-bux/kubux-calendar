@@ -242,7 +242,8 @@ class EventWidget(QFrame):
             time_label.setFont(text_font)
             header_layout.addWidget(time_label)
         elif self.event_data.all_day:
-            all_day_label = QLabel("All day")
+            from .calendar_widget import get_labels_config
+            all_day_label = QLabel(get_labels_config().allday_label)
             all_day_label.setFont(text_font)
             header_layout.addWidget(all_day_label)
         
