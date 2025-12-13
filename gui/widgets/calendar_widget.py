@@ -305,9 +305,11 @@ class DayColumnWidget(QWidget):
         self._portions: list[EventPortion] = []
         self._event_widgets: list[DraggableEventWidget] = []
         self._event_layout: list[tuple[EventPortion, int, int]] = []  # (portion, column, total_columns)
+        self._widget_to_portion: dict[DraggableEventWidget, EventPortion] = {}  # Map widgets to portions
         
         # Drag state
         self._dragging_event: Optional[EventData] = None
+        self._dragging_portion: Optional[EventPortion] = None  # Track which portion is being dragged
         self._drag_mode: DragMode = DragMode.NONE
         self._drag_start_y: int = 0
         self._drag_original_start: Optional[datetime] = None
@@ -470,6 +472,7 @@ class DayColumnWidget(QWidget):
         for widget in self._event_widgets:
             widget.deleteLater()
         self._event_widgets.clear()
+        self._widget_to_portion.clear()
         
         for portion, col, total_cols in self._event_layout:
             # Use DraggableEventWidget for editable events, EventWidget for read-only
@@ -482,6 +485,8 @@ class DayColumnWidget(QWidget):
                 widget.drag_started.connect(self._on_drag_started)
                 widget.drag_moved.connect(self._on_drag_moved)
                 widget.drag_finished.connect(self._on_drag_finished)
+                # Map widget to portion for drag operations
+                self._widget_to_portion[widget] = portion
             widget.clicked.connect(self.event_clicked.emit)
             widget.double_clicked.connect(self.event_double_clicked.emit)
             self._event_widgets.append(widget)
@@ -521,6 +526,13 @@ class DayColumnWidget(QWidget):
         self._drag_original_start = to_local_datetime(event.start)
         self._drag_original_end = to_local_datetime(event.end)
         
+        # Find which portion is being dragged
+        self._dragging_portion = None
+        for widget, portion in self._widget_to_portion.items():
+            if portion.event == event:
+                self._dragging_portion = portion
+                break
+        
         # Store the grab offset (distance from event top to where user clicked)
         # This ensures grab-and-release-without-moving keeps event in place
         self._drag_grab_offset_y = y_offset_in_widget
@@ -540,8 +552,24 @@ class DayColumnWidget(QWidget):
                 # Subtract grab offset so the event follows the original grab point
                 adjusted_y = y - self._drag_grab_offset_y
                 new_time = self._y_to_time(adjusted_y)
-                new_start = datetime.combine(self._date, new_time)
-                new_end = new_start + duration
+                new_hour = new_time.hour + new_time.minute / 60.0
+                
+                # Use portion to calculate event times if available
+                if self._dragging_portion:
+                    # Calculate where the portion moves to
+                    new_portion_start_hour = new_hour
+                    new_portion_end_hour = new_portion_start_hour + (self._dragging_portion.visible_end_hour - self._dragging_portion.visible_start_hour)
+                    
+                    # Use portion's method to calculate new event times
+                    new_start, new_end = self._dragging_portion.calculate_new_event_times(
+                        new_portion_start_hour,
+                        new_portion_end_hour
+                    )
+                else:
+                    # Fallback: treat as single-day event
+                    new_start = datetime.combine(self._date, new_time)
+                    new_end = new_start + duration
+                
                 time_str = f"{new_start.strftime('%H:%M')} - {new_end.strftime('%H:%M')}"
             elif mode == DragMode.RESIZE_TOP:
                 new_time = self._y_to_time(y)
@@ -604,9 +632,29 @@ class DayColumnWidget(QWidget):
             # Subtract grab offset so event stays aligned with where user grabbed
             adjusted_y = y - self._drag_grab_offset_y
             new_time = self._y_to_time(adjusted_y)
-            # Move entire event - keep duration (use target_date for cross-day drops)
-            new_start = datetime.combine(target_date, new_time)
-            new_end = new_start + duration
+            new_hour = new_time.hour + new_time.minute / 60.0
+            
+            # Use portion to calculate event times if available
+            if self._dragging_portion:
+                # Calculate where the portion moves to
+                new_portion_start_hour = new_hour
+                new_portion_end_hour = new_portion_start_hour + (self._dragging_portion.visible_end_hour - self._dragging_portion.visible_start_hour)
+                
+                # Use portion's method to calculate new event times
+                new_start, new_end = self._dragging_portion.calculate_new_event_times(
+                    new_portion_start_hour,
+                    new_portion_end_hour
+                )
+                
+                # Handle cross-day dragging - adjust for date change
+                if target_date != self._dragging_portion.display_date:
+                    date_delta = target_date - self._dragging_portion.display_date
+                    new_start = new_start + date_delta
+                    new_end = new_end + date_delta
+            else:
+                # Fallback: treat as single-day event
+                new_start = datetime.combine(target_date, new_time)
+                new_end = new_start + duration
         elif mode == DragMode.RESIZE_TOP:
             # For resize, use mouse Y directly (no offset adjustment)
             new_time = self._y_to_time(y)
