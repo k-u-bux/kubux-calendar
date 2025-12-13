@@ -381,91 +381,89 @@ class DayColumnWidget(QWidget):
         self._calculate_layout()
         self._create_event_widgets()
     
-    def _events_overlap(self, e1: EventData, e2: EventData) -> bool:
-        """Check if two events overlap in time."""
-        s1 = to_local_hour(e1.start)
-        e1_end = to_local_hour(e1.end)
-        s2 = to_local_hour(e2.start)
-        e2_end = to_local_hour(e2.end)
+    def _portions_overlap(self, p1: EventPortion, p2: EventPortion) -> bool:
+        """Check if two event portions overlap in visible hours on this day."""
+        s1 = p1.visible_start_hour
+        e1 = p1.visible_end_hour
+        s2 = p2.visible_start_hour
+        e2 = p2.visible_end_hour
         # Ensure minimum duration
-        if e1_end <= s1:
-            e1_end = s1 + 0.5
-        if e2_end <= s2:
-            e2_end = s2 + 0.5
-        return s1 < e2_end and s2 < e1_end
+        if e1 <= s1:
+            e1 = s1 + 0.5
+        if e2 <= s2:
+            e2 = s2 + 0.5
+        return s1 < e2 and s2 < e1
     
     def _calculate_layout(self):
-        """Calculate column positions for overlapping events."""
-        if not self._events:
+        """Calculate column positions for overlapping portions."""
+        if not self._portions:
             self._event_layout = []
             return
         
-        # Sort events by start time, then by duration (longer first)
-        sorted_events = sorted(self._events, key=lambda e: (to_local_hour(e.start), -(to_local_hour(e.end) - to_local_hour(e.start))))
+        # Sort portions by start hour, then by duration (longer first)
+        sorted_portions = sorted(self._portions, key=lambda p: (p.visible_start_hour, -(p.visible_end_hour - p.visible_start_hour)))
         
-        # Assign columns to events
-        # Each event gets (column_index, total_columns_in_group)
-        event_columns: dict[str, int] = {}  # event.uid -> column
-        event_groups: list[list[EventData]] = []  # groups of overlapping events
+        # Assign columns to portions
+        portion_groups: list[list[EventPortion]] = []  # groups of overlapping portions
         
         # Build overlap groups
-        for event in sorted_events:
-            # Find which existing groups this event overlaps with
+        for portion in sorted_portions:
+            # Find which existing groups this portion overlaps with
             overlapping_groups = []
-            for i, group in enumerate(event_groups):
-                for group_event in group:
-                    if self._events_overlap(event, group_event):
+            for i, group in enumerate(portion_groups):
+                for group_portion in group:
+                    if self._portions_overlap(portion, group_portion):
                         overlapping_groups.append(i)
                         break
             
             if not overlapping_groups:
                 # Start a new group
-                event_groups.append([event])
+                portion_groups.append([portion])
             elif len(overlapping_groups) == 1:
                 # Add to existing group
-                event_groups[overlapping_groups[0]].append(event)
+                portion_groups[overlapping_groups[0]].append(portion)
             else:
                 # Merge groups
                 merged = []
                 for i in sorted(overlapping_groups, reverse=True):
-                    merged.extend(event_groups.pop(i))
-                merged.append(event)
-                event_groups.append(merged)
+                    merged.extend(portion_groups.pop(i))
+                merged.append(portion)
+                portion_groups.append(merged)
         
         # Assign column numbers within each group
         self._event_layout = []
-        for group in event_groups:
+        for group in portion_groups:
             # Sort group by start time
-            group.sort(key=lambda e: to_local_hour(e.start))
+            group.sort(key=lambda p: p.visible_start_hour)
             
             # Assign columns greedily
-            columns: list[float] = []  # end time of event in each column
-            event_col_map: dict[str, int] = {}
+            columns: list[float] = []  # end hour of portion in each column
+            portion_col_map: dict[str, int] = {}  # event.uid -> column
             
-            for event in group:
-                start = to_local_hour(event.start)
-                end = to_local_hour(event.end)
+            for portion in group:
+                start = portion.visible_start_hour
+                end = portion.visible_end_hour
                 if end <= start:
                     end = start + 0.5
                 
-                # Find first column where this event fits
+                # Find first column where this portion fits
                 assigned = False
                 for col_idx, col_end in enumerate(columns):
                     if start >= col_end:
                         columns[col_idx] = end
-                        event_col_map[event.uid] = col_idx
+                        portion_col_map[portion.event.uid] = col_idx
                         assigned = True
                         break
                 
                 if not assigned:
                     # Need a new column
-                    event_col_map[event.uid] = len(columns)
+                    portion_col_map[portion.event.uid] = len(columns)
                     columns.append(end)
             
             total_cols = len(columns)
-            for event in group:
-                col = event_col_map[event.uid]
-                self._event_layout.append((event, col, total_cols))
+            for portion in group:
+                col = portion_col_map[portion.event.uid]
+                self._event_layout.append((portion, col, total_cols))
     
     def _create_event_widgets(self):
         """Create and position event widgets based on calculated layout."""
@@ -473,8 +471,10 @@ class DayColumnWidget(QWidget):
             widget.deleteLater()
         self._event_widgets.clear()
         
-        for event, col, total_cols in self._event_layout:
+        for portion, col, total_cols in self._event_layout:
             # Use DraggableEventWidget for editable events, EventWidget for read-only
+            # Get the actual EventData from the portion
+            event = portion.event
             if event.read_only:
                 widget = EventWidget(event, compact=True, parent=self)
             else:
@@ -641,9 +641,10 @@ class DayColumnWidget(QWidget):
         """Position all event widgets based on their layout."""
         available_width = self.width() - 4  # Leave 2px margin on each side
         
-        for widget, (event, col, total_cols) in zip(self._event_widgets, self._event_layout):
-            start_hour = to_local_hour(event.start)
-            end_hour = to_local_hour(event.end)
+        for widget, (portion, col, total_cols) in zip(self._event_widgets, self._event_layout):
+            # Use portion's visible hours for this specific day
+            start_hour = portion.visible_start_hour
+            end_hour = portion.visible_end_hour
             start_hour = max(0, min(24, start_hour))
             end_hour = max(0, min(24, end_hour))
             if end_hour <= start_hour:
@@ -659,19 +660,13 @@ class DayColumnWidget(QWidget):
             
             widget.setGeometry(x, y + 1, width, height - 2)
     
-    def clear_events(self):
+    def clear_portions(self):
+        """Clear all portions and widgets."""
         for widget in self._event_widgets:
             widget.deleteLater()
         self._event_widgets.clear()
-        self._events.clear()
+        self._portions.clear()
         self._event_layout.clear()
-    
-    def _refresh_events(self):
-        events = self._events.copy()
-        self.clear_events()
-        self._events = events
-        self._calculate_layout()
-        self._create_event_widgets()
     
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -817,11 +812,10 @@ class DayView(QWidget):
         self.refresh_events()
     
     def refresh_events(self):
-        self._day_column.clear_events()
+        self._day_column.clear_portions()
         self._all_day_row.clear_all()
         
         all_day_events = []
-        timed_events = []
         
         for event in self._events:
             local_start = to_local_datetime(event.start)
@@ -837,18 +831,17 @@ class DayView(QWidget):
                 if start_date <= self._date <= end_date:
                     all_day_events.append(event)
             else:
-                # Timed event - only show if it starts on this day
-                if local_start.date() == self._date:
-                    timed_events.append(event)
+                # Timed event - create portion for this day
+                portion = EventPortion.create_for_day(event, self._date)
+                if portion:
+                    self._day_column.add_portion(portion)
         
         # Add all-day events
         self._all_day_row.set_events_for_day(0, all_day_events)
         self._all_day_row.update_height()
         
-        # Add timed events
-        for event in timed_events:
-            self._day_column.add_event(event)
-        self._day_column.finalize_events()
+        # Finalize timed event portions
+        self._day_column.finalize_portions()
     
     def get_date_range(self) -> tuple[datetime, datetime]:
         start = datetime.combine(self._date, dt_time.min)
@@ -1018,7 +1011,7 @@ class WeekView(QWidget):
     
     def refresh_events(self):
         for col in self._day_columns:
-            col.clear_events()
+            col.clear_portions()
         self._all_day_row.clear_all()
         
         # Group events by day and type (all-day vs timed)
@@ -1042,11 +1035,12 @@ class WeekView(QWidget):
                     if start_date <= day_date <= end_date:
                         all_day_by_day[day_idx].append(event)
             else:
-                # Timed event - only show on start day
-                event_date = local_start.date()
-                day_offset = (event_date - self._start_date).days
-                if 0 <= day_offset < 7:
-                    self._day_columns[day_offset].add_event(event)
+                # Timed event - create portions for each day it spans
+                for day_idx in range(7):
+                    day_date = self._start_date + timedelta(days=day_idx)
+                    portion = EventPortion.create_for_day(event, day_date)
+                    if portion:
+                        self._day_columns[day_idx].add_portion(portion)
         
         # Add all-day events to their respective day cells
         for day_idx, events in enumerate(all_day_by_day):
@@ -1054,7 +1048,7 @@ class WeekView(QWidget):
         
         # Finalize event layouts for all day columns
         for col in self._day_columns:
-            col.finalize_events()
+            col.finalize_portions()
         
         # Update the all-day row height (same height for all days, based on max)
         self._all_day_row.update_height()
