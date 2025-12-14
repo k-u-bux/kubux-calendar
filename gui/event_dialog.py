@@ -19,8 +19,11 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QDateTime
 from PySide6.QtGui import QFont, QCloseEvent, QFontMetrics
 
-from backend.event_wrapper import CalEvent as EventData, CalendarSource
+from backend.event_wrapper import CalEvent, CalendarSource, EventInstance
 from backend.event_store import EventStore
+
+# EventData can be either EventInstance (received from main_window) or CalEvent (from create_event)
+EventData = EventInstance
 from dataclasses import dataclass
 from typing import Optional
 
@@ -468,15 +471,19 @@ class EventDialog(QWidget):
             else:
                 QMessageBox.critical(self, "Error", "Failed to create event.")
         else:
-            self.event_data.summary = title
-            self.event_data.start = start_dt
-            self.event_data.end = end_dt
-            self.event_data.description = self._description_edit.toPlainText()
-            self.event_data.location = self._location_edit.text().strip()
-            self.event_data.all_day = self._all_day_check.isChecked()
-            self.event_data.recurrence = recurrence
+            # Get the underlying CalEvent for modification
+            # (EventInstance.event is the CalEvent)
+            cal_event = self.event_data.event if hasattr(self.event_data, 'event') else self.event_data
             
-            if self.event_store.update_event(self.event_data):
+            cal_event.summary = title
+            cal_event.start = start_dt
+            cal_event.end = end_dt
+            cal_event.description = self._description_edit.toPlainText()
+            cal_event.location = self._location_edit.text().strip()
+            cal_event.all_day = self._all_day_check.isChecked()
+            # Note: recurrence update via repository would need special handling
+            
+            if self.event_store.update_event(cal_event):
                 self.event_saved.emit(self.event_data)
                 self.close()
             else:
@@ -486,6 +493,9 @@ class EventDialog(QWidget):
         if self.event_data is None:
             return
         
+        # Get the underlying CalEvent for deletion
+        cal_event = self.event_data.event if hasattr(self.event_data, 'event') else self.event_data
+        
         if self.event_data.is_recurring:
             result = QMessageBox.question(self, "Delete Recurring Event",
                 "This is a recurring event. Do you want to delete all occurrences?",
@@ -493,12 +503,13 @@ class EventDialog(QWidget):
             if result == QMessageBox.Cancel:
                 return
             elif result == QMessageBox.No:
-                if self.event_data.recurrence_id:
-                    if self.event_store.delete_recurring_instance(self.event_data, self.event_data.recurrence_id):
-                        self.event_deleted.emit(self.event_data)
-                        self.close()
-                    else:
-                        QMessageBox.critical(self, "Error", "Failed to delete event instance.")
+                # Delete single instance - use the instance's start time
+                instance_start = self.event_data.start
+                if self.event_store.delete_recurring_instance(cal_event, instance_start):
+                    self.event_deleted.emit(self.event_data)
+                    self.close()
+                else:
+                    QMessageBox.critical(self, "Error", "Failed to delete event instance.")
                 return
         else:
             result = QMessageBox.question(self, "Delete Event",
@@ -507,7 +518,7 @@ class EventDialog(QWidget):
             if result != QMessageBox.Yes:
                 return
         
-        if self.event_store.delete_event(self.event_data):
+        if self.event_store.delete_event(cal_event):
             self.event_deleted.emit(self.event_data)
             self.close()
         else:

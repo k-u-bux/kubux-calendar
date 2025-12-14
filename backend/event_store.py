@@ -2,33 +2,30 @@
 Unified Event Store for Kubux Calendar.
 
 Provides a single interface to access events from all sources (CalDAV and ICS).
-Uses EventRepository for storage and recurring_ical_events for recurrence expansion.
+Uses EventRepository for storage with CalEvent objects.
+Returns EventInstance for display.
 """
 
 import json
-import uuid
 from datetime import datetime, timedelta
 from typing import Optional, Callable
-from pathlib import Path
 import pytz
-from icalendar import Event as ICalEvent
 
-from .config import Config, NextcloudAccount, ICSSubscription as ICSSubscriptionConfig
+from .config import Config
 from .caldav_client import CalDAVClient, CalendarInfo
 from .ics_subscription import ICSSubscription, ICSSubscriptionManager
-from .event_wrapper import CalEvent, CalendarSource
+from .event_wrapper import CalEvent, CalendarSource, EventInstance
 from .event_repository import EventRepository
 from .sync_queue import SyncQueue, SyncOperation, PendingChange
 
 
 def _debug_print(message: str) -> None:
-    """Print debug message with timestamp."""
     import sys
     timestamp = datetime.now().strftime("%H:%M:%S")
     print(f"[{timestamp}] {message}", file=sys.stderr)
 
 
-# Type alias for GUI compatibility
+# Type alias for backwards compatibility
 Event = CalEvent
 
 
@@ -36,8 +33,7 @@ class EventStore:
     """
     Unified event store combining CalDAV and ICS sources.
     
-    Uses EventRepository for storage and recurring_ical_events for
-    proper RRULE/RDATE/EXDATE expansion.
+    Uses CalEvent for storage, EventInstance for display.
     """
     
     CACHE_WINDOW_MONTHS = 2
@@ -49,28 +45,22 @@ class EventStore:
         self._ics_manager = ICSSubscriptionManager()
         self._repository = EventRepository()
         
-        # Calendar source metadata (separate from repository sources)
         self._calendar_sources: dict[str, CalendarSource] = {}
-        self._caldav_calendars: dict[str, CalendarInfo] = {}  # source_id -> CalendarInfo
-        self._ics_subscriptions: dict[str, ICSSubscription] = {}  # source_id -> ICSSubscription
+        self._caldav_calendars: dict[str, CalendarInfo] = {}
+        self._ics_subscriptions: dict[str, ICSSubscription] = {}
         
-        # Visibility and color overrides
         self._visibility: dict[str, bool] = {}
         self._colors: dict[str, str] = {}
         
-        # Cache window tracking
         self._cache_start: Optional[datetime] = None
         self._cache_end: Optional[datetime] = None
         
-        # State file
         self._state_file = config.state_file
         
-        # Sync queue
         queue_file = config.state_file.parent / "sync_queue.json"
         self._sync_queue = SyncQueue(queue_file)
         self._sync_queue.set_on_change_callback(self._on_sync_queue_changed)
         
-        # State tracking
         self._last_sync_time: Optional[datetime] = None
         self._on_change_callback: Optional[Callable[[], None]] = None
         self._on_sync_status_callback: Optional[Callable[[int, Optional[datetime]], None]] = None
@@ -86,7 +76,6 @@ class EventStore:
         """Initialize all calendar sources from configuration."""
         success = False
         self._load_state()
-        
         
         # Initialize CalDAV clients
         for account in self.config.nextcloud_accounts:
@@ -119,7 +108,6 @@ class EventStore:
                         self._caldav_calendars[source_id] = cal
                         self._repository.add_source(source)
                         
-                        # Apply visibility
                         if source_id in self._visibility:
                             source.visible = self._visibility[source_id]
                     
@@ -159,16 +147,13 @@ class EventStore:
         if success:
             self._last_sync_time = datetime.now()
         
-        # Invalidate any premature cache and trigger refresh
         self.invalidate_cache()
-        
         return success
     
     def get_calendars(self, visible_only: bool = False) -> list[CalendarSource]:
-        """Get all calendar sources."""
         sources = list(self._calendar_sources.values())
         if visible_only:
-            sources = [s for s in sources if getattr(s, 'visible', True)]
+            sources = [s for s in sources if self._visibility.get(s.id, True)]
         return sources
     
     def get_calendar(self, calendar_id: str) -> Optional[CalendarSource]:
@@ -176,7 +161,6 @@ class EventStore:
     
     def set_calendar_visibility(self, calendar_id: str, visible: bool) -> None:
         if calendar_id in self._calendar_sources:
-            # CalendarSource doesn't have visible attr, store separately
             self._visibility[calendar_id] = visible
             self._save_state()
             self._notify_change()
@@ -194,10 +178,10 @@ class EventStore:
         return start >= self._cache_start and end <= self._cache_end
     
     def _fetch_into_repository(self, start: datetime, end: datetime) -> None:
-        """Fetch raw VCALENDAR data from all sources into repository."""
+        """Fetch CalEvent objects from all sources into repository."""
         _debug_print(f"Fetching events {start.date()} to {end.date()}")
         
-        # Fetch from CalDAV
+        # Fetch from CalDAV as CalEvent objects
         for source_id, cal_info in self._caldav_calendars.items():
             source = self._calendar_sources.get(source_id)
             if not source:
@@ -205,21 +189,24 @@ class EventStore:
             
             client = self._caldav_clients.get(source.account_name)
             if client:
-                ical_text = client.get_calendar_ical(cal_info, start, end)
-                if ical_text:
-                    self._repository.update_calendar_data(source_id, ical_text)
+                events = client.get_events(cal_info, source, start, end)
+                if events:
+                    self._repository.store_events(source_id, events)
         
-        # Fetch from ICS subscriptions (force fetch to ensure fresh data)
+        # Fetch from ICS subscriptions as CalEvent objects
         for source_id, sub in self._ics_subscriptions.items():
-            ical_text = sub.get_ical_text(force_fetch=True)
-            if ical_text:
-                self._repository.update_calendar_data(source_id, ical_text)
+            source = self._calendar_sources.get(source_id)
+            if not source:
+                continue
+            
+            events = sub.get_events(source, force_fetch=True)
+            if events:
+                self._repository.store_events(source_id, events)
         
         self._cache_start = start
         self._cache_end = end
     
     def invalidate_cache(self) -> None:
-        """Invalidate the cache."""
         self._cache_start = None
         self._cache_end = None
         self._repository.clear()
@@ -230,9 +217,13 @@ class EventStore:
         end: datetime,
         calendar_ids: Optional[list[str]] = None,
         visible_only: bool = True
-    ) -> list[CalEvent]:
-        """Get events from specified calendars within a time range."""
-        # Expand cache window
+    ) -> list[EventInstance]:
+        """
+        Get EventInstance objects for display within a time range.
+        
+        Returns EventInstance (not CalEvent) - use instance.event for the CalEvent.
+        """
+        # Expand cache window if needed
         if not self._is_cache_valid(start, end):
             center = start + (end - start) / 2
             window_start = center - timedelta(days=self.CACHE_WINDOW_MONTHS * 30)
@@ -252,16 +243,16 @@ class EventStore:
                 (not visible_only or self._visibility.get(cid, True))
             ]
         
-        # Get events from repository (with expansion)
-        events = self._repository.get_events(start, end, source_ids)
+        # Get EventInstance objects from repository
+        instances = self._repository.get_instances(start, end, source_ids)
         
-        # Apply color overrides
-        for event in events:
-            source_id = event.source.id
+        # Apply color overrides to source
+        for inst in instances:
+            source_id = inst.source.id
             if source_id in self._colors:
-                event.source.color = self._colors[source_id]
+                inst.event.source.color = self._colors[source_id]
         
-        return events
+        return instances
     
     def create_event(
         self,
@@ -274,11 +265,7 @@ class EventStore:
         all_day: bool = False,
         recurrence = None,
     ) -> Optional[CalEvent]:
-        """
-        Create a new event in a CalDAV calendar.
-        
-        Creates the event in the repository first, then syncs to server.
-        """
+        """Create a new event in a CalDAV calendar."""
         source = self._calendar_sources.get(calendar_id)
         if not source or source.read_only or source.source_type != "caldav":
             return None
@@ -308,11 +295,10 @@ class EventStore:
         
         # Sync to server
         if client.save_event(cal_info, cal_event.event):
-            cal_event.pending_operation = None  # Clear pending status
+            cal_event.pending_operation = None
             self._notify_change()
             return cal_event
         
-        # Server sync failed - event is in repository with pending status
         return cal_event
     
     def update_event(self, event: CalEvent) -> bool:
@@ -329,19 +315,16 @@ class EventStore:
         if not client:
             return False
         
-        # Mark as pending in repository (persists across cache invalidation)
+        # Mark as pending
         self._repository.mark_pending(event.uid, "update")
         
-        # Update the underlying icalendar.Event
         if client.update_event(cal_info, event.uid, event.event):
-            # Clear pending status after successful sync
             self._repository.clear_pending(event.uid)
             self.invalidate_cache()
             self._notify_change()
             return True
         
-        # Sync failed - keep pending status
-        self._notify_change()  # Refresh to show pending indicator
+        self._notify_change()
         return False
     
     def delete_event(self, event: CalEvent) -> bool:
@@ -406,7 +389,6 @@ class EventStore:
                         if cid == calendar_id:
                             self._caldav_calendars[cid] = cal
         else:
-            # Refresh all
             for name, client in self._caldav_clients.items():
                 if client.reconnect():
                     for cal in client.get_calendars():
@@ -463,13 +445,7 @@ class EventStore:
         return self._last_sync_time
     
     def get_cached_event_count(self) -> int:
-        # Count events across all calendar data
-        count = 0
-        for source_id in self._calendar_sources:
-            cal_data = self._repository.get_calendar_data(source_id)
-            if cal_data:
-                count += len(cal_data.get_all_events())
-        return count
+        return self._repository.get_event_count()
     
     def has_pending_sync(self, event_uid: str) -> bool:
         base_uid = event_uid.split('_')[0] if '_' in event_uid else event_uid

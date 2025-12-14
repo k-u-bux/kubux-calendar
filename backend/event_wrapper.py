@@ -1,15 +1,14 @@
 """
-Lightweight wrapper around icalendar.Event with source metadata.
+Three-tier event model for Kubux Calendar.
 
-This module provides a clean separation between the raw iCalendar data
-and the application-level metadata (source calendar, sync status, etc).
-The wrapper delegates to the underlying icalendar.Event rather than
-duplicating its functionality.
+CalEvent: Master event from CalDAV/ICS - what gets synced
+EventInstance: A specific occurrence of a CalEvent
+InstanceSlice: A display portion of an EventInstance on a single day
 """
 
 from dataclasses import dataclass, field
 from datetime import datetime, date, timedelta
-from typing import Optional, Union
+from typing import Optional
 from icalendar import Event as ICalEvent, Calendar as ICalCalendar
 import pytz
 
@@ -18,17 +17,14 @@ import pytz
 class CalendarSource:
     """
     Metadata about an event's source calendar.
-    
-    This is separate from the event itself and contains information
-    about where the event came from and how to display it.
     """
     id: str
     name: str
-    color: str = "#4285f4"  # Default Google blue
+    color: str = "#4285f4"
     account_name: str = ""  # For CalDAV accounts
-    read_only: bool = False  # True for ICS subscriptions
+    read_only: bool = False
     source_type: str = "caldav"  # "caldav" or "ics"
-    visible: bool = True  # Whether to display in calendar view
+    visible: bool = True
     
     def __hash__(self):
         return hash(self.id)
@@ -42,44 +38,34 @@ class CalendarSource:
 @dataclass
 class CalEvent:
     """
-    Lightweight wrapper around icalendar.Event with source metadata.
+    Master event from CalDAV or ICS subscription.
     
-    Does NOT duplicate Event facilities - delegates to self.event.
-    This provides a clean interface for the GUI while keeping the
-    raw iCalendar data intact for proper recurrence handling.
+    This is what gets stored, synced, and referenced by EventInstances.
+    Wraps an icalendar.Event with source metadata.
     """
-    event: ICalEvent  # The actual iCalendar event
-    source: CalendarSource  # Where this event comes from
+    event: ICalEvent  # The raw iCalendar event
+    source: CalendarSource
     
-    # For recurring event instances - the specific occurrence datetime
-    recurrence_id: Optional[datetime] = None
-    
-    # Sync metadata (only for CalDAV, not ICS subscriptions)
-    last_sync: Optional[datetime] = None
-    sync_retries: int = 0
+    # Sync metadata
     pending_operation: Optional[str] = None  # "create", "update", "delete"
     
-    # Raw VCALENDAR text (for roundtrip preservation)
-    _raw_ical: Optional[str] = None
+    # Reference for CalDAV sync (URL for PUT/DELETE)
+    caldav_href: Optional[str] = None
     
-    # ==================== Convenience Properties ====================
-    # These delegate to self.event rather than duplicating data
+    # ==================== Core Properties ====================
     
     @property
     def uid(self) -> str:
-        """Get the event's unique identifier."""
         uid = self.event.get('UID')
         return str(uid) if uid else ''
     
     @property
     def summary(self) -> str:
-        """Get the event's title/summary."""
         summary = self.event.get('SUMMARY')
         return str(summary) if summary else 'Untitled'
     
     @summary.setter
     def summary(self, value: str):
-        """Set the event's title/summary."""
         if 'SUMMARY' in self.event:
             del self.event['SUMMARY']
         self.event.add('summary', value)
@@ -88,13 +74,11 @@ class CalEvent:
     
     @property
     def description(self) -> str:
-        """Get the event's description."""
         desc = self.event.get('DESCRIPTION')
         return str(desc) if desc else ''
     
     @description.setter
     def description(self, value: str):
-        """Set the event's description."""
         if 'DESCRIPTION' in self.event:
             del self.event['DESCRIPTION']
         if value:
@@ -104,13 +88,11 @@ class CalEvent:
     
     @property
     def location(self) -> str:
-        """Get the event's location."""
         loc = self.event.get('LOCATION')
         return str(loc) if loc else ''
     
     @location.setter
     def location(self, value: str):
-        """Set the event's location."""
         if 'LOCATION' in self.event:
             del self.event['LOCATION']
         if value:
@@ -119,13 +101,23 @@ class CalEvent:
             self.pending_operation = "update"
     
     @property
-    def start(self) -> datetime:
-        """Alias for dtstart for GUI compatibility."""
-        return self.dtstart
+    def dtstart(self) -> datetime:
+        """Master event start time (always timezone-aware)."""
+        dt = self.event.get('DTSTART')
+        if dt is None:
+            return datetime.now(pytz.UTC)
+        
+        val = dt.dt
+        if isinstance(val, date) and not isinstance(val, datetime):
+            val = datetime.combine(val, datetime.min.time())
+        
+        if val.tzinfo is None:
+            val = pytz.UTC.localize(val)
+        
+        return val
     
-    @start.setter
-    def start(self, value: datetime):
-        """Set the event's start time."""
+    @dtstart.setter
+    def dtstart(self, value: datetime):
         if 'DTSTART' in self.event:
             del self.event['DTSTART']
         if self.all_day:
@@ -136,13 +128,23 @@ class CalEvent:
             self.pending_operation = "update"
     
     @property
-    def end(self) -> datetime:
-        """Alias for dtend for GUI compatibility."""
-        return self.dtend
+    def dtend(self) -> datetime:
+        """Master event end time (always timezone-aware)."""
+        dt = self.event.get('DTEND')
+        if dt is None:
+            return self.dtstart + timedelta(hours=1)
+        
+        val = dt.dt
+        if isinstance(val, date) and not isinstance(val, datetime):
+            val = datetime.combine(val, datetime.min.time())
+        
+        if val.tzinfo is None:
+            val = pytz.UTC.localize(val)
+        
+        return val
     
-    @end.setter
-    def end(self, value: datetime):
-        """Set the event's end time."""
+    @dtend.setter
+    def dtend(self, value: datetime):
         if 'DTEND' in self.event:
             del self.event['DTEND']
         if self.all_day:
@@ -153,76 +155,14 @@ class CalEvent:
             self.pending_operation = "update"
     
     @property
-    def dtstart(self) -> datetime:
-        """
-        Get the event's start time as a datetime.
-        For recurring instances, returns recurrence_id if set.
-        Always returns timezone-aware datetime.
-        """
-        if self.recurrence_id:
-            val = self.recurrence_id
-        else:
-            dt = self.event.get('DTSTART')
-            if dt is None:
-                return datetime.now(pytz.UTC)
-            
-            val = dt.dt
-            if isinstance(val, date) and not isinstance(val, datetime):
-                # All-day event - convert to datetime at midnight UTC
-                val = datetime.combine(val, datetime.min.time())
-        
-        # Ensure timezone-aware
-        if val.tzinfo is None:
-            val = pytz.UTC.localize(val)
-        
-        return val
-    
-    @property
-    def dtend(self) -> datetime:
-        """Get the event's end time as a datetime. Always timezone-aware."""
-        dt = self.event.get('DTEND')
-        if dt is None:
-            # No end time - use start + 1 hour
-            return self.dtstart + timedelta(hours=1)
-        
-        val = dt.dt
-        if isinstance(val, date) and not isinstance(val, datetime):
-            # All-day event - convert to datetime
-            val = datetime.combine(val, datetime.min.time())
-        
-        # For recurring instances, adjust end by the same delta from start
-        if self.recurrence_id:
-            original_start = self.event.get('DTSTART')
-            if original_start:
-                original_start_dt = original_start.dt
-                if isinstance(original_start_dt, date) and not isinstance(original_start_dt, datetime):
-                    original_start_dt = datetime.combine(original_start_dt, datetime.min.time())
-                if original_start_dt.tzinfo is None:
-                    original_start_dt = pytz.UTC.localize(original_start_dt)
-                rec_id = self.recurrence_id
-                if rec_id.tzinfo is None:
-                    rec_id = pytz.UTC.localize(rec_id)
-                delta = rec_id - original_start_dt
-                val = val + delta
-        
-        # Ensure timezone-aware
-        if val.tzinfo is None:
-            val = pytz.UTC.localize(val)
-        
-        return val
-    
-    @property
     def all_day(self) -> bool:
-        """Check if this is an all-day event."""
         dt = self.event.get('DTSTART')
         if dt is None:
             return False
-        # All-day events have date values, not datetime
         return isinstance(dt.dt, date) and not isinstance(dt.dt, datetime)
     
     @all_day.setter
     def all_day(self, value: bool):
-        """Set whether this is an all-day event."""
         current_start = self.dtstart
         current_end = self.dtend
         
@@ -232,11 +172,9 @@ class CalEvent:
             del self.event['DTEND']
         
         if value:
-            # Convert to all-day
             self.event.add('dtstart', current_start.date())
             self.event.add('dtend', current_end.date())
         else:
-            # Convert to timed event
             self.event.add('dtstart', current_start)
             self.event.add('dtend', current_end)
         
@@ -245,125 +183,323 @@ class CalEvent:
     
     @property
     def duration(self) -> timedelta:
-        """Get the event's duration."""
         return self.dtend - self.dtstart
     
     @property
     def is_recurring(self) -> bool:
-        """Check if this event has recurrence rules."""
         return self.event.get('RRULE') is not None
     
     @property
     def rrule(self) -> Optional[str]:
-        """Get the RRULE as a string, if present."""
         rrule = self.event.get('RRULE')
         return rrule.to_ical().decode('utf-8') if rrule else None
     
-    # ==================== Source-based Properties ====================
+    # ==================== Source Properties ====================
     
     @property
     def calendar_id(self) -> str:
-        """Get the source calendar's ID."""
         return self.source.id
     
     @property
     def calendar_name(self) -> str:
-        """Get the source calendar's name."""
         return self.source.name
     
     @property
     def calendar_color(self) -> str:
-        """Get the source calendar's display color."""
         return self.source.color
     
     @property
     def read_only(self) -> bool:
-        """Check if this event is read-only (from ICS subscription)."""
         return self.source.read_only
     
     @property
-    def source_type(self) -> str:
-        """Get the source type ('caldav' or 'ics')."""
-        return self.source.source_type
-    
-    @property
     def sync_status(self) -> str:
-        """Get sync status. Returns 'pending' if there's a pending operation."""
         if self.pending_operation:
             return "pending"
         return ""
     
+    # ==================== Backwards Compatibility ====================
+    # These will be removed once GUI uses EventInstance
+    
+    @property
+    def start(self) -> datetime:
+        return self.dtstart
+    
+    @start.setter
+    def start(self, value: datetime):
+        self.dtstart = value
+    
+    @property
+    def end(self) -> datetime:
+        return self.dtend
+    
+    @end.setter
+    def end(self, value: datetime):
+        self.dtend = value
+    
     @property
     def recurrence(self):
-        """Get recurrence rule. Returns None for now (legacy compatibility)."""
         return None
     
-    # ==================== Instance Creation ====================
-    
-    def create_instance(self, instance_start: datetime) -> 'CalEvent':
-        """
-        Create a recurring instance of this event at the given start time.
-        
-        Args:
-            instance_start: The start datetime for this instance
-            
-        Returns:
-            A new CalEvent representing this specific occurrence
-        """
-        return CalEvent(
-            event=self.event,
-            source=self.source,
-            recurrence_id=instance_start,
-            last_sync=self.last_sync,
-            sync_retries=self.sync_retries,
-            pending_operation=self.pending_operation,
-            _raw_ical=self._raw_ical
-        )
+    @property
+    def source_type(self) -> str:
+        return self.source.source_type
     
     def __hash__(self):
-        """Hash based on UID and recurrence_id for uniqueness."""
-        return hash((self.uid, self.recurrence_id))
+        return hash(self.uid)
     
     def __eq__(self, other):
         if isinstance(other, CalEvent):
-            return self.uid == other.uid and self.recurrence_id == other.recurrence_id
+            return self.uid == other.uid
         return False
     
     def __repr__(self):
-        return f"CalEvent(uid={self.uid!r}, summary={self.summary!r}, dtstart={self.dtstart})"
+        return f"CalEvent(uid={self.uid!r}, summary={self.summary!r})"
 
+
+@dataclass
+class EventInstance:
+    """
+    A specific occurrence of a CalEvent.
+    
+    For non-recurring events: one instance with the same times as the master.
+    For recurring events: one instance per occurrence in the queried date range.
+    """
+    event: CalEvent  # The master event
+    start: datetime  # This instance's start time
+    end: datetime    # This instance's end time
+    
+    @property
+    def uid(self) -> str:
+        return self.event.uid
+    
+    @property
+    def summary(self) -> str:
+        return self.event.summary
+    
+    @property
+    def description(self) -> str:
+        return self.event.description
+    
+    @property
+    def location(self) -> str:
+        return self.event.location
+    
+    @property
+    def all_day(self) -> bool:
+        return self.event.all_day
+    
+    @property
+    def is_recurring(self) -> bool:
+        return self.event.is_recurring
+    
+    @property
+    def calendar_color(self) -> str:
+        return self.event.calendar_color
+    
+    @property
+    def read_only(self) -> bool:
+        return self.event.read_only
+    
+    @property
+    def sync_status(self) -> str:
+        return self.event.sync_status
+    
+    @property
+    def source(self) -> CalendarSource:
+        return self.event.source
+    
+    @property
+    def duration(self) -> timedelta:
+        return self.end - self.start
+    
+    @property
+    def calendar_name(self) -> str:
+        return self.event.calendar_name
+    
+    @property
+    def recurrence(self):
+        """Backwards compatibility - returns None."""
+        return None
+    
+    def __hash__(self):
+        return hash((self.event.uid, self.start))
+    
+    def __eq__(self, other):
+        if isinstance(other, EventInstance):
+            return self.event.uid == other.event.uid and self.start == other.start
+        return False
+    
+    def __repr__(self):
+        return f"EventInstance({self.summary!r}, {self.start})"
+
+
+@dataclass
+class InstanceSlice:
+    """
+    A display portion of an EventInstance on a single day.
+    
+    For single-day events: one slice covering the full event.
+    For multi-day events: one slice per day the event spans.
+    Maps directly to GUI rectangles.
+    """
+    instance: EventInstance  # The parent instance
+    display_date: date       # Which day this slice is for
+    visible_start_hour: float  # Start hour on this day (0.0-24.0)
+    visible_end_hour: float    # End hour on this day (0.0-24.0)
+    
+    @property
+    def uid(self) -> str:
+        return self.instance.uid
+    
+    @property
+    def summary(self) -> str:
+        return self.instance.summary
+    
+    @property
+    def description(self) -> str:
+        return self.instance.description
+    
+    @property
+    def location(self) -> str:
+        return self.instance.location
+    
+    @property
+    def all_day(self) -> bool:
+        return self.instance.all_day
+    
+    @property
+    def is_recurring(self) -> bool:
+        return self.instance.is_recurring
+    
+    @property
+    def calendar_color(self) -> str:
+        return self.instance.calendar_color
+    
+    @property
+    def read_only(self) -> bool:
+        return self.instance.read_only
+    
+    @property
+    def sync_status(self) -> str:
+        return self.instance.sync_status
+    
+    @property
+    def event(self) -> CalEvent:
+        """Access the underlying CalEvent for modifications."""
+        return self.instance.event
+    
+    @property
+    def source(self) -> CalendarSource:
+        return self.instance.source
+    
+    # GUI convenience
+    @property
+    def start(self) -> datetime:
+        return self.instance.start
+    
+    @property
+    def end(self) -> datetime:
+        return self.instance.end
+    
+    def __repr__(self):
+        return f"InstanceSlice({self.summary!r}, {self.display_date}, {self.visible_start_hour:.1f}-{self.visible_end_hour:.1f})"
+
+
+# ==================== Factory Functions ====================
+
+def create_instance(event: CalEvent, instance_start: datetime = None) -> EventInstance:
+    """
+    Create an EventInstance from a CalEvent.
+    
+    For non-recurring events, uses the event's own times.
+    For recurring events, instance_start specifies this occurrence.
+    """
+    if instance_start is None:
+        # Non-recurring: use master times
+        return EventInstance(
+            event=event,
+            start=event.dtstart,
+            end=event.dtend
+        )
+    else:
+        # Recurring: calculate end from duration
+        duration = event.duration
+        return EventInstance(
+            event=event,
+            start=instance_start,
+            end=instance_start + duration
+        )
+
+
+def create_slices(instance: EventInstance) -> list[InstanceSlice]:
+    """
+    Create InstanceSlice objects for displaying an EventInstance.
+    
+    For single-day events: returns one slice.
+    For multi-day events: returns one slice per day.
+    """
+    slices = []
+    
+    start = instance.start
+    end = instance.end
+    
+    # Strip timezone for date comparison
+    start_naive = start.replace(tzinfo=None) if start.tzinfo else start
+    end_naive = end.replace(tzinfo=None) if end.tzinfo else end
+    
+    start_date = start_naive.date()
+    end_date = end_naive.date()
+    
+    if instance.all_day:
+        # All-day events: one slice per day
+        current_date = start_date
+        while current_date < end_date:  # end_date is exclusive for all-day
+            slices.append(InstanceSlice(
+                instance=instance,
+                display_date=current_date,
+                visible_start_hour=0.0,
+                visible_end_hour=24.0
+            ))
+            current_date += timedelta(days=1)
+    elif start_date == end_date:
+        # Single-day event
+        slices.append(InstanceSlice(
+            instance=instance,
+            display_date=start_date,
+            visible_start_hour=start_naive.hour + start_naive.minute / 60.0,
+            visible_end_hour=end_naive.hour + end_naive.minute / 60.0
+        ))
+    else:
+        # Multi-day event
+        current_date = start_date
+        while current_date <= end_date:
+            if current_date == start_date:
+                # First day: from start time to midnight
+                vis_start = start_naive.hour + start_naive.minute / 60.0
+                vis_end = 24.0
+            elif current_date == end_date:
+                # Last day: from midnight to end time
+                vis_start = 0.0
+                vis_end = end_naive.hour + end_naive.minute / 60.0
+            else:
+                # Middle day: full day
+                vis_start = 0.0
+                vis_end = 24.0
+            
+            slices.append(InstanceSlice(
+                instance=instance,
+                display_date=current_date,
+                visible_start_hour=vis_start,
+                visible_end_hour=vis_end
+            ))
+            current_date += timedelta(days=1)
+    
+    return slices
+
+
+# ==================== Parse Utilities ====================
 
 def parse_icalendar(ical_text: str) -> ICalCalendar:
-    """
-    Parse iCalendar text into an icalendar.Calendar object.
-    
-    Args:
-        ical_text: Raw iCalendar text (VCALENDAR)
-        
-    Returns:
-        Parsed Calendar object
-    """
+    """Parse iCalendar text into an icalendar.Calendar object."""
     return ICalCalendar.from_ical(ical_text)
-
-
-def create_cal_event(
-    event: ICalEvent,
-    source: CalendarSource,
-    raw_ical: Optional[str] = None
-) -> CalEvent:
-    """
-    Create a CalEvent wrapper from an icalendar.Event.
-    
-    Args:
-        event: The icalendar.Event object
-        source: The CalendarSource metadata
-        raw_ical: Optional raw VCALENDAR text for roundtrip
-        
-    Returns:
-        A CalEvent wrapper
-    """
-    return CalEvent(
-        event=event,
-        source=source,
-        _raw_ical=raw_ical
-    )

@@ -1,8 +1,8 @@
 """
 ICS Subscription handler for read-only calendar feeds.
 
-Simplified: Just fetches raw VCALENDAR text. Recurrence expansion is handled
-by EventRepository using recurring_ical_events.
+Returns CalEvent objects as the universal event type.
+Recurrence expansion is handled by EventRepository.
 """
 
 import requests
@@ -144,6 +144,43 @@ class ICSSubscription:
             last_fetch=self._last_fetch,
             error=self._error
         )
+    
+    def get_events(
+        self,
+        source: 'CalendarSource',
+        force_fetch: bool = False
+    ) -> list['CalEvent']:
+        """
+        Get events from this subscription as CalEvent objects.
+        
+        Args:
+            source: CalendarSource for the returned CalEvents
+            force_fetch: If True, fetch fresh data from URL
+        
+        Returns:
+            List of CalEvent objects (master events, no recurrence expansion).
+        """
+        from .event_wrapper import CalEvent
+        from icalendar import Calendar as ICalendar
+        
+        ical_text = self.get_ical_text(force_fetch=force_fetch)
+        if not ical_text:
+            return []
+        
+        events = []
+        try:
+            ical = ICalendar.from_ical(ical_text)
+            for component in ical.walk():
+                if component.name == 'VEVENT':
+                    cal_event = CalEvent(
+                        event=component,
+                        source=source
+                    )
+                    events.append(cal_event)
+        except Exception as e:
+            print(f"Error parsing ICS events: {e}")
+        
+        return events
 
 
 class ICSSubscriptionManager:

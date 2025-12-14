@@ -22,10 +22,10 @@ from PySide6.QtGui import QAction, QIcon, QCloseEvent, QFont, QKeySequence, QSho
 
 from backend.config import Config
 from backend.event_store import EventStore, Event
-from backend.event_wrapper import CalEvent, CalendarSource
+from backend.event_wrapper import CalEvent, CalendarSource, EventInstance
 
-# Alias for backwards compatibility in this file
-EventData = CalEvent
+# EventInstance is what get_events() returns (has all CalEvent properties via delegation)
+EventData = EventInstance
 
 from .widgets.calendar_widget import CalendarWidget, ViewType, set_layout_config, set_localization_config, get_localization_config, set_colors_config, set_labels_config
 from .event_dialog import EventDialog
@@ -940,17 +940,21 @@ class MainWindow(QMainWindow):
         new_start_utc = local_naive_to_utc(new_start)
         new_end_utc = local_naive_to_utc(new_end)
         
-        # Update the event's times directly (preserves _caldav_event reference)
-        event.start = new_start_utc
-        event.end = new_end_utc
+        # Get the underlying CalEvent for modification
+        # (EventInstance.event is the CalEvent, EventInstance itself is read-only display)
+        cal_event = event.event if hasattr(event, 'event') else event
+        
+        # Update the CalEvent's times
+        cal_event.start = new_start_utc
+        cal_event.end = new_end_utc
         
         # Mark as pending BEFORE sync and refresh to show triangle
-        self.event_store._repository.mark_pending(event.uid, "update")
+        self.event_store._repository.mark_pending(cal_event.uid, "update")
         self._refresh_events()
         QApplication.processEvents()  # Force immediate repaint
 
         # Save through event store (sync to server)
-        success = self.event_store.update_event(event)
+        success = self.event_store.update_event(cal_event)
         if success:
             self._refresh_events()
         else:

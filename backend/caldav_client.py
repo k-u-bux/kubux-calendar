@@ -2,8 +2,7 @@
 CalDAV client for Nextcloud calendar operations.
 
 Provides CRUD operations for calendar events via CalDAV protocol.
-Returns raw VCALENDAR data. EventRepository handles recurrence expansion
-using recurring_ical_events.
+Returns CalEvent objects as the universal event type.
 """
 
 import caldav
@@ -140,6 +139,63 @@ class CalDAVClient:
         # Try to refresh calendars list
         self.get_calendars()
         return self._calendars.get(calendar_id)
+    
+    def get_events(
+        self,
+        calendar: CalendarInfo,
+        source: 'CalendarSource',
+        start: datetime,
+        end: datetime
+    ) -> list['CalEvent']:
+        """
+        Fetch events from a calendar as CalEvent objects.
+        
+        Args:
+            calendar: The calendar to query
+            source: CalendarSource for the returned CalEvents
+            start: Start of time range
+            end: End of time range
+        
+        Returns:
+            List of CalEvent objects (master events, no recurrence expansion).
+        """
+        from .event_wrapper import CalEvent
+        
+        if calendar._caldav_calendar is None:
+            return []
+        
+        events = []
+        try:
+            if start.tzinfo is None:
+                start = pytz.UTC.localize(start)
+            if end.tzinfo is None:
+                end = pytz.UTC.localize(end)
+            
+            caldav_events = calendar._caldav_calendar.date_search(
+                start=start,
+                end=end,
+                expand=False  # No expansion - repository handles recurrence
+            )
+            
+            for caldav_event in caldav_events:
+                try:
+                    ical = ICalendar.from_ical(caldav_event.data)
+                    for component in ical.walk():
+                        if component.name == 'VEVENT':
+                            cal_event = CalEvent(
+                                event=component,
+                                source=source,
+                                caldav_href=str(caldav_event.url) if caldav_event.url else None
+                            )
+                            events.append(cal_event)
+                except Exception as e:
+                    print(f"Error parsing CalDAV event: {e}")
+                    continue
+        
+        except Exception as e:
+            print(f"Error fetching events: {e}")
+        
+        return events
     
     def get_calendar_ical(
         self,
