@@ -277,7 +277,9 @@ class EventStore:
         """
         # Expand cache window if needed (asymmetric: -4 months to +8 months)
         if not self._is_cache_valid(start, end):
-            center = start + (end - start) / 2
+            # Center on the START of the requested range (the viewing date)
+            # This ensures asymmetric window works correctly
+            center = start
             window_start = center - timedelta(days=self.CACHE_WINDOW_PAST_MONTHS * 30)
             window_end = center + timedelta(days=self.CACHE_WINDOW_FUTURE_MONTHS * 30)
             self._fetch_into_repository(window_start, window_end)
