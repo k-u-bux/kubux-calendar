@@ -21,8 +21,11 @@ from PySide6.QtCore import Qt, QTimer, Signal, QFileSystemWatcher
 from PySide6.QtGui import QAction, QIcon, QCloseEvent, QFont, QKeySequence, QShortcut
 
 from backend.config import Config
-from backend.event_store import EventStore, CalendarSource, Event
-from backend.caldav_client import EventData
+from backend.event_store import EventStore, Event
+from backend.event_wrapper import CalEvent, CalendarSource
+
+# Alias for backwards compatibility in this file
+EventData = CalEvent
 
 from .widgets.calendar_widget import CalendarWidget, ViewType, set_layout_config, set_localization_config, get_localization_config, set_colors_config, set_labels_config
 from .event_dialog import EventDialog

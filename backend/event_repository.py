@@ -312,8 +312,14 @@ class EventRepository:
             events = cal_data.get_expanded_events(start, end)
             all_events.extend(events)
         
-        # Sort by start time
-        all_events.sort(key=lambda e: e.dtstart)
+        # Sort by start time (handle mixed tz-aware/naive)
+        def sort_key(e):
+            dt = e.dtstart
+            if dt.tzinfo is not None:
+                return dt.replace(tzinfo=None)  # Strip tz for comparison
+            return dt
+        
+        all_events.sort(key=sort_key)
         
         return all_events
     

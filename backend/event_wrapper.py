@@ -28,6 +28,7 @@ class CalendarSource:
     account_name: str = ""  # For CalDAV accounts
     read_only: bool = False  # True for ICS subscriptions
     source_type: str = "caldav"  # "caldav" or "ics"
+    visible: bool = True  # Whether to display in calendar view
     
     def __hash__(self):
         return hash(self.id)
@@ -89,27 +90,43 @@ class CalEvent:
         return str(loc) if loc else ''
     
     @property
+    def start(self) -> datetime:
+        """Alias for dtstart for GUI compatibility."""
+        return self.dtstart
+    
+    @property
+    def end(self) -> datetime:
+        """Alias for dtend for GUI compatibility."""
+        return self.dtend
+    
+    @property
     def dtstart(self) -> datetime:
         """
         Get the event's start time as a datetime.
         For recurring instances, returns recurrence_id if set.
+        Always returns timezone-aware datetime.
         """
         if self.recurrence_id:
-            return self.recurrence_id
+            val = self.recurrence_id
+        else:
+            dt = self.event.get('DTSTART')
+            if dt is None:
+                return datetime.now(pytz.UTC)
+            
+            val = dt.dt
+            if isinstance(val, date) and not isinstance(val, datetime):
+                # All-day event - convert to datetime at midnight UTC
+                val = datetime.combine(val, datetime.min.time())
         
-        dt = self.event.get('DTSTART')
-        if dt is None:
-            return datetime.now(pytz.UTC)
+        # Ensure timezone-aware
+        if val.tzinfo is None:
+            val = pytz.UTC.localize(val)
         
-        val = dt.dt
-        if isinstance(val, date) and not isinstance(val, datetime):
-            # All-day event - convert to datetime
-            return datetime.combine(val, datetime.min.time())
         return val
     
     @property
     def dtend(self) -> datetime:
-        """Get the event's end time as a datetime."""
+        """Get the event's end time as a datetime. Always timezone-aware."""
         dt = self.event.get('DTEND')
         if dt is None:
             # No end time - use start + 1 hour
@@ -118,7 +135,7 @@ class CalEvent:
         val = dt.dt
         if isinstance(val, date) and not isinstance(val, datetime):
             # All-day event - convert to datetime
-            return datetime.combine(val, datetime.min.time())
+            val = datetime.combine(val, datetime.min.time())
         
         # For recurring instances, adjust end by the same delta from start
         if self.recurrence_id:
@@ -127,8 +144,17 @@ class CalEvent:
                 original_start_dt = original_start.dt
                 if isinstance(original_start_dt, date) and not isinstance(original_start_dt, datetime):
                     original_start_dt = datetime.combine(original_start_dt, datetime.min.time())
-                delta = self.recurrence_id - original_start_dt
-                return val + delta
+                if original_start_dt.tzinfo is None:
+                    original_start_dt = pytz.UTC.localize(original_start_dt)
+                rec_id = self.recurrence_id
+                if rec_id.tzinfo is None:
+                    rec_id = pytz.UTC.localize(rec_id)
+                delta = rec_id - original_start_dt
+                val = val + delta
+        
+        # Ensure timezone-aware
+        if val.tzinfo is None:
+            val = pytz.UTC.localize(val)
         
         return val
     
@@ -183,6 +209,18 @@ class CalEvent:
     def source_type(self) -> str:
         """Get the source type ('caldav' or 'ics')."""
         return self.source.source_type
+    
+    @property
+    def sync_status(self) -> str:
+        """Get sync status. Returns 'pending' if there's a pending operation."""
+        if self.pending_operation:
+            return "pending"
+        return ""
+    
+    @property
+    def recurrence(self):
+        """Get recurrence rule. Returns None for now (legacy compatibility)."""
+        return None
     
     # ==================== Instance Creation ====================
     

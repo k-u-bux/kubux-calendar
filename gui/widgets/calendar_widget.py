@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont, QFontMetrics, QMouseEvent
 
-from backend.caldav_client import EventData
+from backend.event_wrapper import CalEvent as EventData
 from backend.config import LayoutConfig, LocalizationConfig, ColorsConfig, LabelsConfig
 from .event_widget import (
     EventWidget, DraggableEventWidget, DragMode,

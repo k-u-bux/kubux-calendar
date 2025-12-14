@@ -19,8 +19,21 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QDateTime
 from PySide6.QtGui import QFont, QCloseEvent, QFontMetrics
 
-from backend.caldav_client import EventData, RecurrenceRule
-from backend.event_store import EventStore, CalendarSource
+from backend.event_wrapper import CalEvent as EventData, CalendarSource
+from backend.event_store import EventStore
+from dataclasses import dataclass
+from typing import Optional
+
+# Simple RecurrenceRule for UI purposes
+# The actual RRULE is stored in icalendar.Event
+@dataclass
+class RecurrenceRule:
+    """Simple representation for UI configuration."""
+    frequency: str  # DAILY, WEEKLY, MONTHLY, YEARLY
+    interval: int = 1
+    count: Optional[int] = None
+    until: Optional[datetime] = None
+    by_day: Optional[list[str]] = None
 from backend.timezone_utils import utc_to_local_naive as utc_to_local, local_naive_to_utc as local_to_utc
 
 

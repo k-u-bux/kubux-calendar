@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QSize, QPointF, QPoint
 from PySide6.QtGui import QColor, QPalette, QFont, QMouseEvent, QPainter, QPolygonF, QBrush, QPen, QFontMetrics
 
-from backend.caldav_client import EventData
+from backend.event_wrapper import CalEvent as EventData
 from backend.config import LayoutConfig, ColorsConfig
 
 
