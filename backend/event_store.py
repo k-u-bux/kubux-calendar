@@ -36,7 +36,13 @@ class EventStore:
     Uses CalEvent for storage, EventInstance for display.
     """
     
-    CACHE_WINDOW_MONTHS = 2
+    # Cache window: how far to fetch events from the center
+    CACHE_WINDOW_PAST_MONTHS = 4    # Fetch 4 months into past
+    CACHE_WINDOW_FUTURE_MONTHS = 8  # Fetch 8 months into future
+    
+    # Prefetch margins: trigger re-fetch when approaching cache boundaries
+    PREFETCH_MARGIN_PAST_MONTHS = 2    # Re-fetch when within 2 months of past edge
+    PREFETCH_MARGIN_FUTURE_MONTHS = 4  # Re-fetch when within 4 months of future edge
     
     def __init__(self, config: Config):
         self.config = config
@@ -183,9 +189,34 @@ class EventStore:
             self._notify_change()
     
     def _is_cache_valid(self, start: datetime, end: datetime) -> bool:
+        """
+        Check if cache is valid for the requested range.
+        
+        Returns False if:
+        - No cache exists
+        - Requested range is outside cache bounds
+        - Requested range approaches cache boundaries (prefetch margins)
+        """
         if self._cache_start is None or self._cache_end is None:
             return False
-        return start >= self._cache_start and end <= self._cache_end
+        
+        # Basic check: requested range must be within cache
+        if start < self._cache_start or end > self._cache_end:
+            return False
+        
+        # Prefetch margin check: trigger re-fetch when approaching boundaries
+        past_margin = timedelta(days=self.PREFETCH_MARGIN_PAST_MONTHS * 30)
+        future_margin = timedelta(days=self.PREFETCH_MARGIN_FUTURE_MONTHS * 30)
+        
+        # If start is within 2 months of past cache edge, need refresh
+        if start < self._cache_start + past_margin:
+            return False
+        
+        # If end is within 4 months of future cache edge, need refresh
+        if end > self._cache_end - future_margin:
+            return False
+        
+        return True
     
     def _fetch_into_repository(self, start: datetime, end: datetime) -> None:
         """Fetch CalEvent objects from all sources into repository."""
@@ -244,11 +275,11 @@ class EventStore:
         
         Returns EventInstance (not CalEvent) - use instance.event for the CalEvent.
         """
-        # Expand cache window if needed
+        # Expand cache window if needed (asymmetric: -4 months to +8 months)
         if not self._is_cache_valid(start, end):
             center = start + (end - start) / 2
-            window_start = center - timedelta(days=self.CACHE_WINDOW_MONTHS * 30)
-            window_end = center + timedelta(days=self.CACHE_WINDOW_MONTHS * 30)
+            window_start = center - timedelta(days=self.CACHE_WINDOW_PAST_MONTHS * 30)
+            window_end = center + timedelta(days=self.CACHE_WINDOW_FUTURE_MONTHS * 30)
             self._fetch_into_repository(window_start, window_end)
         
         # Determine visible sources
