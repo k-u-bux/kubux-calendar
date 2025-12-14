@@ -87,6 +87,8 @@ class EventStore:
         success = False
         self._load_state()
         
+        _debug_print(f"DEBUG: Initializing with {len(self.config.nextcloud_accounts)} CalDAV accounts, {len(self.config.ics_subscriptions)} ICS subscriptions")
+        
         # Initialize CalDAV clients
         for account in self.config.nextcloud_accounts:
             try:
@@ -157,6 +159,11 @@ class EventStore:
         
         if success:
             self._last_sync_time = datetime.now()
+        
+        _debug_print(f"DEBUG: After init: {len(self._caldav_calendars)} CalDAV calendars, {len(self._ics_subscriptions)} ICS subscriptions registered")
+        
+        # Invalidate any premature cache and trigger refresh
+        self.invalidate_cache()
         
         return success
     
