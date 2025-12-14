@@ -87,7 +87,6 @@ class EventStore:
         success = False
         self._load_state()
         
-        _debug_print(f"DEBUG: Initializing with {len(self.config.nextcloud_accounts)} CalDAV accounts, {len(self.config.ics_subscriptions)} ICS subscriptions")
         
         # Initialize CalDAV clients
         for account in self.config.nextcloud_accounts:
@@ -160,8 +159,6 @@ class EventStore:
         if success:
             self._last_sync_time = datetime.now()
         
-        _debug_print(f"DEBUG: After init: {len(self._caldav_calendars)} CalDAV calendars, {len(self._ics_subscriptions)} ICS subscriptions registered")
-        
         # Invalidate any premature cache and trigger refresh
         self.invalidate_cache()
         
@@ -201,35 +198,22 @@ class EventStore:
         _debug_print(f"Fetching events {start.date()} to {end.date()}")
         
         # Fetch from CalDAV
-        _debug_print(f"DEBUG: {len(self._caldav_calendars)} CalDAV calendars to fetch")
         for source_id, cal_info in self._caldav_calendars.items():
             source = self._calendar_sources.get(source_id)
             if not source:
-                _debug_print(f"DEBUG: No source for {source_id}")
                 continue
             
             client = self._caldav_clients.get(source.account_name)
             if client:
-                _debug_print(f"DEBUG: Fetching CalDAV {source_id}")
                 ical_text = client.get_calendar_ical(cal_info, start, end)
                 if ical_text:
-                    _debug_print(f"DEBUG: Got {len(ical_text)} bytes from {source_id}")
                     self._repository.update_calendar_data(source_id, ical_text)
-                else:
-                    _debug_print(f"DEBUG: No data from {source_id}")
-            else:
-                _debug_print(f"DEBUG: No client for {source.account_name}")
         
         # Fetch from ICS subscriptions (force fetch to ensure fresh data)
-        _debug_print(f"DEBUG: {len(self._ics_subscriptions)} ICS subscriptions to fetch")
         for source_id, sub in self._ics_subscriptions.items():
-            _debug_print(f"DEBUG: Fetching ICS {source_id} ({sub.name})")
             ical_text = sub.get_ical_text(force_fetch=True)
             if ical_text:
-                _debug_print(f"DEBUG: Got {len(ical_text)} bytes from ICS {sub.name}")
                 self._repository.update_calendar_data(source_id, ical_text)
-            else:
-                _debug_print(f"DEBUG: No data from ICS {sub.name}, error: {sub.error}")
         
         self._cache_start = start
         self._cache_end = end
