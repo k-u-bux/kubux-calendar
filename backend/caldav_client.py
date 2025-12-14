@@ -2,6 +2,8 @@
 CalDAV client for Nextcloud calendar operations.
 
 Provides CRUD operations for calendar events via CalDAV protocol.
+Refactored: Now provides raw VCALENDAR data. EventRepository handles
+recurrence expansion using recurring_ical_events.
 """
 
 import caldav
@@ -780,4 +782,110 @@ class CalDAVClient:
         
         except Exception as e:
             print(f"Error excluding recurring instance: {e}")
+            return False
+    
+    # ==================== New Architecture Methods ====================
+    # These methods return raw VCALENDAR data for use with EventRepository
+    # and recurring_ical_events library.
+    
+    def get_calendar_ical(
+        self,
+        calendar: CalendarInfo,
+        start: datetime,
+        end: datetime
+    ) -> Optional[str]:
+        """
+        Fetch raw VCALENDAR data from a calendar (no recurrence expansion).
+        
+        For use with EventRepository which handles recurrence expansion
+        using recurring_ical_events library.
+        
+        Args:
+            calendar: The calendar to query
+            start: Start of time range
+            end: End of time range
+        
+        Returns:
+            Raw VCALENDAR text containing all events in range, or None on error.
+        """
+        if calendar._caldav_calendar is None:
+            return None
+        
+        try:
+            # Ensure timezone awareness
+            if start.tzinfo is None:
+                start = pytz.UTC.localize(start)
+            if end.tzinfo is None:
+                end = pytz.UTC.localize(end)
+            
+            # Fetch events without expansion (we'll use recurring_ical_events)
+            caldav_events = calendar._caldav_calendar.date_search(
+                start=start,
+                end=end,
+                expand=False
+            )
+            
+            # Build a combined VCALENDAR with all events
+            combined_cal = ICalendar()
+            combined_cal.add('prodid', '-//Kubux Calendar//kubux.net//')
+            combined_cal.add('version', '2.0')
+            
+            for caldav_event in caldav_events:
+                try:
+                    ical = ICalendar.from_ical(caldav_event.data)
+                    for component in ical.walk():
+                        if component.name == 'VEVENT':
+                            combined_cal.add_component(component)
+                except Exception as e:
+                    print(f"Error parsing CalDAV event: {e}")
+                    continue
+            
+            return combined_cal.to_ical().decode('utf-8')
+        
+        except Exception as e:
+            print(f"Error fetching calendar ICAL: {e}")
+            return None
+    
+    def get_raw_event_ical(self, calendar: CalendarInfo, uid: str) -> Optional[str]:
+        """
+        Get raw VCALENDAR data for a specific event.
+        
+        Args:
+            calendar: The calendar containing the event
+            uid: The event UID
+        
+        Returns:
+            Raw VCALENDAR text, or None if not found.
+        """
+        if calendar._caldav_calendar is None:
+            return None
+        
+        try:
+            caldav_event = calendar._caldav_calendar.event_by_uid(uid)
+            if caldav_event:
+                return caldav_event.data
+        except Exception:
+            pass
+        
+        return None
+    
+    def save_raw_event(self, calendar: CalendarInfo, ical_text: str) -> bool:
+        """
+        Save raw VCALENDAR data to a calendar.
+        
+        Args:
+            calendar: Target calendar
+            ical_text: Raw VCALENDAR text to save
+        
+        Returns:
+            True if successful, False otherwise.
+        """
+        if calendar._caldav_calendar is None or not calendar.writable:
+            return False
+        
+        try:
+            calendar._caldav_calendar.save_event(ical_text)
+            return True
+        except Exception as e:
+            print(f"Error saving raw event: {e}")
             return False
