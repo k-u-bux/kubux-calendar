@@ -19,7 +19,8 @@
           pyPkgs.ics                    # ICS parsing library
           pyPkgs.icalendar              # iCalendar parsing/generation
           pyPkgs.pytz                   # Timezone handling
-          pyPkgs.python-dateutil        # Recurring event expansion (RRULE)
+          pyPkgs.python-dateutil        # Date utilities
+          pyPkgs.recurring-ical-events  # Recurring event expansion (RRULE/RDATE/EXDATE)
         ]);
 
       in {
