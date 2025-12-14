@@ -7,8 +7,11 @@ data and uses the recurring_ical_events library for proper recurrence handling.
 """
 
 from datetime import datetime, date, timedelta
-from typing import Optional, Iterator
+from typing import Optional, Iterator, Any
+from dataclasses import dataclass
+import uuid
 from icalendar import Calendar as ICalCalendar, Event as ICalEvent
+from icalendar.prop import vRecur
 import pytz
 
 # recurring_ical_events handles RRULE, RDATE, EXDATE properly
@@ -213,6 +216,8 @@ class EventRepository:
     def __init__(self):
         self._calendars: dict[str, CalendarData] = {}
         self._sources: dict[str, CalendarSource] = {}
+        # Track pending operations by event UID - persists across cache invalidations
+        self._pending_operations: dict[str, str] = {}  # uid -> operation ("create", "update", "delete")
     
     def add_source(self, source: CalendarSource):
         """Register a calendar source."""
@@ -312,6 +317,11 @@ class EventRepository:
             events = cal_data.get_expanded_events(start, end)
             all_events.extend(events)
         
+        # Apply pending operations from tracking
+        for event in all_events:
+            if event.uid in self._pending_operations:
+                event.pending_operation = self._pending_operations[event.uid]
+        
         # Sort by start time (handle mixed tz-aware/naive)
         def sort_key(e):
             dt = e.dtstart
@@ -322,6 +332,24 @@ class EventRepository:
         all_events.sort(key=sort_key)
         
         return all_events
+    
+    # ==================== Pending Operations Tracking ====================
+    
+    def mark_pending(self, uid: str, operation: str):
+        """Mark an event as having a pending operation."""
+        self._pending_operations[uid] = operation
+    
+    def clear_pending(self, uid: str):
+        """Clear pending status for an event (after successful sync)."""
+        self._pending_operations.pop(uid, None)
+    
+    def has_pending(self, uid: str) -> bool:
+        """Check if an event has a pending operation."""
+        return uid in self._pending_operations
+    
+    def get_pending_operation(self, uid: str) -> Optional[str]:
+        """Get the pending operation for an event."""
+        return self._pending_operations.get(uid)
     
     def get_calendar_data(self, source_id: str) -> Optional[CalendarData]:
         """Get the raw calendar data for a source."""
@@ -338,3 +366,209 @@ class EventRepository:
         if source_id in self._calendars:
             self._calendars[source_id]._calendar = None
             self._calendars[source_id]._ical_text = None
+    
+    # ==================== CRUD Operations ====================
+    
+    def create_event(
+        self,
+        source_id: str,
+        summary: str,
+        start: datetime,
+        end: datetime,
+        description: str = "",
+        location: str = "",
+        all_day: bool = False,
+        recurrence: Optional[Any] = None,
+    ) -> Optional[CalEvent]:
+        """
+        Create a new event in the repository.
+        
+        Args:
+            source_id: Calendar source ID
+            summary: Event title
+            start: Start datetime
+            end: End datetime
+            description: Event description
+            location: Event location
+            all_day: True for all-day events
+            recurrence: Recurrence rule (RecurrenceRule dataclass or None)
+        
+        Returns:
+            CalEvent wrapper for the created event, or None if failed
+        """
+        source = self._sources.get(source_id)
+        if not source or source.read_only:
+            return None
+        
+        # Create iCalendar event
+        event = ICalEvent()
+        event.add('uid', str(uuid.uuid4()))
+        event.add('summary', summary)
+        event.add('dtstamp', datetime.now(pytz.UTC))
+        
+        if description:
+            event.add('description', description)
+        if location:
+            event.add('location', location)
+        
+        # Handle dates
+        if all_day:
+            event.add('dtstart', start.date())
+            event.add('dtend', end.date())
+        else:
+            event.add('dtstart', start)
+            event.add('dtend', end)
+        
+        # Handle recurrence
+        if recurrence:
+            rrule = self._build_rrule(recurrence)
+            if rrule:
+                event.add('rrule', rrule)
+        
+        # Add to calendar data
+        self.add_event(source_id, event)
+        
+        # Return wrapped event
+        return CalEvent(
+            event=event,
+            source=source,
+            pending_operation="create"
+        )
+    
+    def update_event(
+        self,
+        cal_event: CalEvent,
+        summary: Optional[str] = None,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+        description: Optional[str] = None,
+        location: Optional[str] = None,
+        all_day: Optional[bool] = None,
+        recurrence: Optional[Any] = None,
+    ) -> bool:
+        """
+        Update an existing event in the repository.
+        
+        Args:
+            cal_event: The CalEvent to update
+            Other args: Fields to update (None = no change)
+        
+        Returns:
+            True if successful
+        """
+        source_id = cal_event.source.id
+        if source_id not in self._calendars:
+            return False
+        
+        ical_event = self._calendars[source_id].get_event(cal_event.uid)
+        if ical_event is None:
+            return False
+        
+        # Update fields
+        if summary is not None:
+            if 'SUMMARY' in ical_event:
+                del ical_event['SUMMARY']
+            ical_event.add('summary', summary)
+        
+        if description is not None:
+            if 'DESCRIPTION' in ical_event:
+                del ical_event['DESCRIPTION']
+            if description:
+                ical_event.add('description', description)
+        
+        if location is not None:
+            if 'LOCATION' in ical_event:
+                del ical_event['LOCATION']
+            if location:
+                ical_event.add('location', location)
+        
+        # Handle date changes
+        if start is not None or end is not None or all_day is not None:
+            new_start = start if start is not None else cal_event.dtstart
+            new_end = end if end is not None else cal_event.dtend
+            new_all_day = all_day if all_day is not None else cal_event.all_day
+            
+            if 'DTSTART' in ical_event:
+                del ical_event['DTSTART']
+            if 'DTEND' in ical_event:
+                del ical_event['DTEND']
+            
+            if new_all_day:
+                ical_event.add('dtstart', new_start.date())
+                ical_event.add('dtend', new_end.date())
+            else:
+                ical_event.add('dtstart', new_start)
+                ical_event.add('dtend', new_end)
+        
+        # Handle recurrence
+        if recurrence is not None:
+            if 'RRULE' in ical_event:
+                del ical_event['RRULE']
+            rrule = self._build_rrule(recurrence)
+            if rrule:
+                ical_event.add('rrule', rrule)
+        
+        # Update modified time
+        if 'LAST-MODIFIED' in ical_event:
+            del ical_event['LAST-MODIFIED']
+        ical_event.add('last-modified', datetime.now(pytz.UTC))
+        
+        # Mark as pending update
+        cal_event.pending_operation = "update"
+        
+        return True
+    
+    def delete_event(self, cal_event: CalEvent) -> bool:
+        """
+        Delete an event from the repository.
+        
+        Args:
+            cal_event: The CalEvent to delete
+        
+        Returns:
+            True if successful
+        """
+        source_id = cal_event.source.id
+        return self.remove_event(source_id, cal_event.uid)
+    
+    def _build_rrule(self, recurrence: Any) -> Optional[dict]:
+        """
+        Build an RRULE dict from a recurrence specification.
+        
+        Args:
+            recurrence: RecurrenceRule dataclass or dict-like object
+        
+        Returns:
+            Dict suitable for icalendar RRULE, or None
+        """
+        if recurrence is None:
+            return None
+        
+        # Handle RecurrenceRule dataclass (from old code)
+        freq = getattr(recurrence, 'frequency', None) or recurrence.get('frequency') if hasattr(recurrence, 'get') else None
+        if not freq:
+            return None
+        
+        rrule = {'freq': freq.upper() if isinstance(freq, str) else freq}
+        
+        # Interval
+        interval = getattr(recurrence, 'interval', None) or (recurrence.get('interval') if hasattr(recurrence, 'get') else None)
+        if interval and interval > 1:
+            rrule['interval'] = interval
+        
+        # Count
+        count = getattr(recurrence, 'count', None) or (recurrence.get('count') if hasattr(recurrence, 'get') else None)
+        if count:
+            rrule['count'] = count
+        
+        # Until
+        until = getattr(recurrence, 'until', None) or (recurrence.get('until') if hasattr(recurrence, 'get') else None)
+        if until:
+            rrule['until'] = until
+        
+        # Weekdays (BYDAY)
+        byday = getattr(recurrence, 'by_day', None) or (recurrence.get('by_day') if hasattr(recurrence, 'get') else None)
+        if byday:
+            rrule['byday'] = byday
+        
+        return rrule

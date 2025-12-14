@@ -77,11 +77,30 @@ class CalEvent:
         summary = self.event.get('SUMMARY')
         return str(summary) if summary else 'Untitled'
     
+    @summary.setter
+    def summary(self, value: str):
+        """Set the event's title/summary."""
+        if 'SUMMARY' in self.event:
+            del self.event['SUMMARY']
+        self.event.add('summary', value)
+        if not self.source.read_only:
+            self.pending_operation = "update"
+    
     @property
     def description(self) -> str:
         """Get the event's description."""
         desc = self.event.get('DESCRIPTION')
         return str(desc) if desc else ''
+    
+    @description.setter
+    def description(self, value: str):
+        """Set the event's description."""
+        if 'DESCRIPTION' in self.event:
+            del self.event['DESCRIPTION']
+        if value:
+            self.event.add('description', value)
+        if not self.source.read_only:
+            self.pending_operation = "update"
     
     @property
     def location(self) -> str:
@@ -89,15 +108,49 @@ class CalEvent:
         loc = self.event.get('LOCATION')
         return str(loc) if loc else ''
     
+    @location.setter
+    def location(self, value: str):
+        """Set the event's location."""
+        if 'LOCATION' in self.event:
+            del self.event['LOCATION']
+        if value:
+            self.event.add('location', value)
+        if not self.source.read_only:
+            self.pending_operation = "update"
+    
     @property
     def start(self) -> datetime:
         """Alias for dtstart for GUI compatibility."""
         return self.dtstart
     
+    @start.setter
+    def start(self, value: datetime):
+        """Set the event's start time."""
+        if 'DTSTART' in self.event:
+            del self.event['DTSTART']
+        if self.all_day:
+            self.event.add('dtstart', value.date())
+        else:
+            self.event.add('dtstart', value)
+        if not self.source.read_only:
+            self.pending_operation = "update"
+    
     @property
     def end(self) -> datetime:
         """Alias for dtend for GUI compatibility."""
         return self.dtend
+    
+    @end.setter
+    def end(self, value: datetime):
+        """Set the event's end time."""
+        if 'DTEND' in self.event:
+            del self.event['DTEND']
+        if self.all_day:
+            self.event.add('dtend', value.date())
+        else:
+            self.event.add('dtend', value)
+        if not self.source.read_only:
+            self.pending_operation = "update"
     
     @property
     def dtstart(self) -> datetime:
@@ -166,6 +219,29 @@ class CalEvent:
             return False
         # All-day events have date values, not datetime
         return isinstance(dt.dt, date) and not isinstance(dt.dt, datetime)
+    
+    @all_day.setter
+    def all_day(self, value: bool):
+        """Set whether this is an all-day event."""
+        current_start = self.dtstart
+        current_end = self.dtend
+        
+        if 'DTSTART' in self.event:
+            del self.event['DTSTART']
+        if 'DTEND' in self.event:
+            del self.event['DTEND']
+        
+        if value:
+            # Convert to all-day
+            self.event.add('dtstart', current_start.date())
+            self.event.add('dtend', current_end.date())
+        else:
+            # Convert to timed event
+            self.event.add('dtstart', current_start)
+            self.event.add('dtend', current_end)
+        
+        if not self.source.read_only:
+            self.pending_operation = "update"
     
     @property
     def duration(self) -> timedelta:

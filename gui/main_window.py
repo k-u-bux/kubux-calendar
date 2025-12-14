@@ -944,7 +944,12 @@ class MainWindow(QMainWindow):
         event.start = new_start_utc
         event.end = new_end_utc
         
-        # Save through event store
+        # Mark as pending BEFORE sync and refresh to show triangle
+        self.event_store._repository.mark_pending(event.uid, "update")
+        self._refresh_events()
+        QApplication.processEvents()  # Force immediate repaint
+
+        # Save through event store (sync to server)
         success = self.event_store.update_event(event)
         if success:
             self._refresh_events()

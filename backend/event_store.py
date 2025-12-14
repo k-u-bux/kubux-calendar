@@ -272,8 +272,13 @@ class EventStore:
         description: str = "",
         location: str = "",
         all_day: bool = False,
+        recurrence = None,
     ) -> Optional[CalEvent]:
-        """Create a new event in a CalDAV calendar."""
+        """
+        Create a new event in a CalDAV calendar.
+        
+        Creates the event in the repository first, then syncs to server.
+        """
         source = self._calendar_sources.get(calendar_id)
         if not source or source.read_only or source.source_type != "caldav":
             return None
@@ -286,30 +291,29 @@ class EventStore:
         if not client:
             return None
         
-        # Create icalendar.Event
-        event = ICalEvent()
-        event.add('uid', str(uuid.uuid4()))
-        event.add('summary', summary)
-        event.add('description', description)
-        event.add('location', location)
-        event.add('dtstamp', datetime.now(pytz.UTC))
+        # Create event in repository
+        cal_event = self._repository.create_event(
+            source_id=calendar_id,
+            summary=summary,
+            start=start,
+            end=end,
+            description=description,
+            location=location,
+            all_day=all_day,
+            recurrence=recurrence
+        )
         
-        if all_day:
-            event.add('dtstart', start.date())
-            event.add('dtend', end.date())
-        else:
-            event.add('dtstart', start)
-            event.add('dtend', end)
+        if cal_event is None:
+            return None
         
-        # Save to server
-        if client.save_event(cal_info, event):
-            self.invalidate_cache()
+        # Sync to server
+        if client.save_event(cal_info, cal_event.event):
+            cal_event.pending_operation = None  # Clear pending status
             self._notify_change()
-            
-            # Return as CalEvent
-            return CalEvent(event=event, source=source)
+            return cal_event
         
-        return None
+        # Server sync failed - event is in repository with pending status
+        return cal_event
     
     def update_event(self, event: CalEvent) -> bool:
         """Update an existing event."""
@@ -325,12 +329,19 @@ class EventStore:
         if not client:
             return False
         
+        # Mark as pending in repository (persists across cache invalidation)
+        self._repository.mark_pending(event.uid, "update")
+        
         # Update the underlying icalendar.Event
         if client.update_event(cal_info, event.uid, event.event):
+            # Clear pending status after successful sync
+            self._repository.clear_pending(event.uid)
             self.invalidate_cache()
             self._notify_change()
             return True
         
+        # Sync failed - keep pending status
+        self._notify_change()  # Refresh to show pending indicator
         return False
     
     def delete_event(self, event: CalEvent) -> bool:
