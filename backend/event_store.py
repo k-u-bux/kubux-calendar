@@ -62,6 +62,8 @@ class EventStore:
         self._sync_queue.set_on_change_callback(self._on_sync_queue_changed)
         
         self._last_sync_time: Optional[datetime] = None
+        self._source_last_sync: dict[str, datetime] = {}  # Per-source last sync times
+        self._source_refresh_intervals: dict[str, int] = {}  # Per-source refresh intervals
         self._on_change_callback: Optional[Callable[[], None]] = None
         self._on_sync_status_callback: Optional[Callable[[int, Optional[datetime]], None]] = None
     
@@ -110,6 +112,10 @@ class EventStore:
                         
                         if source_id in self._visibility:
                             source.visible = self._visibility[source_id]
+                        
+                        # Store per-source refresh interval (if configured)
+                        if account.refresh_interval is not None:
+                            self._source_refresh_intervals[source_id] = account.refresh_interval
                     
                     success = True
             except Exception as e:
@@ -139,6 +145,10 @@ class EventStore:
                 
                 if source_id in self._visibility:
                     source.visible = self._visibility[source_id]
+                
+                # Store per-source refresh interval (if configured)
+                if sub_config.refresh_interval is not None:
+                    self._source_refresh_intervals[source_id] = sub_config.refresh_interval
                 
                 success = True
             except Exception as e:
@@ -180,6 +190,7 @@ class EventStore:
     def _fetch_into_repository(self, start: datetime, end: datetime) -> None:
         """Fetch CalEvent objects from all sources into repository."""
         _debug_print(f"Fetching events {start.date()} to {end.date()}")
+        now = datetime.now()
         
         # Fetch from CalDAV as CalEvent objects
         for source_id, cal_info in self._caldav_calendars.items():
@@ -192,6 +203,11 @@ class EventStore:
                 events = client.get_events(cal_info, source, start, end)
                 if events:
                     self._repository.store_events(source_id, events)
+                # Only set initial sync time (if not already set)
+                # Per-source refreshes are handled by refresh()
+                if source_id not in self._source_last_sync:
+                    self._source_last_sync[source_id] = now
+                    source.last_sync_time = now
         
         # Fetch from ICS subscriptions as CalEvent objects
         for source_id, sub in self._ics_subscriptions.items():
@@ -202,6 +218,11 @@ class EventStore:
             events = sub.get_events(source, force_fetch=True)
             if events:
                 self._repository.store_events(source_id, events)
+            # Only set initial sync time (if not already set)
+            # Per-source refreshes are handled by refresh()
+            if source_id not in self._source_last_sync:
+                self._source_last_sync[source_id] = now
+                source.last_sync_time = now
         
         self._cache_start = start
         self._cache_end = end
@@ -418,12 +439,16 @@ class EventStore:
     
     def refresh(self, calendar_id: Optional[str] = None) -> None:
         """Refresh data from sources."""
+        now = datetime.now()
+        refreshed_sources = []
+        
         if calendar_id:
             source = self._calendar_sources.get(calendar_id)
             if source and source.source_type == "ics":
                 sub = self._ics_subscriptions.get(calendar_id)
                 if sub:
                     sub.fetch()
+                    refreshed_sources.append(calendar_id)
             elif source and source.source_type == "caldav":
                 client = self._caldav_clients.get(source.account_name)
                 if client:
@@ -432,6 +457,7 @@ class EventStore:
                         cid = f"caldav:{source.account_name}:{cal.id}"
                         if cid == calendar_id:
                             self._caldav_calendars[cid] = cal
+                            refreshed_sources.append(cid)
         else:
             for name, client in self._caldav_clients.items():
                 if client.reconnect():
@@ -439,11 +465,35 @@ class EventStore:
                         cid = f"caldav:{name}:{cal.id}"
                         if cid in self._caldav_calendars:
                             self._caldav_calendars[cid] = cal
+                            refreshed_sources.append(cid)
             self._ics_manager.fetch_all()
+            refreshed_sources.extend(self._ics_subscriptions.keys())
+        
+        # Update per-source last sync times
+        for source_id in refreshed_sources:
+            self._source_last_sync[source_id] = now
+            source = self._calendar_sources.get(source_id)
+            if source:
+                source.last_sync_time = now
         
         self.invalidate_cache()
         self._notify_change()
-        self._last_sync_time = datetime.now()
+        self._last_sync_time = now
+    
+    def refresh_due_sources(self) -> list[str]:
+        """
+        Refresh all sources that are due for refresh based on their intervals.
+        
+        Returns list of source IDs that were refreshed.
+        """
+        sources_to_refresh = self.get_sources_needing_refresh()
+        if not sources_to_refresh:
+            return []
+        
+        for source_id in sources_to_refresh:
+            self.refresh(source_id)
+        
+        return sources_to_refresh
     
     def _load_state(self) -> None:
         if self._state_file.exists():
@@ -487,6 +537,32 @@ class EventStore:
     
     def get_last_sync_time(self) -> Optional[datetime]:
         return self._last_sync_time
+    
+    def get_source_last_sync(self, source_id: str) -> Optional[datetime]:
+        """Get last sync time for a specific source."""
+        return self._source_last_sync.get(source_id)
+    
+    def get_source_refresh_interval(self, source_id: str) -> int:
+        """Get effective refresh interval for a source (per-source or global default)."""
+        return self._source_refresh_intervals.get(source_id, self.config.refresh_interval)
+    
+    def get_sources_needing_refresh(self) -> list[str]:
+        """Get list of source IDs that need refresh based on their intervals."""
+        now = datetime.now()
+        sources_needing_refresh = []
+        
+        for source_id in self._calendar_sources:
+            interval = self.get_source_refresh_interval(source_id)
+            if interval <= 0:
+                continue  # Refresh disabled for this source
+            
+            last_sync = self._source_last_sync.get(source_id)
+            if last_sync is None:
+                sources_needing_refresh.append(source_id)
+            elif (now - last_sync).total_seconds() >= interval:
+                sources_needing_refresh.append(source_id)
+        
+        return sources_needing_refresh
     
     def get_cached_event_count(self) -> int:
         return self._repository.get_event_count()

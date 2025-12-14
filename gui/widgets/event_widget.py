@@ -159,6 +159,8 @@ class EventWidget(QFrame):
     
     def _setup_tooltip(self) -> None:
         """Set up the tooltip with full event information."""
+        from .calendar_widget import get_labels_config
+        
         lines = []
         
         # Title
@@ -176,8 +178,14 @@ class EventWidget(QFrame):
         if self.event_data.location:
             lines.append(f"📍 {self.event_data.location}")
         
-        # Calendar
-        lines.append(f"<i>{self.event_data.calendar_name}</i>")
+        # Calendar with last sync time
+        calendar_info = self.event_data.calendar_name
+        source = self.event_data.source
+        if source and source.last_sync_time:
+            labels = get_labels_config()
+            sync_time_str = source.last_sync_time.strftime("%H:%M")
+            calendar_info = f"{self.event_data.calendar_name}, {labels.last_sync_label} {sync_time_str}"
+        lines.append(f"<i>{calendar_info}</i>")
         
         # Description (truncate if too long)
         if self.event_data.description:

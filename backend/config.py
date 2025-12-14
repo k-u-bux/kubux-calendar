@@ -21,6 +21,7 @@ class NextcloudAccount:
     username: str
     password_key: str
     color: str = "#4285f4"  # Default Google Blue
+    refresh_interval: Optional[int] = None  # Per-source override (None = use global)
     
     _password: Optional[str] = field(default=None, repr=False)
     
@@ -53,6 +54,7 @@ class ICSSubscription:
     name: str
     url: str
     color: str = "#34a853"  # Default Google Green
+    refresh_interval: Optional[int] = None  # Per-source override (None = use global)
 
 
 @dataclass
@@ -169,6 +171,7 @@ class LabelsConfig:
     location_icon: str = "📍"
     subscription_icon: str = "📡"
     readonly_notice: str = "🔒 This event is read-only (from a subscription)"
+    last_sync_label: str = "Last sync:"
 
 
 @dataclass
@@ -272,7 +275,8 @@ class Config:
                     url=value.get('url', ''),
                     username=value.get('username', ''),
                     password_key=value.get('password_key', ''),
-                    color=value.get('color', '#4285f4')
+                    color=value.get('color', '#4285f4'),
+                    refresh_interval=value.get('refresh_interval')
                 )
                 nextcloud_accounts.append(account)
             
@@ -293,7 +297,8 @@ class Config:
                             url=sub_value.get('url', ''),
                             username=sub_value.get('username', ''),
                             password_key=sub_value.get('password_key', ''),
-                            color=sub_value.get('color', '#4285f4')
+                            color=sub_value.get('color', '#4285f4'),
+                            refresh_interval=sub_value.get('refresh_interval')
                         )
                         nextcloud_accounts.append(account)
         
@@ -310,7 +315,8 @@ class Config:
                 subscription = ICSSubscription(
                     name=value.get('name', sub_id),
                     url=value.get('url', ''),
-                    color=value.get('color', '#34a853')
+                    color=value.get('color', '#34a853'),
+                    refresh_interval=value.get('refresh_interval')
                 )
                 ics_subscriptions.append(subscription)
             
@@ -327,7 +333,8 @@ class Config:
                         subscription = ICSSubscription(
                             name=sub_value.get('name', sub_id),
                             url=sub_value.get('url', ''),
-                            color=sub_value.get('color', '#34a853')
+                            color=sub_value.get('color', '#34a853'),
+                            refresh_interval=sub_value.get('refresh_interval')
                         )
                         ics_subscriptions.append(subscription)
         
@@ -448,6 +455,7 @@ class Config:
             location_icon=labels_data.get('location_icon', LabelsConfig.location_icon),
             subscription_icon=labels_data.get('subscription_icon', LabelsConfig.subscription_icon),
             readonly_notice=labels_data.get('readonly_notice', LabelsConfig.readonly_notice),
+            last_sync_label=labels_data.get('last_sync_label', LabelsConfig.last_sync_label),
         )
         
         return cls(

@@ -185,6 +185,18 @@ class CalendarSidebar(QWidget):
     
     def _on_calendar_color_change(self, calendar_id: str, color: str):
         self.event_store.set_calendar_color(calendar_id, color)
+    
+    def update_tooltips(self):
+        """Update tooltips for all calendar items with last sync times."""
+        last_sync_label = self.event_store.config.labels.last_sync_label
+        
+        for calendar_id, item in self._items.items():
+            last_sync = self.event_store.get_source_last_sync(calendar_id)
+            if last_sync:
+                time_str = last_sync.strftime("%H:%M")
+                item.setToolTip(f"{last_sync_label} {time_str}")
+            else:
+                item.setToolTip("")
 
 
 class MainWindow(QMainWindow):
@@ -252,10 +264,10 @@ class MainWindow(QMainWindow):
         self._load_state()
         self._initialize_data()
         
-        # Start auto-refresh timer if interval > 0
-        if config.refresh_interval > 0:
-            self._auto_refresh_timer.start(config.refresh_interval * 1000)  # Convert to milliseconds
-            print(f"DEBUG: Auto-refresh enabled every {config.refresh_interval} seconds", file=__import__('sys').stderr)
+        # Start auto-refresh timer - always runs every 60 seconds to check which sources need refresh
+        # Individual per-source refresh intervals are checked in refresh_due_sources()
+        self._auto_refresh_timer.start(60 * 1000)  # Fixed 60-second check interval
+        print(f"DEBUG: Auto-refresh check enabled every 60 seconds", file=__import__('sys').stderr)
     
     def _setup_window(self):
         """Configure main window properties."""
@@ -544,6 +556,9 @@ class MainWindow(QMainWindow):
             self._sidebar.refresh()
             self._refresh_events()
             
+            # Update sidebar tooltips with initial sync times
+            self._sidebar.update_tooltips()
+            
             # Show sync status in status bar (replaces "Connected" message)
             self._update_sync_status()
             
@@ -661,10 +676,14 @@ class MainWindow(QMainWindow):
         self._refresh_events()
     
     def _on_auto_refresh(self):
-        """Handle auto-refresh timer tick - fetch fresh data from server."""
+        """Handle auto-refresh timer tick - refresh sources that are due."""
         import sys
-        print("DEBUG: Auto-refresh triggered - calling event_store.refresh()", file=sys.stderr)
-        self.event_store.refresh()
+        sources_refreshed = self.event_store.refresh_due_sources()
+        if sources_refreshed:
+            print(f"DEBUG: Auto-refresh refreshed {len(sources_refreshed)} sources", file=sys.stderr)
+        
+        # Update sidebar tooltips with new sync times
+        self._sidebar.update_tooltips()
     
     def _on_sync_timer(self):
         """Handle sync timer tick - attempt to sync pending changes with exponential backoff."""
@@ -842,10 +861,9 @@ class MainWindow(QMainWindow):
             self._initialize_data()
             self._skip_auto_scroll_restore = False
             
-            # Restart auto-refresh timer if configured
-            if new_config.refresh_interval > 0:
-                self._auto_refresh_timer.start(new_config.refresh_interval * 1000)
-                print(f"DEBUG: Auto-refresh enabled every {new_config.refresh_interval} seconds", file=sys.stderr)
+            # Restart auto-refresh timer - fixed 60-second check interval
+            self._auto_refresh_timer.start(60 * 1000)
+            print(f"DEBUG: Auto-refresh check enabled every 60 seconds", file=sys.stderr)
             
             # Re-add config path to watcher (may have been removed during file editing)
             config_path = Config.get_default_config_path()

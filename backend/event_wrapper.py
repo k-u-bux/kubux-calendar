@@ -25,6 +25,7 @@ class CalendarSource:
     read_only: bool = False
     source_type: str = "caldav"  # "caldav" or "ics"
     visible: bool = True
+    last_sync_time: Optional[datetime] = None  # Last time this source was synced
     
     def __hash__(self):
         return hash(self.id)
