@@ -265,7 +265,11 @@ class EventStore:
         all_day: bool = False,
         recurrence = None,
     ) -> Optional[CalEvent]:
-        """Create a new event in a CalDAV calendar."""
+        """
+        Create a new event in a CalDAV calendar (optimistic).
+        
+        Creates locally with pending status, syncs in background.
+        """
         source = self._calendar_sources.get(calendar_id)
         if not source or source.read_only or source.source_type != "caldav":
             return None
@@ -278,7 +282,7 @@ class EventStore:
         if not client:
             return None
         
-        # Create event in repository
+        # Create event in repository with pending status
         cal_event = self._repository.create_event(
             source_id=calendar_id,
             summary=summary,
@@ -293,12 +297,27 @@ class EventStore:
         if cal_event is None:
             return None
         
-        # Sync to server
-        if client.save_event(cal_info, cal_event.event):
-            cal_event.pending_operation = None
-            self._notify_change()
-            return cal_event
+        # Event is already marked pending_operation="create" by repository
+        # Mark in repository's pending tracker too
+        self._repository.mark_pending(cal_event.uid, "create")
         
+        # Queue for background sync
+        from icalendar import Calendar as ICalendar
+        ical = ICalendar()
+        ical.add('prodid', '-//Kubux Calendar//kubux.net//')
+        ical.add('version', '2.0')
+        ical.add_component(cal_event.event)
+        raw_ical = ical.to_ical().decode('utf-8')
+        
+        self._sync_queue.add_pending(
+            operation=SyncOperation.CREATE,
+            calendar_id=calendar_id,
+            event_uid=cal_event.uid,
+            event_data={'raw_ical': raw_ical}
+        )
+        
+        # Notify UI to refresh (shows pending indicator)
+        self._notify_change()
         return cal_event
     
     def update_event(self, event: CalEvent) -> bool:
@@ -328,7 +347,11 @@ class EventStore:
         return False
     
     def delete_event(self, event: CalEvent) -> bool:
-        """Delete an event."""
+        """
+        Delete an event (optimistic).
+        
+        Marks as pending delete locally, syncs in background.
+        """
         if event.read_only:
             return False
         
@@ -341,12 +364,24 @@ class EventStore:
         if not client:
             return False
         
-        if client.delete_event(cal_info, event.uid):
-            self.invalidate_cache()
-            self._notify_change()
-            return True
+        # Mark as pending delete in repository
+        self._repository.mark_pending(event.uid, "delete")
+        event.pending_operation = "delete"
         
-        return False
+        # Remove from local repository (will show as deleted)
+        self._repository.remove_event(source.id, event.uid)
+        
+        # Queue for background sync
+        self._sync_queue.add_pending(
+            operation=SyncOperation.DELETE,
+            calendar_id=source.id,
+            event_uid=event.uid,
+            event_data={}
+        )
+        
+        # Notify UI to refresh immediately (event will be gone)
+        self._notify_change()
+        return True
     
     def delete_recurring_instance(self, event: CalEvent, instance_start: datetime) -> bool:
         """Delete a specific instance of a recurring event."""
