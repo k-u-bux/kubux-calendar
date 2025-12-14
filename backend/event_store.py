@@ -309,8 +309,7 @@ class EventStore:
         ical.add_component(cal_event.event)
         raw_ical = ical.to_ical().decode('utf-8')
         
-        self._sync_queue.add_pending(
-            operation=SyncOperation.CREATE,
+        self._sync_queue.add_create(
             calendar_id=calendar_id,
             event_uid=cal_event.uid,
             event_data={'raw_ical': raw_ical}
@@ -348,9 +347,9 @@ class EventStore:
     
     def delete_event(self, event: CalEvent) -> bool:
         """
-        Delete an event (optimistic).
+        Delete an event (transparent sync).
         
-        Marks as pending delete locally, syncs in background.
+        Marks as pending delete, event stays visible until server confirms.
         """
         if event.read_only:
             return False
@@ -364,27 +363,27 @@ class EventStore:
         if not client:
             return False
         
-        # Mark as pending delete in repository
+        # Mark as pending delete - event stays visible with pending indicator
         self._repository.mark_pending(event.uid, "delete")
         event.pending_operation = "delete"
         
-        # Remove from local repository (will show as deleted)
-        self._repository.remove_event(source.id, event.uid)
-        
-        # Queue for background sync
-        self._sync_queue.add_pending(
-            operation=SyncOperation.DELETE,
+        # Queue for background sync (event will be removed when sync completes)
+        self._sync_queue.add_delete(
             calendar_id=source.id,
             event_uid=event.uid,
             event_data={}
         )
         
-        # Notify UI to refresh immediately (event will be gone)
+        # Notify UI to refresh - event shows pending indicator
         self._notify_change()
         return True
     
     def delete_recurring_instance(self, event: CalEvent, instance_start: datetime) -> bool:
-        """Delete a specific instance of a recurring event."""
+        """
+        Delete a specific instance of a recurring event (transparent sync).
+        
+        Marks instance as pending delete, syncs in background.
+        """
         if event.read_only or not event.is_recurring:
             return False
         
@@ -397,12 +396,22 @@ class EventStore:
         if not client:
             return False
         
-        if client.add_exdate(cal_info, event.uid, instance_start):
-            self.invalidate_cache()
-            self._notify_change()
-            return True
+        # Mark as pending - instance stays visible with pending indicator
+        instance_uid = f"{event.uid}_{instance_start.isoformat()}"
+        self._repository.mark_pending(instance_uid, "delete")
+        event.pending_operation = "delete"
         
-        return False
+        # Queue for background sync
+        self._sync_queue.add_delete_instance(
+            calendar_id=source.id,
+            event_uid=event.uid,
+            event_data={},
+            instance_start=instance_start
+        )
+        
+        # Notify UI to refresh - instance shows pending indicator
+        self._notify_change()
+        return True
     
     def get_writable_calendars(self) -> list[CalendarSource]:
         return [s for s in self._calendar_sources.values() if not s.read_only]
@@ -502,6 +511,8 @@ class EventStore:
                 
                 if result:
                     self._sync_queue.mark_synced(change.id)
+                    # Also clear from repository's pending tracker
+                    self._repository.clear_pending(change.event_uid)
                     success_count += 1
                 else:
                     self._sync_queue.mark_failed(change.id, "Sync failed")
@@ -536,5 +547,11 @@ class EventStore:
             return client.save_raw_event(cal_info, change.event_data.get('raw_ical', ''))
         elif change.operation == SyncOperation.DELETE:
             return client.delete_event(cal_info, change.event_uid)
+        elif change.operation == SyncOperation.DELETE_INSTANCE:
+            # Add EXDATE to the recurring event
+            instance_start = datetime.fromisoformat(change.instance_start) if change.instance_start else None
+            if instance_start:
+                return client.add_exdate(cal_info, change.event_uid, instance_start)
+            return False
         
         return False
