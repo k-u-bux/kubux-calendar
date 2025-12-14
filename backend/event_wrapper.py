@@ -194,6 +194,50 @@ class CalEvent:
         rrule = self.event.get('RRULE')
         return rrule.to_ical().decode('utf-8') if rrule else None
     
+    @property
+    def recurrence(self):
+        """
+        Parse RRULE and return as RecurrenceRule dataclass for GUI.
+        Returns None if no recurrence.
+        """
+        rrule = self.event.get('RRULE')
+        if rrule is None:
+            return None
+        
+        from dataclasses import dataclass
+        from typing import Optional as Opt, List
+        
+        @dataclass
+        class RecurrenceRule:
+            frequency: str
+            interval: int = 1
+            count: Opt[int] = None
+            until: Opt[datetime] = None
+            by_day: Opt[List[str]] = None
+        
+        # Parse RRULE components
+        freq = rrule.get('FREQ', [None])[0]
+        if freq is None:
+            return None
+        
+        interval = rrule.get('INTERVAL', [1])[0]
+        count = rrule.get('COUNT', [None])[0]
+        until = rrule.get('UNTIL', [None])[0]
+        byday = rrule.get('BYDAY', None)
+        
+        # Convert byday to list of strings
+        by_day_list = None
+        if byday:
+            by_day_list = [str(d) for d in byday] if isinstance(byday, list) else [str(byday)]
+        
+        return RecurrenceRule(
+            frequency=str(freq),
+            interval=int(interval) if interval else 1,
+            count=int(count) if count else None,
+            until=until,
+            by_day=by_day_list
+        )
+    
     # ==================== Source Properties ====================
     
     @property
@@ -218,8 +262,7 @@ class CalEvent:
             return "pending"
         return ""
     
-    # ==================== Backwards Compatibility ====================
-    # These will be removed once GUI uses EventInstance
+    # ==================== Aliases ====================
     
     @property
     def start(self) -> datetime:
@@ -236,10 +279,6 @@ class CalEvent:
     @end.setter
     def end(self, value: datetime):
         self.dtend = value
-    
-    @property
-    def recurrence(self):
-        return None
     
     @property
     def source_type(self) -> str:
@@ -319,8 +358,8 @@ class EventInstance:
     
     @property
     def recurrence(self):
-        """Backwards compatibility - returns None."""
-        return None
+        """Delegate to CalEvent's recurrence property."""
+        return self.event.recurrence
     
     def __hash__(self):
         return hash((self.event.uid, self.start))
