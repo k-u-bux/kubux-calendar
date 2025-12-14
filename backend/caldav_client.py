@@ -345,6 +345,7 @@ class CalDAVClient:
         try:
             caldav_event = calendar._caldav_calendar.event_by_uid(uid)
             if not caldav_event:
+                print(f"Error: event_by_uid returned None for UID {uid}")
                 return False
             
             # Build new VCALENDAR

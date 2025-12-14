@@ -481,7 +481,7 @@ class EventDialog(QWidget):
             cal_event.description = self._description_edit.toPlainText()
             cal_event.location = self._location_edit.text().strip()
             cal_event.all_day = self._all_day_check.isChecked()
-            # Note: recurrence update via repository would need special handling
+            cal_event.recurrence = recurrence  # Apply recurrence rule
             
             if self.event_store.update_event(cal_event):
                 self.event_saved.emit(self.event_data)

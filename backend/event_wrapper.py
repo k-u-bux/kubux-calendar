@@ -238,6 +238,40 @@ class CalEvent:
             by_day=by_day_list
         )
     
+    @recurrence.setter
+    def recurrence(self, rule):
+        """
+        Set recurrence from a RecurrenceRule dataclass or None.
+        Updates the RRULE on the underlying icalendar.Event.
+        """
+        # Remove existing RRULE if any
+        if 'RRULE' in self.event:
+            del self.event['RRULE']
+        
+        if rule is None:
+            # No recurrence - already removed
+            pass
+        else:
+            # Build RRULE dict
+            rrule_dict = {'freq': rule.frequency}
+            
+            if rule.interval and rule.interval > 1:
+                rrule_dict['interval'] = rule.interval
+            
+            if rule.count:
+                rrule_dict['count'] = rule.count
+            
+            if rule.until:
+                rrule_dict['until'] = rule.until
+            
+            if rule.by_day:
+                rrule_dict['byday'] = rule.by_day
+            
+            self.event.add('rrule', rrule_dict)
+        
+        if not self.source.read_only:
+            self.pending_operation = "update"
+    
     # ==================== Source Properties ====================
     
     @property
