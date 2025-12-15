@@ -10,7 +10,7 @@ from enum import Enum
 
 from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout,
-    QFrame, QSizePolicy
+    QFrame, QSizePolicy, QGraphicsOpacityEffect
 )
 from PySide6.QtCore import Qt, Signal, QSize, QPointF, QPoint
 from PySide6.QtGui import QColor, QPalette, QFont, QMouseEvent, QPainter, QPolygonF, QBrush, QPen, QFontMetrics
@@ -287,10 +287,13 @@ class EventWidget(QFrame):
         bg_color = self.event_data.calendar_color
         text_color = get_contrasting_text_color(bg_color)
         border_color = bg_color
-        
+
         # Lighten background slightly for better readability
         bg_lighter = lighten_color(bg_color, 0.4)
         
+        # Check if event is pending delete (moribund)
+        is_pending_delete = self.event_data.pending_operation == "delete"
+
         self.setStyleSheet(f"""
             EventWidget {{
                 background-color: {bg_lighter};
@@ -310,6 +313,14 @@ class EventWidget(QFrame):
                 margin: 0px;
             }}
         """)
+        
+        # Apply opacity effect for pending delete (moribund events)
+        if is_pending_delete:
+            opacity_effect = QGraphicsOpacityEffect(self)
+            opacity_effect.setOpacity(0.45)
+            self.setGraphicsEffect(opacity_effect)
+        else:
+            self.setGraphicsEffect(None)
     
     def mousePressEvent(self, mouse_event: QMouseEvent) -> None:
         """Handle mouse press event."""
