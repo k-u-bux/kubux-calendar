@@ -292,7 +292,11 @@ class EventWidget(QFrame):
         bg_lighter = lighten_color(bg_color, 0.4)
         
         # Check if event is pending delete (moribund)
-        is_pending_delete = self.event_data.pending_operation == "delete"
+        # For EventInstance, pending_operation is on the underlying event
+        pending_op = getattr(self.event_data, 'pending_operation', None)
+        if pending_op is None and hasattr(self.event_data, 'event'):
+            pending_op = getattr(self.event_data.event, 'pending_operation', None)
+        is_pending_delete = pending_op == "delete"
 
         self.setStyleSheet(f"""
             EventWidget {{
