@@ -446,13 +446,17 @@ class EventStore:
         if not new_event:
             return None
         
-        # Delete from old calendar
+        # Delete from old calendar (queues for background sync)
         if not self.delete_event(event):
             # Failed to delete from old - could result in duplicate
             # But we don't want to fail the move, just log it
             import sys
             print(f"Warning: Event moved but failed to delete from old calendar", file=sys.stderr)
         
+        # Remove old event from repository immediately (no "dying shadow")
+        # User sees calendar change as property change, not as delete+create
+        self._repository.remove_event(old_source.id, event.uid)
+
         return new_event
 
     def delete_event(self, event: CalEvent) -> bool:
