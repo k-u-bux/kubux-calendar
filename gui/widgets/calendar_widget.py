@@ -471,6 +471,7 @@ class DayColumnWidget(QWidget):
     def _create_event_widgets(self):
         """Create and position event widgets based on calculated layout."""
         for widget in self._event_widgets:
+            widget.hide()  # Hide immediately to prevent visual duplication
             widget.deleteLater()
         self._event_widgets.clear()
         self._widget_to_portion.clear()
@@ -720,6 +721,7 @@ class DayColumnWidget(QWidget):
     def clear_portions(self):
         """Clear all portions and widgets."""
         for widget in self._event_widgets:
+            widget.hide()  # Hide immediately to prevent visual duplication
             widget.deleteLater()
         self._event_widgets.clear()
         self._portions.clear()
@@ -1649,6 +1651,7 @@ class ListView(QWidget):
         """Rebuild the event list display."""
         # Clear existing widgets
         for widget in self._event_widgets:
+            widget.hide()  # Hide immediately to prevent visual duplication
             widget.deleteLater()
         self._event_widgets.clear()
         
