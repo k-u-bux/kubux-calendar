@@ -226,6 +226,7 @@ class AllDayEventCell(QWidget):
     
     def clear_events(self):
         for widget in self._event_widgets:
+            widget.hide()  # Hide immediately to prevent visual duplication
             widget.deleteLater()
         self._event_widgets.clear()
         self._events.clear()
@@ -1207,9 +1208,10 @@ class MonthDayCell(QFrame):
     
     def clear_events(self):
         for widget in self._event_widgets:
+            widget.hide()  # Hide immediately to prevent visual duplication
             widget.deleteLater()
         self._event_widgets.clear()
-    
+
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
             self.clicked.emit(self._date)
