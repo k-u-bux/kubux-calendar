@@ -370,13 +370,17 @@ class EventWidget(QFrame):
             return QSize(80, 2 * line_height + 8)
     
     def paintEvent(self, event) -> None:
-        """Override paintEvent to draw indicator triangles for recurring, read-only, and sync status."""
+        """Override paintEvent to draw indicator triangles/squares for recurring, read-only, sync status, and outdated."""
         super().paintEvent(event)
         
-        # Determine if we need to draw any triangles
+        # Determine if we need to draw any indicators
         # sync_status: "" = not tracked, "pending" = waiting for sync, "syncing" = in progress, "synced" = done, "failed" = error
         has_pending_sync = self.event_data.sync_status in ("pending", "syncing", "failed")
-        if not self.event_data.is_recurring and not self.event_data.read_only and not has_pending_sync:
+        
+        # Check if source is outdated (no successful sync within threshold)
+        is_outdated = getattr(self.event_data.source, 'is_outdated', False)
+        
+        if not self.event_data.is_recurring and not self.event_data.read_only and not has_pending_sync and not is_outdated:
             return
         
         painter = QPainter(self)
@@ -404,6 +408,13 @@ class EventWidget(QFrame):
                 QPointF(w, triangle_size)                   # Down along right edge
             ])
             painter.drawPolygon(sync_points)
+        elif is_outdated:
+            # Draw outdated indicator square in upper-right corner (black)
+            # Square indicates unconfirmed data (source hasn't synced within threshold)
+            painter.setBrush(QBrush(QColor("#000000")))
+            square_size = triangle_size * 0.7  # Slightly smaller than triangle
+            margin = 2
+            painter.drawRect(int(w - square_size - margin), margin, int(square_size), int(square_size))
         
         painter.setBrush(QBrush(QColor(triangle_color)))
         

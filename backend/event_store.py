@@ -68,8 +68,10 @@ class EventStore:
         self._sync_queue.set_on_change_callback(self._on_sync_queue_changed)
         
         self._last_sync_time: Optional[datetime] = None
-        self._source_last_sync: dict[str, datetime] = {}  # Per-source last sync times
+        self._source_last_attempt: dict[str, datetime] = {}  # Per-source last sync attempt times
+        self._source_last_success: dict[str, datetime] = {}  # Per-source last successful sync times
         self._source_refresh_intervals: dict[str, int] = {}  # Per-source refresh intervals
+        self._source_outdate_thresholds: dict[str, int] = {}  # Per-source outdate thresholds
         self._on_change_callback: Optional[Callable[[], None]] = None
         self._on_sync_status_callback: Optional[Callable[[int, Optional[datetime]], None]] = None
     
@@ -236,8 +238,9 @@ class EventStore:
                     self._repository.store_events(source_id, events)
                 # Only set initial sync time (if not already set)
                 # Per-source refreshes are handled by refresh()
-                if source_id not in self._source_last_sync:
-                    self._source_last_sync[source_id] = now
+                if source_id not in self._source_last_success:
+                    self._source_last_success[source_id] = now
+                    self._source_last_attempt[source_id] = now
                     source.last_sync_time = now
         
         # Fetch from ICS subscriptions as CalEvent objects
@@ -251,8 +254,9 @@ class EventStore:
                 self._repository.store_events(source_id, events)
             # Only set initial sync time (if not already set)
             # Per-source refreshes are handled by refresh()
-            if source_id not in self._source_last_sync:
-                self._source_last_sync[source_id] = now
+            if source_id not in self._source_last_success:
+                self._source_last_success[source_id] = now
+                self._source_last_attempt[source_id] = now
                 source.last_sync_time = now
         
         self._cache_start = start
@@ -300,11 +304,13 @@ class EventStore:
         # Get EventInstance objects from repository
         instances = self._repository.get_instances(start, end, source_ids)
         
-        # Apply color overrides to source
+        # Apply color overrides and update outdated status on sources
         for inst in instances:
             source_id = inst.source.id
             if source_id in self._colors:
                 inst.event.source.color = self._colors[source_id]
+            # Update is_outdated flag based on last successful sync
+            inst.event.source.is_outdated = self.is_source_outdated(source_id)
         
         return instances
     
@@ -392,7 +398,7 @@ class EventStore:
         
         if client.update_event(cal_info, event.uid, event.event):
             self._repository.clear_pending(event.uid)
-            self.invalidate_cache()
+            # No invalidate_cache() - event is already updated in place
             self._notify_change()
             return True
 
@@ -531,47 +537,91 @@ class EventStore:
         return [s for s in self._calendar_sources.values() if not s.read_only]
     
     def refresh(self, calendar_id: Optional[str] = None) -> None:
-        """Refresh data from sources."""
+        """Refresh data from sources.
+        
+        Tracks both attempt time (always) and success time (only on success).
+        Retry interval is based on attempt time, outdate threshold is based on success time.
+        
+        Events are ONLY replaced on successful sync. Failed syncs keep existing events
+        (they become "outdated" when threshold passes).
+        """
         now = datetime.now()
-        refreshed_sources = []
+        successfully_synced = []
         
         if calendar_id:
             source = self._calendar_sources.get(calendar_id)
-            if source and source.source_type == "ics":
-                sub = self._ics_subscriptions.get(calendar_id)
-                if sub:
-                    sub.fetch()
-                    refreshed_sources.append(calendar_id)
-            elif source and source.source_type == "caldav":
-                client = self._caldav_clients.get(source.account_name)
-                if client:
-                    client.reconnect()
-                    for cal in client.get_calendars():
-                        cid = f"caldav:{source.account_name}:{cal.id}"
-                        if cid == calendar_id:
-                            self._caldav_calendars[cid] = cal
-                            refreshed_sources.append(cid)
+            if source:
+                # Mark attempt time
+                self._source_last_attempt[calendar_id] = now
+                
+                if source.source_type == "ics":
+                    sub = self._ics_subscriptions.get(calendar_id)
+                    if sub:
+                        success = sub.fetch()  # Returns bool
+                        if success:
+                            # Fetch succeeded - replace events for this source
+                            events = sub.get_events(source, force_fetch=False)  # Already fetched
+                            if events is not None:
+                                self._repository.store_events(calendar_id, events)
+                            successfully_synced.append(calendar_id)
+                            
+                elif source.source_type == "caldav":
+                    client = self._caldav_clients.get(source.account_name)
+                    if client and client.reconnect():
+                        for cal in client.get_calendars():
+                            cid = f"caldav:{source.account_name}:{cal.id}"
+                            if cid == calendar_id:
+                                self._caldav_calendars[cid] = cal
+                                # Fetch events from cache window and replace
+                                if self._cache_start and self._cache_end:
+                                    events = client.get_events(cal, source, self._cache_start, self._cache_end)
+                                    if events is not None:
+                                        self._repository.store_events(cid, events)
+                                successfully_synced.append(cid)
         else:
+            # Refresh all sources
             for name, client in self._caldav_clients.items():
+                # Mark attempt for all caldav sources of this account
+                for cid in self._caldav_calendars:
+                    if cid.startswith(f"caldav:{name}:"):
+                        self._source_last_attempt[cid] = now
+                
                 if client.reconnect():
                     for cal in client.get_calendars():
                         cid = f"caldav:{name}:{cal.id}"
                         if cid in self._caldav_calendars:
                             self._caldav_calendars[cid] = cal
-                            refreshed_sources.append(cid)
-            self._ics_manager.fetch_all()
-            refreshed_sources.extend(self._ics_subscriptions.keys())
+                            # Fetch events from cache window and replace
+                            source = self._calendar_sources.get(cid)
+                            if source and self._cache_start and self._cache_end:
+                                events = client.get_events(cal, source, self._cache_start, self._cache_end)
+                                if events is not None:
+                                    self._repository.store_events(cid, events)
+                            successfully_synced.append(cid)
+            
+            # ICS subscriptions
+            for source_id, sub in self._ics_subscriptions.items():
+                self._source_last_attempt[source_id] = now
+                success = sub.fetch()  # Returns bool
+                if success:
+                    source = self._calendar_sources.get(source_id)
+                    if source:
+                        events = sub.get_events(source, force_fetch=False)  # Already fetched
+                        if events is not None:
+                            self._repository.store_events(source_id, events)
+                    successfully_synced.append(source_id)
         
-        # Update per-source last sync times
-        for source_id in refreshed_sources:
-            self._source_last_sync[source_id] = now
+        # Update last success time ONLY for successfully synced sources
+        for source_id in successfully_synced:
+            self._source_last_success[source_id] = now
             source = self._calendar_sources.get(source_id)
             if source:
                 source.last_sync_time = now
         
-        self.invalidate_cache()
+        # No invalidate_cache() - events persist, only replaced on success
         self._notify_change()
-        self._last_sync_time = now
+        if successfully_synced:
+            self._last_sync_time = now
     
     def refresh_due_sources(self) -> list[str]:
         """
@@ -632,15 +682,45 @@ class EventStore:
         return self._last_sync_time
     
     def get_source_last_sync(self, source_id: str) -> Optional[datetime]:
-        """Get last sync time for a specific source."""
-        return self._source_last_sync.get(source_id)
+        """Get last sync time for a specific source (alias for last_success)."""
+        return self._source_last_success.get(source_id)
     
     def get_source_refresh_interval(self, source_id: str) -> int:
         """Get effective refresh interval for a source (per-source or global default)."""
         return self._source_refresh_intervals.get(source_id, self.config.refresh_interval)
     
+    def get_source_outdate_threshold(self, source_id: str) -> int:
+        """Get effective outdate threshold for a source (per-source or global default)."""
+        return self._source_outdate_thresholds.get(source_id, self.config.outdate_threshold)
+    
+    def is_source_outdated(self, source_id: str) -> bool:
+        """Check if a source's data is outdated (no successful sync within threshold).
+        
+        Returns True if the source hasn't successfully synced within outdate_threshold seconds.
+        """
+        threshold = self.get_source_outdate_threshold(source_id)
+        last_success = self._source_last_success.get(source_id)
+        
+        if last_success is None:
+            return True  # Never synced = outdated
+        
+        now = datetime.now()
+        seconds_since_success = (now - last_success).total_seconds()
+        return seconds_since_success > threshold
+    
+    def get_source_last_success(self, source_id: str) -> Optional[datetime]:
+        """Get last successful sync time for a specific source."""
+        return self._source_last_success.get(source_id)
+    
+    def get_source_last_attempt(self, source_id: str) -> Optional[datetime]:
+        """Get last sync attempt time for a specific source."""
+        return self._source_last_attempt.get(source_id)
+    
     def get_sources_needing_refresh(self) -> list[str]:
-        """Get list of source IDs that need refresh based on their intervals."""
+        """Get list of source IDs that need refresh based on their intervals.
+        
+        Uses last_attempt time (not last_success) to avoid hammering failing sources.
+        """
         now = datetime.now()
         sources_needing_refresh = []
         
@@ -649,10 +729,11 @@ class EventStore:
             if interval <= 0:
                 continue  # Refresh disabled for this source
             
-            last_sync = self._source_last_sync.get(source_id)
-            if last_sync is None:
+            # Use last_attempt for retry timing (not last_success)
+            last_attempt = self._source_last_attempt.get(source_id)
+            if last_attempt is None:
                 sources_needing_refresh.append(source_id)
-            elif (now - last_sync).total_seconds() >= interval:
+            elif (now - last_attempt).total_seconds() >= interval:
                 sources_needing_refresh.append(source_id)
         
         return sources_needing_refresh
@@ -680,7 +761,10 @@ class EventStore:
                 
                 if result:
                     self._sync_queue.mark_synced(change.id)
-                    # Also clear from repository's pending tracker
+                    # For DELETE operations, remove the event from repository
+                    if change.operation == SyncOperation.DELETE:
+                        self._repository.remove_event(change.calendar_id, change.event_uid)
+                    # Clear from repository's pending tracker  
                     self._repository.clear_pending(change.event_uid)
                     success_count += 1
                 else:
@@ -692,7 +776,8 @@ class EventStore:
         
         if success_count > 0:
             self._last_sync_time = datetime.now()
-            self.invalidate_cache()
+            # No invalidate_cache() - events are updated individually
+            # Deleted events are removed from repository when sync succeeds (handled above)
             self._notify_change()
         
         self._notify_sync_status()

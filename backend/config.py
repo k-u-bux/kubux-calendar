@@ -22,6 +22,7 @@ class NextcloudAccount:
     password_key: str
     color: str = "#4285f4"  # Default Google Blue
     refresh_interval: Optional[int] = None  # Per-source override (None = use global)
+    outdate_threshold: Optional[int] = None  # Per-source override (None = use global)
     
     _password: Optional[str] = field(default=None, repr=False)
     
@@ -55,6 +56,7 @@ class ICSSubscription:
     url: str
     color: str = "#34a853"  # Default Google Green
     refresh_interval: Optional[int] = None  # Per-source override (None = use global)
+    outdate_threshold: Optional[int] = None  # Per-source override (None = use global)
 
 
 @dataclass
@@ -215,6 +217,7 @@ class Config:
     password_program: str
     state_file: Path
     refresh_interval: int = 300  # Auto-refresh interval in seconds (0 to disable)
+    outdate_threshold: int = 7200  # Seconds since last successful sync before marking events as unconfirmed (default 2 hours)
     layout: LayoutConfig = field(default_factory=LayoutConfig)
     bindings: BindingsConfig = field(default_factory=BindingsConfig)
     localization: LocalizationConfig = field(default_factory=LocalizationConfig)
@@ -252,6 +255,7 @@ class Config:
         general = data.get('General', {})
         password_program = general.get('password_program', '/usr/bin/pass')
         refresh_interval = general.get('refresh_interval', 300)  # Default 5 minutes
+        outdate_threshold = general.get('outdate_threshold', 7200)  # Default 2 hours
         
         state_file_str = general.get('state_file', str(cls.get_default_state_path()))
         state_file = Path(os.path.expanduser(state_file_str))
@@ -462,6 +466,7 @@ class Config:
             password_program=password_program,
             state_file=state_file,
             refresh_interval=refresh_interval,
+            outdate_threshold=outdate_threshold,
             layout=layout,
             bindings=bindings,
             localization=localization,
