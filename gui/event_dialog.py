@@ -310,18 +310,31 @@ class EventDialog(QWidget):
         for cal in self._calendars:
             self._calendar_combo.addItem(f"{cal.name} ({cal.account_name})", cal.id)
         
-        if self.is_new:
-            form.addRow(self.event_store.config.labels.field_calendar, self._calendar_combo)
-            # Set last used calendar as default
-            last_calendar_id = self._dialog_state.get("last_calendar_id")
-            if last_calendar_id:
-                for i in range(self._calendar_combo.count()):
-                    if self._calendar_combo.itemData(i) == last_calendar_id:
-                        self._calendar_combo.setCurrentIndex(i)
-                        break
-        else:
+        # Show calendar dropdown for new events and editable existing events
+        # Read-only events show a static label
+        if self.event_data and self.event_data.read_only:
+            # Read-only: show label
             cal_label = QLabel(f"{self.event_data.calendar_name}")
             form.addRow(self.event_store.config.labels.field_calendar, cal_label)
+        else:
+            # Editable: show dropdown
+            form.addRow(self.event_store.config.labels.field_calendar, self._calendar_combo)
+            
+            if self.is_new:
+                # Set last used calendar as default
+                last_calendar_id = self._dialog_state.get("last_calendar_id")
+                if last_calendar_id:
+                    for i in range(self._calendar_combo.count()):
+                        if self._calendar_combo.itemData(i) == last_calendar_id:
+                            self._calendar_combo.setCurrentIndex(i)
+                            break
+            else:
+                # Pre-select the event's current calendar
+                current_cal_id = self.event_data.source.id
+                for i in range(self._calendar_combo.count()):
+                    if self._calendar_combo.itemData(i) == current_cal_id:
+                        self._calendar_combo.setCurrentIndex(i)
+                        break
         
         self._all_day_check = QCheckBox(self.event_store.config.labels.checkbox_allday)
         self._all_day_check.stateChanged.connect(self._on_all_day_changed)
@@ -475,19 +488,45 @@ class EventDialog(QWidget):
             # (EventInstance.event is the CalEvent)
             cal_event = self.event_data.event if hasattr(self.event_data, 'event') else self.event_data
             
-            cal_event.summary = title
-            cal_event.start = start_dt
-            cal_event.end = end_dt
-            cal_event.description = self._description_edit.toPlainText()
-            cal_event.location = self._location_edit.text().strip()
-            cal_event.all_day = self._all_day_check.isChecked()
-            cal_event.recurrence = recurrence  # Apply recurrence rule
+            # Check if calendar changed
+            selected_calendar_id = self._calendar_combo.currentData()
+            current_calendar_id = self.event_data.source.id
+            calendar_changed = selected_calendar_id != current_calendar_id
             
-            if self.event_store.update_event(cal_event):
-                self.event_saved.emit(self.event_data)
-                self.close()
+            if calendar_changed:
+                # Move event to new calendar (creates in new, deletes from old)
+                # First update the event data
+                cal_event.summary = title
+                cal_event.start = start_dt
+                cal_event.end = end_dt
+                cal_event.description = self._description_edit.toPlainText()
+                cal_event.location = self._location_edit.text().strip()
+                cal_event.all_day = self._all_day_check.isChecked()
+                cal_event.recurrence = recurrence
+                
+                moved_event = self.event_store.move_event(cal_event, selected_calendar_id)
+                if moved_event:
+                    # Save last used calendar for new events
+                    self._dialog_state["last_calendar_id"] = selected_calendar_id
+                    self.event_saved.emit(self.event_data)
+                    self.close()
+                else:
+                    QMessageBox.critical(self, "Error", "Failed to move event to new calendar.")
             else:
-                QMessageBox.critical(self, "Error", "Failed to update event.")
+                # Same calendar - just update
+                cal_event.summary = title
+                cal_event.start = start_dt
+                cal_event.end = end_dt
+                cal_event.description = self._description_edit.toPlainText()
+                cal_event.location = self._location_edit.text().strip()
+                cal_event.all_day = self._all_day_check.isChecked()
+                cal_event.recurrence = recurrence  # Apply recurrence rule
+                
+                if self.event_store.update_event(cal_event):
+                    self.event_saved.emit(self.event_data)
+                    self.close()
+                else:
+                    QMessageBox.critical(self, "Error", "Failed to update event.")
     
     def _on_delete(self):
         if self.event_data is None:

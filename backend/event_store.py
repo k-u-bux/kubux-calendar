@@ -395,10 +395,66 @@ class EventStore:
             self.invalidate_cache()
             self._notify_change()
             return True
-        
+
         self._notify_change()
         return False
-    
+
+    def move_event(self, event: CalEvent, new_calendar_id: str) -> Optional[CalEvent]:
+        """
+        Move an event to a different calendar.
+        
+        This creates the event in the new calendar and deletes it from the old one.
+        Returns the new CalEvent if successful, None otherwise.
+        """
+        if event.read_only:
+            return None
+        
+        # Get source info
+        old_source = event.source
+        new_source = self._calendar_sources.get(new_calendar_id)
+        
+        if not new_source or new_source.read_only or new_source.source_type != "caldav":
+            return None
+        
+        # Same calendar - no move needed
+        if old_source.id == new_calendar_id:
+            return event
+        
+        # Get calendar info and clients
+        old_cal_info = self._caldav_calendars.get(old_source.id)
+        new_cal_info = self._caldav_calendars.get(new_calendar_id)
+        if not old_cal_info or not new_cal_info:
+            return None
+        
+        old_client = self._caldav_clients.get(old_source.account_name)
+        new_client = self._caldav_clients.get(new_source.account_name)
+        if not old_client or not new_client:
+            return None
+        
+        # Create event in new calendar first
+        new_event = self.create_event(
+            calendar_id=new_calendar_id,
+            summary=event.summary,
+            start=event.start,
+            end=event.end,
+            description=event.description,
+            location=event.location,
+            all_day=event.all_day,
+            recurrence=event.recurrence
+        )
+        
+        if not new_event:
+            return None
+        
+        # Delete from old calendar
+        if not self.delete_event(event):
+            # Failed to delete from old - could result in duplicate
+            # But we don't want to fail the move, just log it
+            import sys
+            print(f"Warning: Event moved but failed to delete from old calendar", file=sys.stderr)
+        
+        return new_event
+
     def delete_event(self, event: CalEvent) -> bool:
         """
         Delete an event (transparent sync).
