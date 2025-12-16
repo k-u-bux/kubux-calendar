@@ -81,17 +81,29 @@ class StoredEvent:
 
 class SourceMetadata:
     """
-    Metadata about a calendar source for sync tracking.
+    Metadata about a calendar source for sync tracking AND source properties.
+    
+    Persisted separately from events. Events reference source by source_id.
     """
     def __init__(
         self,
         source_id: str,
+        name: str = "",
+        color: str = "#4285f4",
+        read_only: bool = False,
+        source_type: str = "caldav",
+        account_name: str = "",
         last_attempt: Optional[datetime] = None,
         last_success: Optional[datetime] = None,
         ctag: Optional[str] = None,
         sync_token: Optional[str] = None,
     ):
         self.source_id = source_id
+        self.name = name
+        self.color = color
+        self.read_only = read_only
+        self.source_type = source_type  # "caldav" or "ics"
+        self.account_name = account_name
         self.last_attempt = last_attempt
         self.last_success = last_success
         self.ctag = ctag  # CalDAV collection ctag
@@ -100,6 +112,11 @@ class SourceMetadata:
     def to_dict(self) -> dict:
         return {
             "source_id": self.source_id,
+            "name": self.name,
+            "color": self.color,
+            "read_only": self.read_only,
+            "source_type": self.source_type,
+            "account_name": self.account_name,
             "last_attempt": self.last_attempt.isoformat() if self.last_attempt else None,
             "last_success": self.last_success.isoformat() if self.last_success else None,
             "ctag": self.ctag,
@@ -118,6 +135,11 @@ class SourceMetadata:
         
         return cls(
             source_id=data["source_id"],
+            name=data.get("name", ""),
+            color=data.get("color", "#4285f4"),
+            read_only=data.get("read_only", False),
+            source_type=data.get("source_type", "caldav"),
+            account_name=data.get("account_name", ""),
             last_attempt=last_attempt,
             last_success=last_success,
             ctag=data.get("ctag"),
