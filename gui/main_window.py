@@ -229,7 +229,8 @@ class MainWindow(QMainWindow):
         # Initialize event store
         self.event_store = EventStore(config)
         self.event_store.set_on_change_callback(self._on_data_changed)
-        
+        self.event_store.set_on_sync_status_callback(self._on_sync_status_changed)
+
         # Track open event dialogs
         self._event_dialogs: list[EventDialog] = []
         
@@ -674,6 +675,10 @@ class MainWindow(QMainWindow):
     def _on_data_changed(self):
         """Handle data change from event store."""
         self._refresh_events()
+    
+    def _on_sync_status_changed(self, pending_count: int, last_sync_time):
+        """Handle sync status change from event store (sync queue callback)."""
+        self._update_sync_status()
     
     def _on_auto_refresh(self):
         """Handle auto-refresh timer tick - refresh sources that are due."""

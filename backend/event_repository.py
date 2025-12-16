@@ -381,10 +381,13 @@ class EventRepository:
             source_instances = self._expand_source(source_id, start, end)
             instances.extend(source_instances)
         
-        # Apply pending operations
+        # Apply or clear pending operations
         for inst in instances:
             if inst.event.uid in self._pending_operations:
                 inst.event.pending_operation = self._pending_operations[inst.event.uid]
+            else:
+                # Clear pending_operation if no longer in pending dict
+                inst.event.pending_operation = None
         
         # Sort by start time
         instances.sort(key=lambda i: i.start.replace(tzinfo=None) if i.start.tzinfo else i.start)
