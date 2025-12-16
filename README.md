@@ -12,6 +12,8 @@ A simple desktop calendar application for Nextcloud (CalDAV) and ICS subscriptio
   - Never wonder if your changes have been saved to the server
   - Unlike many calendar apps that hide sync state, this app is completely transparent
 - **Offline-First**: Work instantly, sync in background
+  - **Persistent storage**: Events survive app restarts - no need to re-fetch from server
+  - **Works offline**: When server is unavailable, cached events are displayed (with outdated indicator)
   - Create, edit, and delete events immediately (no waiting for server)
   - Changes are queued and synced automatically with exponential backoff
   - Pending changes persist across app restarts
@@ -139,6 +141,7 @@ color = "#ff6b6b"
 |--------|---------|-------------|
 | `password_program` | `/usr/bin/pass` | Path to password manager |
 | `refresh_interval` | 300 | Auto-refresh from server (seconds, 0 to disable) |
+| `outdate_threshold` | 7200 | Seconds since last successful sync before marking events as "unconfirmed" (default 2 hours) |
 | `state_file` | `~/.local/state/kubux-calendar/state.json` | Path to state file |
 
 #### Layout Section
@@ -229,16 +232,20 @@ The List view displays all events in a chronological scrollable list (±3 months
 
 ### Visual Indicators
 
-**Transparency at a glance:** Events display small triangle indicators in the corners to show their status:
+**Transparency at a glance:** Events display small indicators to show their status:
 
 - **Top-right triangle (black)**: **Pending sync** - This event has changes queued but not yet confirmed on the server
   - Create/edit/delete operations show this indicator immediately
   - Disappears once the server confirms the change
   - **This is your guarantee**: If you see this triangle, the change is queued and will sync
+- **Top-left square (black)**: **Unconfirmed/Outdated** - This event hasn't been verified with the server recently
+  - Appears when the source hasn't successfully synced within `outdate_threshold` seconds
+  - Common when server is unavailable or you're working offline
+  - Events still display from persistent cache, but their server state is unverified
 - **Bottom-left triangle**: **Recurring event** - Part of a repeating series
 - **Bottom-right triangle**: **Read-only** - Event from ICS subscription (cannot be edited)
 
-**No indicator = Fully synced.** If an event has no top-right triangle, you can be certain it accurately reflects the server state.
+**No indicator = Fully synced.** If an event has no top-left square or top-right triangle, you can be certain it accurately reflects the server state.
 
 ### Sidebar
 
@@ -254,11 +261,14 @@ The application follows a modular architecture:
 kubux-calendar/
 ├── kubux_calendar.py    # Main entry point
 ├── backend/
-│   ├── caldav_client.py # CalDAV/Nextcloud communication
+│   ├── caldav_client.py   # CalDAV/Nextcloud communication
 │   ├── ics_subscription.py # ICS feed handling
-│   ├── event_store.py   # Unified event cache & storage
-│   ├── sync_queue.py    # Offline sync queue with persistence
-│   └── config.py        # Configuration management
+│   ├── event_store.py     # Unified event cache orchestration
+│   ├── event_repository.py # In-memory event storage with persistence
+│   ├── event_storage.py   # Persistent storage backends (JSON)
+│   ├── event_wrapper.py   # Event and source data models
+│   ├── sync_queue.py      # Offline sync queue with persistence
+│   └── config.py          # Configuration management
 └── gui/
     ├── main_window.py   # Main application window
     ├── event_dialog.py  # Event create/edit dialog
@@ -267,8 +277,9 @@ kubux-calendar/
         └── event_widget.py    # Event display widget
 ```
 
-## State Storage
+## Data Storage
 
+### UI State
 Application state is stored in `~/.local/state/kubux-calendar/state.json`:
 - Window geometry and position
 - Sidebar width (splitter position)
@@ -276,6 +287,19 @@ Application state is stored in `~/.local/state/kubux-calendar/state.json`:
 - Scroll position
 - Calendar visibility and colors
 - Last used calendar for new events
+
+### Event Cache (Offline-First)
+Events are persisted to `~/.local/share/kubux-calendar/storage/`:
+- `events/{source_id}.json` - Cached events per calendar (survive app restarts)
+- `sources/{source_id}.json` - Per-source sync metadata
+
+This enables offline operation - when the server is unavailable, events are loaded from the local cache and displayed with an "unconfirmed" indicator.
+
+### Sync Queue
+Pending changes are stored in `~/.local/state/kubux-calendar/sync_queue.json`:
+- Create/update/delete operations queued for server
+- Persists across app restarts
+- Syncs automatically when server becomes available
 
 ## License
 
