@@ -53,11 +53,17 @@ Most calendar apps hide their sync state, leaving you to guess:
 Kubux Calendar eliminates this uncertainty. The application is designed on the principle that **you should never have to wonder** if your local view matches reality.
 
 ### How It Works:
-1. **Immediate feedback**: Create/edit/delete operations complete instantly (offline-first)
+1. **Immediate feedback**: Create/delete operations complete instantly (offline-first)
 2. **Visual queuing**: Pending changes are marked with a black triangle indicator
-3. **Background sync**: Changes sync to server automatically with exponential backoff
-4. **Status reporting**: Status bar always shows sync state and time
+3. **Background sync**: Queued changes sync to server automatically with exponential backoff
+4. **Status reporting**: Status bar shows pending count ("N changes pending synchronization") and last sync time
 5. **Persistent queue**: Pending changes survive app restarts
+
+**Operation types:**
+- **Create**: Queued for background sync, shows in status bar
+- **Edit (full dialog)**: Update is sent immediately to server
+- **Edit (drag-drop)**: Update is sent immediately to server
+- **Delete**: Queued for background sync, shows in status bar
 
 ## Screenshot
 
