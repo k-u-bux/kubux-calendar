@@ -98,7 +98,8 @@ class EventStore:
                     account_name=account.name
                 )
                 
-                if client.connect():
+                connected = client.connect()
+                if connected:
                     self._caldav_clients[account.name] = client
                     
                     for cal in client.get_calendars():
@@ -126,6 +127,32 @@ class EventStore:
                             self._source_refresh_intervals[source_id] = account.refresh_interval
                     
                     success = True
+                else:
+                    # Server unavailable - try to load known sources from storage
+                    _debug_print(f"CalDAV {account.name}: connection failed, loading from storage")
+                    stored_sources = self._repository._storage.list_sources()
+                    for source_id in stored_sources:
+                        if source_id.startswith(f"caldav:{account.name}:"):
+                            # Extract calendar name from source_id or use generic name
+                            cal_name = source_id.split(":")[-1]
+                            source = CalendarSource(
+                                id=source_id,
+                                name=cal_name,
+                                color=self._colors.get(source_id, account.color),
+                                account_name=account.name,
+                                read_only=True,  # Read-only when offline
+                                source_type="caldav"
+                            )
+                            source.is_outdated = True  # Mark as outdated immediately
+                            
+                            self._calendar_sources[source_id] = source
+                            self._repository.add_source(source)
+                            
+                            if source_id in self._visibility:
+                                source.visible = self._visibility[source_id]
+                            
+                            _debug_print(f"Loaded offline source: {source_id}")
+                    success = True  # Partial success with offline data
             except Exception as e:
                 print(f"Error initializing CalDAV account {account.name}: {e}")
         
@@ -165,7 +192,8 @@ class EventStore:
         if success:
             self._last_sync_time = datetime.now()
         
-        self.invalidate_cache()
+        # Don't invalidate_cache() - events are loaded from persistent storage
+        # and will be populated on first get_events() call
         return success
     
     def get_calendars(self, visible_only: bool = False) -> list[CalendarSource]:
@@ -234,6 +262,7 @@ class EventStore:
             client = self._caldav_clients.get(source.account_name)
             if client:
                 events = client.get_events(cal_info, source, start, end)
+                _debug_print(f"CalDAV {source_id}: got {len(events) if events else 0} events")
                 if events:
                     self._repository.store_events(source_id, events)
                 # Only set initial sync time (if not already set)
@@ -259,8 +288,14 @@ class EventStore:
                 self._source_last_attempt[source_id] = now
                 source.last_sync_time = now
         
-        self._cache_start = start
-        self._cache_end = end
+        # Only mark cache as valid if we actually have sources to fetch from
+        # (prevents marking valid before initialize() completes)
+        if self._caldav_calendars or self._ics_subscriptions:
+            self._cache_start = start
+            self._cache_end = end
+            _debug_print(f"Cache window set: {start.date()} to {end.date()}")
+        else:
+            _debug_print(f"No sources configured yet, cache NOT set")
     
     def invalidate_cache(self) -> None:
         self._cache_start = None
@@ -279,6 +314,9 @@ class EventStore:
         
         Returns EventInstance (not CalEvent) - use instance.event for the CalEvent.
         """
+        import traceback
+        _debug_print(f"get_events() called, caldav_calendars={len(self._caldav_calendars)}")
+        
         # Expand cache window if needed (asymmetric: -4 months to +8 months)
         if not self._is_cache_valid(start, end):
             # Center on the START of the requested range (the viewing date)
