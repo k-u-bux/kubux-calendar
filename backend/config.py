@@ -280,7 +280,8 @@ class Config:
                     username=value.get('username', ''),
                     password_key=value.get('password_key', ''),
                     color=value.get('color', '#4285f4'),
-                    refresh_interval=value.get('refresh_interval')
+                    refresh_interval=value.get('refresh_interval'),
+                    outdate_threshold=value.get('outdate_threshold')
                 )
                 nextcloud_accounts.append(account)
             
@@ -302,7 +303,8 @@ class Config:
                             username=sub_value.get('username', ''),
                             password_key=sub_value.get('password_key', ''),
                             color=sub_value.get('color', '#4285f4'),
-                            refresh_interval=sub_value.get('refresh_interval')
+                            refresh_interval=sub_value.get('refresh_interval'),
+                            outdate_threshold=sub_value.get('outdate_threshold')
                         )
                         nextcloud_accounts.append(account)
         
@@ -320,7 +322,8 @@ class Config:
                     name=value.get('name', sub_id),
                     url=value.get('url', ''),
                     color=value.get('color', '#34a853'),
-                    refresh_interval=value.get('refresh_interval')
+                    refresh_interval=value.get('refresh_interval'),
+                    outdate_threshold=value.get('outdate_threshold')
                 )
                 ics_subscriptions.append(subscription)
             
@@ -338,7 +341,8 @@ class Config:
                             name=sub_value.get('name', sub_id),
                             url=sub_value.get('url', ''),
                             color=sub_value.get('color', '#34a853'),
-                            refresh_interval=sub_value.get('refresh_interval')
+                            refresh_interval=sub_value.get('refresh_interval'),
+                            outdate_threshold=sub_value.get('outdate_threshold')
                         )
                         ics_subscriptions.append(subscription)
         

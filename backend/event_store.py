@@ -126,6 +126,10 @@ class EventStore:
                         if account.refresh_interval is not None:
                             self._source_refresh_intervals[source_id] = account.refresh_interval
                         
+                        # Store per-source outdate threshold (if configured)
+                        if account.outdate_threshold is not None:
+                            self._source_outdate_thresholds[source_id] = account.outdate_threshold
+                        
                         # Persist source metadata for offline use
                         from .event_storage import SourceMetadata
                         metadata = SourceMetadata(
@@ -208,6 +212,10 @@ class EventStore:
                 # Store per-source refresh interval (if configured)
                 if sub_config.refresh_interval is not None:
                     self._source_refresh_intervals[source_id] = sub_config.refresh_interval
+                
+                # Store per-source outdate threshold (if configured)
+                if sub_config.outdate_threshold is not None:
+                    self._source_outdate_thresholds[source_id] = sub_config.outdate_threshold
                 
                 success = True
             except Exception as e:
