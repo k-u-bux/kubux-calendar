@@ -467,16 +467,35 @@ class EventRepository:
     # ==================== Pending Operations ====================
     
     def mark_pending(self, uid: str, operation: str):
-        """Mark an event as having a pending operation."""
+        """Mark an event as having a pending operation (persists immediately)."""
         self._pending_operations[uid] = operation
+        
+        # Also update the CalEvent and persist to storage
+        event = self._find_event_by_uid(uid)
+        if event:
+            event.pending_operation = operation
+            self.save_event_to_storage(event)
     
     def clear_pending(self, uid: str):
-        """Clear pending status after successful sync."""
+        """Clear pending status after successful sync (persists immediately)."""
         self._pending_operations.pop(uid, None)
+        
+        # Also update the CalEvent and persist to storage
+        event = self._find_event_by_uid(uid)
+        if event:
+            event.pending_operation = None
+            self.save_event_to_storage(event)
     
     def has_pending(self, uid: str) -> bool:
         """Check if an event has a pending operation."""
         return uid in self._pending_operations
+    
+    def _find_event_by_uid(self, uid: str) -> Optional[CalEvent]:
+        """Find an event by UID across all sources."""
+        for source_events in self._events.values():
+            if uid in source_events:
+                return source_events[uid]
+        return None
     
     # ==================== CRUD Operations ====================
     
