@@ -549,8 +549,8 @@ class MainWindow(QMainWindow):
         self._save_ui_state()
     
     def _initialize_data(self):
-        """Initialize calendar data."""
-        self._statusbar.showMessage("Connecting to calendar servers...")
+        """Initialize calendar data from storage (instant), then schedule network sync."""
+        self._statusbar.showMessage("Loading from cache...")
         QApplication.processEvents()
         
         if self.event_store.initialize():
@@ -560,19 +560,36 @@ class MainWindow(QMainWindow):
             # Update sidebar tooltips with initial sync times
             self._sidebar.update_tooltips()
             
-            # Show sync status in status bar (replaces "Connected" message)
+            # Show sync status in status bar
             self._update_sync_status()
             
-            # Restore scroll position after data is loaded (unless caller handles it)
-            if not getattr(self, '_skip_auto_scroll_restore', False):
-                QTimer.singleShot(300, self._restore_scroll_position)
+            # Schedule network sync AFTER UI is rendered (non-blocking)
+            # Scroll position will be restored AFTER network refresh completes
+            QTimer.singleShot(100, self._do_async_network_refresh)
         else:
-            self._statusbar.showMessage("Failed to connect to some calendars")
-            QMessageBox.warning(
-                self,
-                "Connection Warning",
-                "Could not connect to all calendar sources. Some calendars may be unavailable."
-            )
+            self._statusbar.showMessage("No cached data - syncing from servers...")
+            # No cached data - still schedule network sync
+            QTimer.singleShot(100, self._do_async_network_refresh)
+    
+    def _do_async_network_refresh(self):
+        """Perform network refresh after UI is shown."""
+        import sys
+        print("DEBUG: Starting async network refresh", file=sys.stderr)
+        self._statusbar.showMessage("Syncing from servers...")
+        QApplication.processEvents()
+        
+        self.event_store.refresh_all_async()
+        
+        self._sidebar.refresh()
+        self._refresh_events()
+        self._sidebar.update_tooltips()
+        self._update_sync_status()
+        
+        # Restore PERSISTED scroll position after refresh completes
+        if not getattr(self, '_skip_auto_scroll_restore', False):
+            QTimer.singleShot(50, self._restore_scroll_position)
+        
+        print("DEBUG: Async network refresh complete", file=sys.stderr)
     
     def _restore_scroll_position(self):
         """Restore scroll position after data load (deferred from _load_state)."""

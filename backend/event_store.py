@@ -83,95 +83,39 @@ class EventStore:
             self._on_change_callback()
     
     def initialize(self) -> bool:
-        """Initialize all calendar sources from configuration."""
+        """Initialize from storage first (instant), no network blocking.
+        
+        This method:
+        1. Loads sources from persisted metadata
+        2. Loads events from persisted storage
+        3. Loads last_success times for outdated indicator
+        
+        Call refresh() or refresh_all_async() after UI renders to sync from network.
+        """
         success = False
         self._load_state()
         
-        # Initialize CalDAV clients
+        from .event_storage import SourceMetadata
+        
+        # Phase 1: Load CalDAV sources from storage (no network)
         for account in self.config.nextcloud_accounts:
             try:
-                password = account.get_password(self.config.password_program)
-                client = CalDAVClient(
-                    url=account.url,
-                    username=account.username,
-                    password=password,
-                    account_name=account.name
-                )
-                
-                connected = client.connect()
-                if connected:
-                    self._caldav_clients[account.name] = client
-                    
-                    for cal in client.get_calendars():
-                        source_id = f"caldav:{account.name}:{cal.id}"
-                        default_color = cal.color if cal.color != "#4285f4" else account.color
-                        
-                        source = CalendarSource(
-                            id=source_id,
-                            name=cal.name,
-                            color=self._colors.get(source_id, default_color),
-                            account_name=account.name,
-                            read_only=not cal.writable,
-                            source_type="caldav"
-                        )
-                        
-                        self._calendar_sources[source_id] = source
-                        self._caldav_calendars[source_id] = cal
-                        self._repository.add_source(source)
-                        
-                        if source_id in self._visibility:
-                            source.visible = self._visibility[source_id]
-                        
-                        # Store per-source refresh interval (if configured)
-                        if account.refresh_interval is not None:
-                            self._source_refresh_intervals[source_id] = account.refresh_interval
-                        
-                        # Store per-source outdate threshold (if configured)
-                        if account.outdate_threshold is not None:
-                            self._source_outdate_thresholds[source_id] = account.outdate_threshold
-                        
-                        # Persist source metadata for offline use
-                        from .event_storage import SourceMetadata
-                        metadata = SourceMetadata(
-                            source_id=source_id,
-                            name=cal.name,
-                            color=default_color,
-                            read_only=not cal.writable,
-                            source_type="caldav",
-                            account_name=account.name,
-                        )
-                        self._repository.save_source_metadata(metadata)
-                    
-                    success = True
-                else:
-                    # Server unavailable - load sources from persisted metadata
-                    _debug_print(f"CalDAV {account.name}: connection failed, loading from storage")
-                    stored_sources = self._repository._storage.list_sources()
-                    for source_id in stored_sources:
-                        if source_id.startswith(f"caldav:{account.name}:"):
-                            # Load persisted source metadata
-                            metadata = self._repository.load_source_metadata(source_id)
-                            if metadata:
-                                source = CalendarSource(
-                                    id=source_id,
-                                    name=metadata.name,
-                                    color=self._colors.get(source_id, metadata.color),
-                                    account_name=metadata.account_name,
-                                    read_only=metadata.read_only,  # Use persisted value
-                                    source_type=metadata.source_type,
-                                )
-                            else:
-                                # Fallback if no metadata persisted
-                                cal_name = source_id.split(":")[-1]
-                                source = CalendarSource(
-                                    id=source_id,
-                                    name=cal_name,
-                                    color=self._colors.get(source_id, account.color),
-                                    account_name=account.name,
-                                    read_only=False,  # Assume writable if unknown
-                                    source_type="caldav",
-                                )
-                            source.is_outdated = True  # Mark as outdated immediately
+                stored_sources = self._repository._storage.list_sources()
+                for source_id in stored_sources:
+                    if source_id.startswith(f"caldav:{account.name}:"):
+                        metadata = self._repository.load_source_metadata(source_id)
+                        if metadata:
+                            source = CalendarSource(
+                                id=source_id,
+                                name=metadata.name,
+                                color=self._colors.get(source_id, metadata.color),
+                                account_name=metadata.account_name,
+                                read_only=metadata.read_only,
+                                source_type=metadata.source_type,
+                            )
+                            # Restore last_success for outdated indicator
+                            if metadata.last_success:
+                                self._source_last_success[source_id] = metadata.last_success
                             
                             self._calendar_sources[source_id] = source
                             self._repository.add_source(source)
@@ -179,12 +123,18 @@ class EventStore:
                             if source_id in self._visibility:
                                 source.visible = self._visibility[source_id]
                             
-                            _debug_print(f"Loaded offline source: {source_id} (read_only={source.read_only})")
-                    success = True  # Partial success with offline data
+                            # Store per-source intervals from config
+                            if account.refresh_interval is not None:
+                                self._source_refresh_intervals[source_id] = account.refresh_interval
+                            if account.outdate_threshold is not None:
+                                self._source_outdate_thresholds[source_id] = account.outdate_threshold
+                            
+                            _debug_print(f"Loaded from storage: {source_id}")
+                            success = True
             except Exception as e:
-                print(f"Error initializing CalDAV account {account.name}: {e}")
+                print(f"Error loading CalDAV account {account.name} from storage: {e}")
         
-        # Initialize ICS subscriptions
+        # Phase 2: Load ICS sources from storage (no network)
         for sub_config in self.config.ics_subscriptions:
             try:
                 sub = self._ics_manager.add_subscription(
@@ -194,6 +144,12 @@ class EventStore:
                 )
                 
                 source_id = f"ics:{sub.id}"
+                
+                # Check if we have persisted metadata
+                metadata = self._repository.load_source_metadata(source_id)
+                if metadata and metadata.last_success:
+                    self._source_last_success[source_id] = metadata.last_success
+                
                 source = CalendarSource(
                     id=source_id,
                     name=sub.name,
@@ -209,24 +165,121 @@ class EventStore:
                 if source_id in self._visibility:
                     source.visible = self._visibility[source_id]
                 
-                # Store per-source refresh interval (if configured)
                 if sub_config.refresh_interval is not None:
                     self._source_refresh_intervals[source_id] = sub_config.refresh_interval
-                
-                # Store per-source outdate threshold (if configured)
                 if sub_config.outdate_threshold is not None:
                     self._source_outdate_thresholds[source_id] = sub_config.outdate_threshold
                 
+                _debug_print(f"Loaded ICS source: {source_id}")
                 success = True
             except Exception as e:
                 print(f"Error initializing ICS subscription {sub_config.name}: {e}")
         
-        if success:
-            self._last_sync_time = datetime.now()
-        
-        # Don't invalidate_cache() - events are loaded from persistent storage
-        # and will be populated on first get_events() call
         return success
+    
+    def refresh_all_async(self) -> None:
+        """
+        Connect to all servers and refresh data.
+        
+        This is the network-heavy operation - call after UI renders.
+        Connects CalDAV clients, fetches calendars, and syncs events.
+        """
+        from .event_storage import SourceMetadata
+        now = datetime.now()
+        
+        # Connect CalDAV clients
+        for account in self.config.nextcloud_accounts:
+            try:
+                password = account.get_password(self.config.password_program)
+                client = CalDAVClient(
+                    url=account.url,
+                    username=account.username,
+                    password=password,
+                    account_name=account.name
+                )
+                
+                if client.connect():
+                    _debug_print(f"CalDAV {account.name}: connected")
+                    self._caldav_clients[account.name] = client
+                    
+                    for cal in client.get_calendars():
+                        source_id = f"caldav:{account.name}:{cal.id}"
+                        default_color = cal.color if cal.color != "#4285f4" else account.color
+                        
+                        # Update or create source
+                        if source_id not in self._calendar_sources:
+                            source = CalendarSource(
+                                id=source_id,
+                                name=cal.name,
+                                color=self._colors.get(source_id, default_color),
+                                account_name=account.name,
+                                read_only=not cal.writable,
+                                source_type="caldav"
+                            )
+                            self._calendar_sources[source_id] = source
+                            self._repository.add_source(source)
+                            
+                            if source_id in self._visibility:
+                                source.visible = self._visibility[source_id]
+                            if account.refresh_interval is not None:
+                                self._source_refresh_intervals[source_id] = account.refresh_interval
+                            if account.outdate_threshold is not None:
+                                self._source_outdate_thresholds[source_id] = account.outdate_threshold
+                        else:
+                            source = self._calendar_sources[source_id]
+                            source.read_only = not cal.writable
+                            source.is_outdated = False
+                        
+                        self._caldav_calendars[source_id] = cal
+                        
+                        # Persist source metadata with last_success
+                        metadata = SourceMetadata(
+                            source_id=source_id,
+                            name=cal.name,
+                            color=default_color,
+                            read_only=not cal.writable,
+                            source_type="caldav",
+                            account_name=account.name,
+                            last_success=now,
+                        )
+                        self._repository.save_source_metadata(metadata)
+                        
+                        # Update success time
+                        self._source_last_success[source_id] = now
+                        self._source_last_attempt[source_id] = now
+                else:
+                    _debug_print(f"CalDAV {account.name}: connection failed (will use cached data)")
+            except Exception as e:
+                _debug_print(f"CalDAV {account.name}: error: {e}")
+        
+        # Refresh ICS subscriptions
+        for source_id, sub in self._ics_subscriptions.items():
+            self._source_last_attempt[source_id] = now
+            success = sub.fetch()
+            if success:
+                source = self._calendar_sources.get(source_id)
+                if source:
+                    events = sub.get_events(source, force_fetch=False)
+                    if events is not None:
+                        self._repository.store_events(source_id, events)
+                    self._source_last_success[source_id] = now
+                    
+                    # Persist metadata with last_success
+                    metadata = SourceMetadata(
+                        source_id=source_id,
+                        name=source.name,
+                        color=source.color,
+                        read_only=True,
+                        source_type="ics",
+                        last_success=now,
+                    )
+                    self._repository.save_source_metadata(metadata)
+                    _debug_print(f"ICS {source_id}: refreshed")
+            else:
+                _debug_print(f"ICS {source_id}: fetch failed (will use cached data)")
+        
+        self._last_sync_time = now
+        self._notify_change()
     
     def get_calendars(self, visible_only: bool = False) -> list[CalendarSource]:
         sources = list(self._calendar_sources.values())
