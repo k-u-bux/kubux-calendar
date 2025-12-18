@@ -563,16 +563,19 @@ class MainWindow(QMainWindow):
             # Show sync status in status bar
             self._update_sync_status()
             
-            # Schedule network sync AFTER UI is rendered (non-blocking)
-            # Scroll position will be restored AFTER network refresh completes
-            QTimer.singleShot(100, self._do_async_network_refresh)
+            # Restore scroll position first (after layout settles)
+            if not getattr(self, '_skip_auto_scroll_restore', False):
+                QTimer.singleShot(50, self._restore_scroll_position)
+            
+            # Schedule network sync AFTER scroll is restored
+            QTimer.singleShot(500, self._do_async_network_refresh)
         else:
             self._statusbar.showMessage("No cached data - syncing from servers...")
             # No cached data - still schedule network sync
             QTimer.singleShot(100, self._do_async_network_refresh)
     
     def _do_async_network_refresh(self):
-        """Perform network refresh after UI is shown."""
+        """Perform network refresh after UI is shown. Does NOT affect scroll position."""
         import sys
         print("DEBUG: Starting async network refresh", file=sys.stderr)
         self._statusbar.showMessage("Syncing from servers...")
@@ -584,10 +587,6 @@ class MainWindow(QMainWindow):
         self._refresh_events()
         self._sidebar.update_tooltips()
         self._update_sync_status()
-        
-        # Restore PERSISTED scroll position after refresh completes
-        if not getattr(self, '_skip_auto_scroll_restore', False):
-            QTimer.singleShot(50, self._restore_scroll_position)
         
         print("DEBUG: Async network refresh complete", file=sys.stderr)
     
