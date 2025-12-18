@@ -163,22 +163,35 @@ class CalendarSidebar(QWidget):
         layout.addStretch()
     
     def refresh(self):
-        """Refresh the calendar list."""
-        # Clear existing items
-        for item in self._items.values():
-            item.deleteLater()
-        self._items.clear()
+        """Refresh the calendar list (incremental update to avoid flicker)."""
+        current_calendars = {c.id: c for c in self.event_store.get_calendars()}
+        current_ids = set(current_calendars.keys())
+        existing_ids = set(self._items.keys())
         
-        # Add calendars
-        for calendar in self.event_store.get_calendars():
-            item = CalendarSidebarItem(
-                calendar,
-                self._on_calendar_toggle,
-                self._on_calendar_color_change,
-                subscription_icon=self.event_store.config.labels.subscription_icon
-            )
-            self._list_layout.addWidget(item)
-            self._items[calendar.id] = item
+        # Remove items for calendars that no longer exist
+        for calendar_id in existing_ids - current_ids:
+            item = self._items.pop(calendar_id)
+            self._list_layout.removeWidget(item)
+            item.deleteLater()
+        
+        # Update existing items and add new ones
+        for calendar_id, calendar in current_calendars.items():
+            if calendar_id in self._items:
+                # Update existing item (visibility, color may have changed)
+                item = self._items[calendar_id]
+                item.calendar = calendar
+                item.set_visible(calendar.visible)
+                item.set_color(calendar.color)
+            else:
+                # Add new item
+                item = CalendarSidebarItem(
+                    calendar,
+                    self._on_calendar_toggle,
+                    self._on_calendar_color_change,
+                    subscription_icon=self.event_store.config.labels.subscription_icon
+                )
+                self._list_layout.addWidget(item)
+                self._items[calendar_id] = item
     
     def _on_calendar_toggle(self, calendar_id: str, visible: bool):
         self.event_store.set_calendar_visibility(calendar_id, visible)
