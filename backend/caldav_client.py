@@ -87,6 +87,45 @@ class CalDAVClient:
         self._calendars = {}
         return self.connect()
     
+    def _check_calendar_writable(self, cal: caldav.Calendar) -> bool:
+        """
+        Check if a calendar is writable via CalDAV privileges.
+        
+        Uses DAV:current-user-privilege-set to determine write access.
+        Looks for {DAV:}write or {DAV:}write-content privilege.
+        
+        Returns:
+            True if calendar is writable, False if read-only.
+        """
+        try:
+            # Get the current-user-privilege-set property
+            props = cal.get_properties([dav.CurrentUserPrivilegeSet()])
+            if not props:
+                return True  # Default to writable if can't determine
+            
+            for prop_value in props.values():
+                if prop_value is None:
+                    continue
+                
+                # prop_value might be a string representation or XML element
+                prop_str = str(prop_value).lower() if prop_value else ""
+                
+                # Check for write privileges
+                # CalDAV write privileges include: write, write-content, bind, unbind
+                if 'write' in prop_str:
+                    return True
+                if 'bind' in prop_str:  # bind = can add items
+                    return True
+            
+            # No write privileges found
+            return False
+            
+        except Exception as e:
+            # If we can't determine, default to writable
+            # (will fail on actual write attempt if not permitted)
+            print(f"Could not determine calendar privileges: {e}")
+            return True
+    
     def get_calendars(self) -> list[CalendarInfo]:
         """
         Get list of all calendars for this account.
@@ -118,13 +157,16 @@ class CalDAVClient:
             
             cal_id = str(cal.url).split('/')[-2] if str(cal.url).endswith('/') else str(cal.url).split('/')[-1]
             
+            # Check if calendar is writable via CalDAV privileges
+            writable = self._check_calendar_writable(cal)
+            
             cal_info = CalendarInfo(
                 id=cal_id,
                 name=name,
                 color=color,
                 url=str(cal.url),
                 account_name=self.account_name,
-                writable=True,
+                writable=writable,
                 _caldav_calendar=cal
             )
             calendars.append(cal_info)
