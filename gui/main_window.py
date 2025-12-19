@@ -299,9 +299,12 @@ class MainWindow(QMainWindow):
         self._setup_shortcuts()
         self._setup_statusbar()
         
-        # Load state and initialize
+        # Load state (view type, date, scroll position)
         self._load_state()
-        self._initialize_data()
+        
+        # Defer data loading until after window is shown
+        # This ensures window appears immediately, then data loads progressively
+        QTimer.singleShot(0, self._initialize_data)
         
         # Start auto-refresh timer - always runs every 60 seconds to check which sources need refresh
         # Individual per-source refresh intervals are checked in refresh_due_sources()
