@@ -43,7 +43,7 @@ class ClickableColorBox(QFrame):
         # Size based on font metrics - approximately 1 line height
         from PySide6.QtGui import QFontMetrics
         fm = QFontMetrics(self.font())
-        size = max(fm.height(), 16)  # Minimum 16px for usability
+        size = 0.8 * max(fm.height(), 16)  # Minimum size for usability
         self.setFixedSize(size, size)
         self.setCursor(Qt.PointingHandCursor)
         self._update_style()
@@ -67,6 +67,31 @@ class ClickableColorBox(QFrame):
                 self._update_style()
                 self.color_changed.emit(new_color)
         super().mousePressEvent(event)
+
+class ToggleLabel(QLabel):
+    # replacement for QCheckBox
+
+    toggled = Signal(bool)
+    
+    def __init__(self, text, checked=True):
+        super().__init__(text)
+        self._checked = checked
+        self._update_style()
+        
+    def setChecked(self,checked):
+        self._checked = checked
+        self._update_style()
+
+    def mousePressEvent(self, event):
+        self.setChecked( not self._checked )
+        self.toggled.emit(self._checked)
+        
+    def _update_style(self):
+        # opacity = "1.0" if self._checked else "0.4"
+        # self.setStyleSheet(f"opacity: {opacity};")  # May not work directly
+        # Alternative: use color with alpha
+        color = "black" if self._checked else "rgba(0,0,0,0.4)"
+        self.setStyleSheet(f"color: {color};")
 
 
 class CalendarSidebarItem(QFrame):
@@ -98,7 +123,7 @@ class CalendarSidebarItem(QFrame):
         layout.addWidget(self._color_box)
         
         # Checkbox
-        self._checkbox = QCheckBox(self.calendar.name)
+        self._checkbox = ToggleLabel(self.calendar.name)
         self._checkbox.setChecked(self.calendar.visible)
         self._checkbox.toggled.connect(self._on_checkbox_changed)
         layout.addWidget(self._checkbox, 1)
