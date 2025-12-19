@@ -587,30 +587,78 @@ class MainWindow(QMainWindow):
         self._save_ui_state()
     
     def _initialize_data(self):
-        """Initialize calendar data from storage (instant), then schedule network sync."""
-        self._statusbar.showMessage("Loading from cache...")
+        """Initialize calendar data progressively for fast startup.
+        
+        Phase 1: Load source metadata only (fast) - sidebar appears immediately
+        Phase 2: Load events for visible sources first (shows events quickly)
+        Phase 3: Load events for invisible sources (background)
+        Phase 4: Network sync (already deferred via timer)
+        """
+        self._statusbar.showMessage("Loading calendars...")
         QApplication.processEvents()
         
-        if self.event_store.initialize():
+        # Phase 1: Load source metadata only (fast)
+        if self.event_store.initialize_sources_only():
             self._sidebar.refresh()
-            self._refresh_events()
-            
-            # Update sidebar tooltips with initial sync times
             self._sidebar.update_tooltips()
+            QApplication.processEvents()  # Show sidebar immediately
             
-            # Show sync status in status bar
-            self._update_sync_status()
-            
-            # Restore scroll position first (after layout settles)
+            # Restore scroll position early (so it's ready when events load)
             if not getattr(self, '_skip_auto_scroll_restore', False):
                 QTimer.singleShot(50, self._restore_scroll_position)
             
-            # Schedule network sync AFTER scroll is restored
-            QTimer.singleShot(500, self._do_async_network_refresh)
+            # Phase 2 & 3: Load events progressively via timer
+            self._pending_sources_to_load = None  # Will be populated by _load_events_progressively
+            QTimer.singleShot(10, self._load_events_progressively)
         else:
             self._statusbar.showMessage("No cached data - syncing from servers...")
             # No cached data - still schedule network sync
             QTimer.singleShot(100, self._do_async_network_refresh)
+    
+    def _load_events_progressively(self):
+        """Load events from sources progressively, visible sources first.
+        
+        Called via timer to allow UI updates between loads.
+        """
+        import sys
+        
+        # First call: set up the queue of sources to load
+        if not hasattr(self, '_pending_sources_to_load') or self._pending_sources_to_load is None:
+            visible, invisible = self.event_store.get_sources_by_visibility()
+            # Load visible sources first, then invisible
+            self._pending_sources_to_load = visible + invisible
+            self._total_sources_to_load = len(self._pending_sources_to_load)
+            self._sources_loaded = 0
+        
+        if not self._pending_sources_to_load:
+            # All sources loaded - finalize
+            self._pending_sources_to_load = None
+            self._update_sync_status()
+            
+            # Schedule network sync
+            QTimer.singleShot(500, self._do_async_network_refresh)
+            return
+        
+        # Load next source
+        source_id = self._pending_sources_to_load.pop(0)
+        self._sources_loaded += 1
+        
+        # Update status
+        source = self.event_store.get_calendar(source_id)
+        source_name = source.name if source else source_id
+        self._statusbar.showMessage(f"Loading {source_name}... ({self._sources_loaded}/{self._total_sources_to_load})")
+        
+        # Load events for this source
+        event_count = self.event_store.load_events_for_source(source_id)
+        print(f"DEBUG: Loaded {event_count} events from {source_id}", file=sys.stderr)
+        
+        # Update display with new events if this is a visible source
+        if self.event_store._visibility.get(source_id, True):
+            self._refresh_events()
+            QApplication.processEvents()
+        
+        # Schedule next source load
+        QTimer.singleShot(1, self._load_events_progressively)
     
     def _do_async_network_refresh(self):
         """Perform network refresh after UI is shown. Does NOT affect scroll position."""

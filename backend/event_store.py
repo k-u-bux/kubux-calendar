@@ -77,22 +77,21 @@ class EventStore:
         if self._on_change_callback:
             self._on_change_callback()
     
-    def initialize(self) -> bool:
-        """Initialize from storage first (instant), no network blocking.
+    def initialize_sources_only(self) -> bool:
+        """Initialize source metadata only (fast), no event loading.
         
-        This method:
-        1. Loads sources from persisted metadata
-        2. Loads events from persisted storage
-        3. Loads last_success times for outdated indicator
+        This is Phase 1 of initialization - creates CalendarSource objects
+        from stored metadata so the sidebar can be populated immediately.
+        Events are NOT loaded here - call load_events_for_source() separately.
         
-        Call refresh() or refresh_all_async() after UI renders to sync from network.
+        Returns True if at least one source was loaded.
         """
         success = False
         self._load_state()
         
         from .event_storage import SourceMetadata
         
-        # Phase 1: Load CalDAV sources from storage (no network)
+        # Phase 1: Load CalDAV sources metadata (no events yet)
         for account in self.config.nextcloud_accounts:
             try:
                 stored_sources = self._repository._storage.list_sources()
@@ -124,12 +123,11 @@ class EventStore:
                             if account.outdate_threshold is not None:
                                 self._source_outdate_thresholds[source_id] = account.outdate_threshold
                             
-                            _debug_print(f"Loaded from storage: {source_id}")
                             success = True
             except Exception as e:
                 print(f"Error loading CalDAV account {account.name} from storage: {e}")
         
-        # Phase 2: Load ICS sources from storage (no network)
+        # Phase 2: Initialize ICS sources (no event loading yet)
         for sub_config in self.config.ics_subscriptions:
             try:
                 sub = self._ics_manager.add_subscription(
@@ -165,10 +163,47 @@ class EventStore:
                 if sub_config.outdate_threshold is not None:
                     self._source_outdate_thresholds[source_id] = sub_config.outdate_threshold
                 
-                _debug_print(f"Loaded ICS source: {source_id}")
                 success = True
             except Exception as e:
                 print(f"Error initializing ICS subscription {sub_config.name}: {e}")
+        
+        return success
+    
+    def load_events_for_source(self, source_id: str) -> int:
+        """Load events for a single source from storage.
+        
+        This is Phase 2 of initialization - loads events for one source at a time.
+        Call this progressively for each source to allow UI updates between loads.
+        
+        Returns number of events loaded.
+        """
+        return self._repository.load_from_storage(source_id)
+    
+    def get_sources_by_visibility(self) -> tuple[list[str], list[str]]:
+        """Get source IDs sorted by visibility.
+        
+        Returns (visible_source_ids, invisible_source_ids) for progressive loading.
+        """
+        visible = []
+        invisible = []
+        for source_id in self._calendar_sources:
+            if self._visibility.get(source_id, True):
+                visible.append(source_id)
+            else:
+                invisible.append(source_id)
+        return visible, invisible
+    
+    def initialize(self) -> bool:
+        """Initialize from storage (legacy method - loads everything at once).
+        
+        For faster startup, use initialize_sources_only() + load_events_for_source() instead.
+        """
+        success = self.initialize_sources_only()
+        
+        # Load events for all sources
+        for source_id in self._calendar_sources:
+            self._repository.load_from_storage(source_id)
+            _debug_print(f"Loaded events from storage: {source_id}")
         
         return success
     
