@@ -197,7 +197,7 @@ class EventRepository:
     
     def store_events(self, source_id: str, events: list[CalEvent], persist: bool = True):
         """
-        Store CalEvent objects for a source (replaces existing).
+        Store CalEvent objects for a source (replaces existing, but preserves pending local events).
         
         Args:
             source_id: Calendar source ID
@@ -208,7 +208,21 @@ class EventRepository:
             raise ValueError(f"Unknown source: {source_id}")
         
         _debug_print(f"store_events({source_id}): {len(events)} events, persist={persist}")
+        
+        # Preserve events with pending operations (they haven't been synced to server yet)
+        preserved_events = {}
+        existing = self._events.get(source_id, {})
+        for uid, event in existing.items():
+            if event.pending_operation in ("create", "update", "delete", "delete_instance"):
+                preserved_events[uid] = event
+                _debug_print(f"store_events({source_id}): preserving pending event {uid} ({event.pending_operation})")
+        
+        # Replace with server events
         self._events[source_id] = {e.uid: e for e in events}
+        
+        # Restore preserved pending events
+        for uid, event in preserved_events.items():
+            self._events[source_id][uid] = event
         
         if persist:
             saved = self.save_to_storage(source_id)
@@ -467,7 +481,19 @@ class EventRepository:
     # ==================== Pending Operations ====================
     
     def mark_pending(self, uid: str, operation: str):
-        """Mark an event as having a pending operation (persists immediately)."""
+        """Mark an event as having a pending operation (persists immediately).
+        
+        Note: "create" is not overwritten by "update" - the event must be
+        created on the server first. Modifications are included in the CREATE.
+        """
+        current_op = self._pending_operations.get(uid)
+        
+        # Don't downgrade "create" to "update" - event still needs to be created first
+        # The modifications are already in the CalEvent and will be included in CREATE
+        if current_op == "create" and operation == "update":
+            _debug_print(f"mark_pending({uid}): keeping 'create' (not downgrading to 'update')")
+            return
+        
         self._pending_operations[uid] = operation
         
         # Also update the CalEvent and persist to storage
@@ -489,6 +515,19 @@ class EventRepository:
     def has_pending(self, uid: str) -> bool:
         """Check if an event has a pending operation."""
         return uid in self._pending_operations
+    
+    def get_pending_events(self) -> list[CalEvent]:
+        """Get all events with pending operations."""
+        events = []
+        for uid in self._pending_operations:
+            event = self._find_event_by_uid(uid)
+            if event:
+                events.append(event)
+        return events
+    
+    def get_pending_count(self) -> int:
+        """Get count of pending operations."""
+        return len(self._pending_operations)
     
     def _find_event_by_uid(self, uid: str) -> Optional[CalEvent]:
         """Find an event by UID across all sources."""

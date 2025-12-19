@@ -16,7 +16,6 @@ from .caldav_client import CalDAVClient, CalendarInfo
 from .ics_subscription import ICSSubscription, ICSSubscriptionManager
 from .event_wrapper import CalEvent, CalendarSource, EventInstance
 from .event_repository import EventRepository
-from .sync_queue import SyncQueue, SyncOperation, PendingChange
 
 
 def _debug_print(message: str) -> None:
@@ -62,10 +61,6 @@ class EventStore:
         self._cache_end: Optional[datetime] = None
         
         self._state_file = config.state_file
-        
-        queue_file = config.state_file.parent / "sync_queue.json"
-        self._sync_queue = SyncQueue(queue_file)
-        self._sync_queue.set_on_change_callback(self._on_sync_queue_changed)
         
         self._last_sync_time: Optional[datetime] = None
         self._source_last_attempt: dict[str, datetime] = {}  # Per-source last sync attempt times
@@ -481,25 +476,13 @@ class EventStore:
             return None
         
         # Event is already marked pending_operation="create" by repository
-        # Mark in repository's pending tracker too
+        # mark_pending persists immediately to storage
         self._repository.mark_pending(cal_event.uid, "create")
         
-        # Queue for background sync
-        from icalendar import Calendar as ICalendar
-        ical = ICalendar()
-        ical.add('prodid', '-//Kubux Calendar//kubux.net//')
-        ical.add('version', '2.0')
-        ical.add_component(cal_event.event)
-        raw_ical = ical.to_ical().decode('utf-8')
-        
-        self._sync_queue.add_create(
-            calendar_id=calendar_id,
-            event_uid=cal_event.uid,
-            event_data={'raw_ical': raw_ical}
-        )
-        
         # Notify UI to refresh (shows pending indicator)
+        # Background sync timer will pick it up later
         self._notify_change()
+        self._notify_sync_status()
         return cal_event
     
     def update_event(self, event: CalEvent) -> bool:
@@ -607,18 +590,14 @@ class EventStore:
             return False
         
         # Mark as pending delete - event stays visible with pending indicator
+        # mark_pending persists immediately to storage
         self._repository.mark_pending(event.uid, "delete")
         event.pending_operation = "delete"
         
-        # Queue for background sync (event will be removed when sync completes)
-        self._sync_queue.add_delete(
-            calendar_id=source.id,
-            event_uid=event.uid,
-            event_data={}
-        )
-        
         # Notify UI to refresh - event shows pending indicator
+        # Background sync timer will pick it up later
         self._notify_change()
+        self._notify_sync_status()
         return True
     
     def delete_recurring_instance(self, event: CalEvent, instance_start: datetime) -> bool:
@@ -639,21 +618,18 @@ class EventStore:
         if not client:
             return False
         
-        # Mark as pending - instance stays visible with pending indicator
-        instance_uid = f"{event.uid}_{instance_start.isoformat()}"
-        self._repository.mark_pending(instance_uid, "delete")
-        event.pending_operation = "delete"
+        # For delete_instance, we need to store the instance_start on the event
+        # so sync knows which instance to add EXDATE for
+        event.pending_instance_start = instance_start
         
-        # Queue for background sync
-        self._sync_queue.add_delete_instance(
-            calendar_id=source.id,
-            event_uid=event.uid,
-            event_data={},
-            instance_start=instance_start
-        )
+        # Mark as pending - instance stays visible with pending indicator
+        # mark_pending persists immediately to storage
+        self._repository.mark_pending(event.uid, "delete_instance")
+        event.pending_operation = "delete_instance"
         
         # Notify UI to refresh - instance shows pending indicator
         self._notify_change()
+        self._notify_sync_status()
         return True
     
     def get_writable_calendars(self) -> list[CalendarSource]:
@@ -838,20 +814,19 @@ class EventStore:
         self._visibility = state.get('visibility', {})
         self._colors = state.get('colors', {})
     
-    # ==================== Sync Queue Methods ====================
+    # ==================== Sync Methods (Repository-Based) ====================
     
     def set_on_sync_status_callback(self, callback: Callable[[int, Optional[datetime]], None]) -> None:
         self._on_sync_status_callback = callback
     
-    def _on_sync_queue_changed(self) -> None:
-        self._notify_sync_status()
-    
     def _notify_sync_status(self) -> None:
         if self._on_sync_status_callback:
-            self._on_sync_status_callback(self._sync_queue.get_pending_count(), self._last_sync_time)
+            pending_count = self._repository.get_pending_count()
+            self._on_sync_status_callback(pending_count, self._last_sync_time)
     
     def get_pending_sync_count(self) -> int:
-        return self._sync_queue.get_pending_count()
+        """Get count of events with pending operations from repository."""
+        return self._repository.get_pending_count()
     
     def get_last_sync_time(self) -> Optional[datetime]:
         return self._last_sync_time
@@ -917,54 +892,53 @@ class EventStore:
         return self._repository.get_event_count()
     
     def has_pending_sync(self, event_uid: str) -> bool:
+        """Check if an event has a pending operation."""
         base_uid = event_uid.split('_')[0] if '_' in event_uid else event_uid
-        return self._sync_queue.has_pending_for_event(base_uid)
+        return self._repository.has_pending(base_uid)
     
     def sync_pending_changes(self) -> tuple[int, int]:
-        """Sync pending changes. Returns (success_count, fail_count)."""
-        pending = self._sync_queue.get_pending_changes()
-        if not pending:
+        """
+        Sync pending changes from repository. Returns (success_count, fail_count).
+        
+        Iterates events with pending_operation and attempts to sync each one.
+        Single source of truth: the event in the repository IS the authoritative data.
+        """
+        pending_events = self._repository.get_pending_events()
+        if not pending_events:
             return (0, 0)
         
         success_count = 0
         fail_count = 0
         
-        for change in pending:
+        for event in pending_events:
             try:
-                self._sync_queue.mark_syncing(change.id)
-                result = self._process_sync_change(change)
+                result = self._sync_event(event)
                 
                 if result:
-                    self._sync_queue.mark_synced(change.id)
                     # For DELETE operations, remove the event from repository
-                    if change.operation == SyncOperation.DELETE:
-                        self._repository.remove_event(change.calendar_id, change.event_uid)
-                    # Clear from repository's pending tracker  
-                    self._repository.clear_pending(change.event_uid)
+                    if event.pending_operation == "delete":
+                        self._repository.remove_event(event.source.id, event.uid)
+                    else:
+                        # Clear pending status  
+                        self._repository.clear_pending(event.uid)
                     success_count += 1
                 else:
-                    self._sync_queue.mark_failed(change.id, "Sync failed")
                     fail_count += 1
             except Exception as e:
-                self._sync_queue.mark_failed(change.id, str(e))
+                _debug_print(f"Sync failed for {event.uid}: {e}")
                 fail_count += 1
         
         if success_count > 0:
             self._last_sync_time = datetime.now()
-            # No invalidate_cache() - events are updated individually
-            # Deleted events are removed from repository when sync succeeds (handled above)
             self._notify_change()
         
         self._notify_sync_status()
         return (success_count, fail_count)
     
-    def _process_sync_change(self, change: PendingChange) -> bool:
-        """Process a single sync change."""
-        source = self._calendar_sources.get(change.calendar_id)
-        if not source:
-            return False
-        
-        cal_info = self._caldav_calendars.get(change.calendar_id)
+    def _sync_event(self, event: CalEvent) -> bool:
+        """Sync a single event based on its pending_operation."""
+        source = event.source
+        cal_info = self._caldav_calendars.get(source.id)
         if not cal_info:
             return False
         
@@ -972,15 +946,29 @@ class EventStore:
         if not client:
             return False
         
-        if change.operation == SyncOperation.CREATE:
-            return client.save_raw_event(cal_info, change.event_data.get('raw_ical', ''))
-        elif change.operation == SyncOperation.DELETE:
-            return client.delete_event(cal_info, change.event_uid)
-        elif change.operation == SyncOperation.DELETE_INSTANCE:
-            # Add EXDATE to the recurring event
-            instance_start = datetime.fromisoformat(change.instance_start) if change.instance_start else None
+        op = event.pending_operation
+        
+        if op == "create":
+            # Generate current raw_ical from the event (includes any modifications)
+            from icalendar import Calendar as ICalendar
+            ical = ICalendar()
+            ical.add('prodid', '-//Kubux Calendar//kubux.net//')
+            ical.add('version', '2.0')
+            ical.add_component(event.event)
+            raw_ical = ical.to_ical().decode('utf-8')
+            return client.save_raw_event(cal_info, raw_ical)
+        
+        elif op == "update":
+            return client.update_event(cal_info, event.uid, event.event)
+        
+        elif op == "delete":
+            return client.delete_event(cal_info, event.uid)
+        
+        elif op == "delete_instance":
+            # Get instance_start from event (stored when delete_recurring_instance was called)
+            instance_start = getattr(event, 'pending_instance_start', None)
             if instance_start:
-                return client.add_exdate(cal_info, change.event_uid, instance_start)
+                return client.add_exdate(cal_info, event.uid, instance_start)
             return False
         
         return False
