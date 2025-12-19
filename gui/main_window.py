@@ -597,8 +597,11 @@ class MainWindow(QMainWindow):
         Phase 3: Load events for invisible sources (background)
         Phase 4: Network sync (already deferred via timer)
         """
-        self._statusbar.showMessage("Loading calendars...")
+        # Force window to paint first (eliminates black flash)
+        self.repaint()
         QApplication.processEvents()
+        
+        self._statusbar.showMessage("Loading calendars...")
         
         # Phase 1: Load source metadata only (fast)
         if self.event_store.initialize_sources_only():
