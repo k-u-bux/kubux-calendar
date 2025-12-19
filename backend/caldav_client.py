@@ -7,12 +7,18 @@ Returns CalEvent objects as the universal event type.
 
 import caldav
 from caldav.elements import dav, cdav
+from caldav.elements.base import BaseElement
 from datetime import datetime, timedelta
 from typing import Optional
 from dataclasses import dataclass, field
 import pytz
 from icalendar import Calendar as ICalendar, Event as ICalEvent
 import uuid
+import lxml.etree as etree
+
+# Custom DAV element for current-user-privilege-set (not in caldav library)
+class CurrentUserPrivilegeSet(BaseElement):
+    tag = etree.QName('DAV:', 'current-user-privilege-set')
 
 
 @dataclass
@@ -91,39 +97,79 @@ class CalDAVClient:
         """
         Check if a calendar is writable via CalDAV privileges.
         
-        Uses DAV:current-user-privilege-set to determine write access.
-        Looks for {DAV:}write or {DAV:}write-content privilege.
+        Uses raw PROPFIND request to get DAV:current-user-privilege-set.
         
         Returns:
             True if calendar is writable, False if read-only.
         """
         try:
-            # Get the current-user-privilege-set property
-            props = cal.get_properties([dav.CurrentUserPrivilegeSet()])
-            if not props:
-                return True  # Default to writable if can't determine
+            # Build raw PROPFIND request for current-user-privilege-set
+            # The caldav library's get_properties() loses the XML structure
+            propfind_body = """<?xml version="1.0" encoding="utf-8" ?>
+<D:propfind xmlns:D="DAV:">
+  <D:prop>
+    <D:current-user-privilege-set/>
+  </D:prop>
+</D:propfind>"""
             
-            for prop_value in props.values():
-                if prop_value is None:
-                    continue
-                
-                # prop_value might be a string representation or XML element
-                prop_str = str(prop_value).lower() if prop_value else ""
-                
-                # Check for write privileges
-                # CalDAV write privileges include: write, write-content, bind, unbind
-                if 'write' in prop_str:
-                    return True
-                if 'bind' in prop_str:  # bind = can add items
-                    return True
+            response = cal.client.propfind(
+                cal.url,
+                props=propfind_body,
+                depth=0
+            )
             
-            # No write privileges found
+            if response is None:
+                print(f"DEBUG: Calendar '{cal.name}': no PROPFIND response, defaulting to writable")
+                return True
+            
+            # Get the raw XML response - DAVResponse has .raw attribute
+            if hasattr(response, 'raw'):
+                response_text = response.raw
+            elif hasattr(response, 'text'):
+                response_text = response.text
+            elif hasattr(response, 'content'):
+                response_text = response.content
+            else:
+                response_text = str(response)
+            
+            # Decode if bytes
+            if isinstance(response_text, bytes):
+                response_text = response_text.decode('utf-8', errors='ignore')
+            
+            response_lower = response_text.lower()
+            
+            # Check for write privileges in response
+            # DAV write privileges: write, write-content, bind
+            # We look for <d:write/> or <write/> tags indicating write permission
+            has_write = (
+                '<d:write/>' in response_lower or 
+                '<d:write>' in response_lower or 
+                '</d:write>' in response_lower or
+                '<write/>' in response_lower or 
+                '<write>' in response_lower or 
+                '</write>' in response_lower
+            )
+            has_bind = (
+                '<d:bind/>' in response_lower or 
+                '<d:bind>' in response_lower or 
+                '</d:bind>' in response_lower or
+                '<bind/>' in response_lower or 
+                '<bind>' in response_lower or 
+                '</bind>' in response_lower
+            )
+            
+            if has_write or has_bind:
+                return True
+            
+            # No write privileges found - calendar is read-only
             return False
             
         except Exception as e:
             # If we can't determine, default to writable
             # (will fail on actual write attempt if not permitted)
-            print(f"Could not determine calendar privileges: {e}")
+            print(f"Could not determine calendar privileges for '{cal.name}': {e}")
+            import traceback
+            traceback.print_exc()
             return True
     
     def get_calendars(self) -> list[CalendarInfo]:

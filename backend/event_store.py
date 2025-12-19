@@ -633,6 +633,7 @@ class EventStore:
         return True
     
     def get_writable_calendars(self) -> list[CalendarSource]:
+        """Get calendars that can be written to (not read-only)."""
         return [s for s in self._calendar_sources.values() if not s.read_only]
     
     def _try_connect_missing_caldav_clients(self) -> None:
