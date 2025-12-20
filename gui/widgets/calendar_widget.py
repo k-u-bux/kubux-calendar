@@ -1607,6 +1607,7 @@ class ListView(QWidget):
         self._sorted_events: list[EventData] = []  # Keep sorted list for navigation
         self._pending_scroll_datetime: Optional[datetime] = None  # Scroll target applied after events load
         self._last_scroll_datetime: Optional[datetime] = None  # Track last successful scroll target
+        self._batch_generation = 0  # Incremented on each _refresh_display to invalidate old batch timers
         self._setup_ui()
     
     def _setup_ui(self):
@@ -1649,6 +1650,10 @@ class ListView(QWidget):
     
     def _refresh_display(self):
         """Rebuild the event list display progressively to avoid UI blocking."""
+        # Increment generation to invalidate any pending batch timers from previous refresh
+        self._batch_generation += 1
+        current_generation = self._batch_generation
+        
         # Clear existing widgets
         for widget in self._event_widgets:
             widget.hide()  # Hide immediately to prevent visual duplication
@@ -1665,12 +1670,22 @@ class ListView(QWidget):
         # Re-add stretch immediately (widgets will be inserted before it)
         self._content_layout.addStretch()
         
-        # Start progressive widget creation
+        # Start progressive widget creation with current generation
         self._pending_events_index = 0
-        self._create_widgets_batch()
+        self._create_widgets_batch(generation=current_generation)
     
-    def _create_widgets_batch(self, batch_size: int = 20):
-        """Create widgets in batches to avoid blocking UI."""
+    def _create_widgets_batch(self, generation: int = None, batch_size: int = 20):
+        """Create widgets in batches to avoid blocking UI.
+        
+        Args:
+            generation: The batch generation number. If it doesn't match
+                       self._batch_generation, this batch is stale and exits.
+            batch_size: Number of widgets to create per batch.
+        """
+        # Check if this batch was superseded by a newer refresh
+        if generation is not None and generation != self._batch_generation:
+            return  # Stale batch - a newer _refresh_display() call superseded this
+        
         if self._pending_events_index >= len(self._sorted_events):
             # All done - finalize
             self._finalize_display()
@@ -1691,8 +1706,9 @@ class ListView(QWidget):
         
         self._pending_events_index = end_index
         
-        # Schedule next batch (yields to event loop between batches)
-        QTimer.singleShot(0, self._create_widgets_batch)
+        # Schedule next batch with same generation (yields to event loop between batches)
+        current_gen = self._batch_generation
+        QTimer.singleShot(0, lambda: self._create_widgets_batch(generation=current_gen))
     
     def _finalize_display(self):
         """Called after all widgets are created."""

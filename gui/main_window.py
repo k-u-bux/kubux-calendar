@@ -299,6 +299,9 @@ class MainWindow(QMainWindow):
         self._setup_shortcuts()
         self._setup_statusbar()
         
+        # Flag to suppress _refresh_events() during initial data load
+        self._initializing = True
+        
         # Load state (view type, date, scroll position)
         self._load_state()
         
@@ -611,6 +614,10 @@ class MainWindow(QMainWindow):
             self._sidebar.update_tooltips()
             QApplication.processEvents()  # Show sidebar immediately
             
+            # Set cache window NOW to prevent get_events() from triggering network fetch
+            # during progressive loading
+            self.event_store.set_cache_window_from_storage()
+            
             # Restore scroll position after layout settles
             # Use minimal delay to avoid re-entrancy during processEvents
             if not getattr(self, '_skip_auto_scroll_restore', False):
@@ -644,6 +651,12 @@ class MainWindow(QMainWindow):
             self._pending_sources_to_load = None
             # Set cache window so get_events() doesn't trigger network fetch
             self.event_store.set_cache_window_from_storage()
+            
+            # Clear initialization flag - now safe to respond to signals
+            self._initializing = False
+            
+            # Final display update with all loaded events (from repository, no network)
+            self._update_display_from_cache()
             self._update_sync_status()
             
             # Start network sync immediately (loading is complete)
@@ -659,33 +672,28 @@ class MainWindow(QMainWindow):
         source_name = source.name if source else source_id
         self._statusbar.showMessage(f"Loading {source_name}... ({self._sources_loaded}/{self._total_sources_to_load})")
         
-        # Load events for this source
+        # Load events for this source from storage (no network)
         event_count = self.event_store.load_events_for_source(source_id)
         print(f"DEBUG: Loaded {event_count} events from {source_id}", file=sys.stderr)
         
-        # Update display with new events if this is a visible source
-        if self.event_store._visibility.get(source_id, True):
-            self._refresh_events()
-            QApplication.processEvents()
-        
-        # Schedule next source load
+        # Schedule next source load (don't refresh display for each source - wait until all loaded)
         QTimer.singleShot(1, self._load_events_progressively)
     
     def _do_async_network_refresh(self):
-        """Perform network refresh after UI is shown. Does NOT affect scroll position."""
+        """Start network refresh in background after UI is shown.
+        
+        Does NOT call _refresh_events() here - that's handled by the
+        network worker's completion callback via _on_data_changed().
+        This prevents multiple redundant display updates.
+        """
         import sys
         print("DEBUG: Starting async network refresh", file=sys.stderr)
         self._statusbar.showMessage("Syncing from servers...")
-        QApplication.processEvents()
         
+        # Start background refresh - completion will trigger _on_data_changed()
         self.event_store.refresh_all_in_background()
         
-        self._sidebar.refresh()
-        self._refresh_events()
-        self._sidebar.update_tooltips()
-        self._update_sync_status()
-        
-        print("DEBUG: Async network refresh complete", file=sys.stderr)
+        # Note: DO NOT call _refresh_events() here - wait for completion callback
     
     def _restore_scroll_position(self):
         """Restore scroll position after data load (deferred from _load_state)."""
@@ -713,7 +721,7 @@ class MainWindow(QMainWindow):
             self._calendar_widget.set_scroll_position(scroll_pos)
     
     def _refresh_events(self):
-        """Refresh events for the current view."""
+        """Refresh events for the current view (may trigger network fetch if needed)."""
         self._statusbar.showMessage("Loading events...")
         QApplication.processEvents()
         
@@ -722,6 +730,23 @@ class MainWindow(QMainWindow):
         self._calendar_widget.set_events(events)
         
         self._statusbar.showMessage(f"Loaded {len(events)} events", 3000)
+    
+    def _update_display_from_cache(self):
+        """Update display from cached events only (no network fetch).
+        
+        Used during initial load to display events from repository without
+        triggering network access.
+        """
+        import sys
+        self._statusbar.showMessage("Displaying events...")
+        
+        start, end = self._calendar_widget.get_date_range()
+        # Use get_events_from_cache() which only returns cached data, no network
+        events = self.event_store.get_events_from_cache(start, end)
+        self._calendar_widget.set_events(events)
+        
+        print(f"DEBUG: _update_display_from_cache: {len(events)} events", file=sys.stderr)
+        self._statusbar.showMessage(f"Loaded {len(events)} events from cache", 3000)
     
     def _update_date_label(self):
         """Update the date label in the toolbar using yyyy/mm/dd format."""
@@ -776,18 +801,32 @@ class MainWindow(QMainWindow):
             self._calendar_widget.set_view(view_type)
     
     def _on_view_changed(self, view_type: ViewType):
-        """Handle view change from calendar widget."""
+        """Handle view change from calendar widget.
+        
+        Note: Does NOT call _refresh_events() - events are already loaded
+        via CalendarWidget.set_view()'s lazy loading mechanism from cached_events.
+        Calling _refresh_events() here would cause double loading and race conditions.
+        """
         self._update_date_label()
-        self._refresh_events()
     
     def _on_date_changed(self, d: date):
         """Handle date change."""
         self._update_date_label()
-        self._refresh_events()
+        # Skip refresh during initialization (data not loaded yet)
+        if not getattr(self, '_initializing', False):
+            self._refresh_events()
     
     def _on_data_changed(self):
-        """Handle data change from event store."""
-        self._refresh_events()
+        """Handle data change from event store.
+        
+        Uses _update_display_from_cache() instead of _refresh_events() to avoid
+        triggering additional network fetches. The data change callback is typically
+        fired AFTER a network sync, so the repository already has fresh data.
+        """
+        self._update_display_from_cache()
+        self._sidebar.refresh()
+        self._sidebar.update_tooltips()
+        self._update_sync_status()
     
     def _on_sync_status_changed(self, pending_count: int, last_sync_time):
         """Handle sync status change from event store (sync queue callback)."""

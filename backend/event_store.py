@@ -442,6 +442,28 @@ class EventStore:
         self._cache_end = None
         self._repository.clear()
     
+    def _get_visible_sources(self) -> list[str]:
+        """Get list of visible source IDs."""
+        return [
+            s.id for s in self._calendar_sources.values()
+            if self._visibility.get(s.id, True)
+        ]
+    
+    def get_events_from_cache(self, start: datetime, end: datetime) -> list[EventInstance]:
+        """Get events from local cache only - NO network fetch.
+        
+        Used during initial load to display events without triggering network access.
+        
+        Args:
+            start: Start of date range
+            end: End of date range
+            
+        Returns:
+            List of events from all visible sources within the date range.
+        """
+        source_ids = self._get_visible_sources()
+        return self._repository.get_instances(start, end, source_ids)
+    
     def get_events(
         self,
         start: datetime,
