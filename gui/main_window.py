@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QColorDialog, QSizePolicy
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QFileSystemWatcher
-from PySide6.QtGui import QAction, QIcon, QCloseEvent, QFont, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QIcon, QCloseEvent, QFont, QFontMetrics, QKeySequence, QShortcut
 
 from backend.config import Config
 from backend.event_store import EventStore, Event
@@ -398,7 +398,9 @@ class MainWindow(QMainWindow):
         date_font = QFont(self._interface_font)
         date_font.setBold(True)
         self._date_label.setFont(date_font)
-        self._date_label.setMinimumWidth(200)
+        fm = QFontMetrics(date_font)
+        min_width = fm.horizontalAdvance("8888/88/88 - 8888/88/88XX")
+        self._date_label.setMinimumWidth(min_width)
         toolbar.addWidget(self._date_label)
         
         toolbar.addSeparator()
