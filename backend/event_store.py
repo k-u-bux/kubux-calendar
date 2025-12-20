@@ -180,6 +180,30 @@ class EventStore:
         """
         return self._repository.load_from_storage(source_id)
     
+    def set_cache_window_from_storage(self) -> None:
+        """Set the cache window after loading events from storage.
+        
+        Call this after all load_events_for_source() calls are complete.
+        Sets the cache window based on "now" using the standard window size,
+        assuming storage contains events for that range.
+        
+        This prevents unnecessary network fetches when the data is already in the repository.
+        """
+        if self._cache_start is not None and self._cache_end is not None:
+            # Cache window already set (e.g., by network fetch)
+            return
+        
+        # Only set if we have at least some stored events
+        if self._repository.get_event_count() == 0:
+            _debug_print("No events in storage - cache window not set")
+            return
+        
+        # Set cache window based on "now" using the standard window
+        now = datetime.now()
+        self._cache_start = now - timedelta(days=self.CACHE_WINDOW_PAST_MONTHS * 30)
+        self._cache_end = now + timedelta(days=self.CACHE_WINDOW_FUTURE_MONTHS * 30)
+        _debug_print(f"Cache window set from storage: {self._cache_start.date()} to {self._cache_end.date()}")
+    
     def get_sources_by_visibility(self) -> tuple[list[str], list[str]]:
         """Get source IDs sorted by visibility.
         

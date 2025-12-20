@@ -1648,7 +1648,7 @@ class ListView(QWidget):
         self._refresh_display()
     
     def _refresh_display(self):
-        """Rebuild the event list display."""
+        """Rebuild the event list display progressively to avoid UI blocking."""
         # Clear existing widgets
         for widget in self._event_widgets:
             widget.hide()  # Hide immediately to prevent visual duplication
@@ -1656,22 +1656,46 @@ class ListView(QWidget):
         self._event_widgets.clear()
         
         # Sort events chronologically
-        sorted_events = sorted(self._events, key=lambda e: to_local_datetime(e.start))
+        self._sorted_events = sorted(self._events, key=lambda e: to_local_datetime(e.start))
         
-        # Remove the stretch at the end temporarily
-        stretch_item = self._content_layout.takeAt(self._content_layout.count() - 1)
+        # Remove the stretch at the end temporarily (if exists)
+        if self._content_layout.count() > 0:
+            stretch_item = self._content_layout.takeAt(self._content_layout.count() - 1)
         
-        # Add event widgets
-        for event in sorted_events:
+        # Re-add stretch immediately (widgets will be inserted before it)
+        self._content_layout.addStretch()
+        
+        # Start progressive widget creation
+        self._pending_events_index = 0
+        self._create_widgets_batch()
+    
+    def _create_widgets_batch(self, batch_size: int = 20):
+        """Create widgets in batches to avoid blocking UI."""
+        if self._pending_events_index >= len(self._sorted_events):
+            # All done - finalize
+            self._finalize_display()
+            return
+        
+        # Create a batch of widgets
+        end_index = min(self._pending_events_index + batch_size, len(self._sorted_events))
+        
+        for i in range(self._pending_events_index, end_index):
+            event = self._sorted_events[i]
             widget = ListEventWidget(event)
             widget.clicked.connect(self.event_clicked.emit)
             widget.double_clicked.connect(self.event_double_clicked.emit)
-            self._content_layout.addWidget(widget)
+            # Insert before the stretch (which is at the end)
+            insert_pos = self._content_layout.count() - 1
+            self._content_layout.insertWidget(insert_pos, widget)
             self._event_widgets.append(widget)
         
-        # Re-add stretch
-        self._content_layout.addStretch()
+        self._pending_events_index = end_index
         
+        # Schedule next batch (yields to event loop between batches)
+        QTimer.singleShot(0, self._create_widgets_batch)
+    
+    def _finalize_display(self):
+        """Called after all widgets are created."""
         # Apply pending scroll if set (after events are loaded)
         if self._pending_scroll_datetime:
             target_dt = self._pending_scroll_datetime
@@ -1741,11 +1765,25 @@ class ListView(QWidget):
             target_widget = self._event_widgets[-1]
         
         if target_widget:
+            # Store the target datetime instead of widget reference (widget may be deleted)
+            target_event_start = target_dt
+            
             # Scroll so the target widget is at the top
             # Defer to ensure layout is complete
             def _scroll_to_widget():
-                widget_pos = target_widget.mapTo(self._content, target_widget.rect().topLeft())
-                self._scroll.verticalScrollBar().setValue(max(0, widget_pos.y() - 8))
+                # Re-find the widget by event datetime (guards against widget deletion)
+                for widget in self._event_widgets:
+                    try:
+                        event_start = to_local_datetime(widget.event_data.start)
+                        event_start_naive = event_start.replace(tzinfo=None) if event_start.tzinfo else event_start
+                        target_naive = target_event_start.replace(tzinfo=None) if target_event_start.tzinfo else target_event_start
+                        if event_start_naive >= target_naive:
+                            widget_pos = widget.mapTo(self._content, widget.rect().topLeft())
+                            self._scroll.verticalScrollBar().setValue(max(0, widget_pos.y() - 8))
+                            return
+                    except RuntimeError:
+                        # Widget was deleted, skip it
+                        continue
             QTimer.singleShot(50, _scroll_to_widget)
     
     def get_date_range(self) -> tuple[datetime, datetime]:
@@ -1827,6 +1865,12 @@ class CalendarWidget(QWidget):
         super().__init__(parent)
         self._current_view = ViewType.WEEK
         self._current_date = date.today()
+        self._cached_events: list[EventData] = []
+        # Stale flags - views need refresh when switched to
+        self._day_view_stale = True
+        self._week_view_stale = True
+        self._month_view_stale = True
+        self._list_view_stale = True
         self._setup_ui()
     
     def _setup_ui(self):
@@ -1880,12 +1924,24 @@ class CalendarWidget(QWidget):
         if view_type == ViewType.DAY:
             self._stack.setCurrentWidget(self._day_view)
             self._day_view.set_date(self._current_date)
+            # Lazy load: refresh if stale
+            if self._day_view_stale and self._cached_events:
+                self._day_view.set_events(self._cached_events)
+                self._day_view_stale = False
         elif view_type == ViewType.WEEK:
             self._stack.setCurrentWidget(self._week_view)
             self._week_view.set_date(self._current_date)
+            # Lazy load: refresh if stale
+            if self._week_view_stale and self._cached_events:
+                self._week_view.set_events(self._cached_events)
+                self._week_view_stale = False
         elif view_type == ViewType.MONTH:
             self._stack.setCurrentWidget(self._month_view)
             self._month_view.set_date(self._current_date)
+            # Lazy load: refresh if stale
+            if self._month_view_stale and self._cached_events:
+                self._month_view.set_events(self._cached_events)
+                self._month_view_stale = False
         else:  # LIST
             self._stack.setCurrentWidget(self._list_view)
             self._list_view.set_date(self._current_date)
@@ -1893,6 +1949,10 @@ class CalendarWidget(QWidget):
             # It will be applied after events are loaded in _refresh_display()
             if old_view != ViewType.LIST and ref_datetime:
                 self._list_view._pending_scroll_datetime = ref_datetime
+            # Lazy load: refresh if stale
+            if self._list_view_stale and self._cached_events:
+                self._list_view.set_events(self._cached_events)
+                self._list_view_stale = False
         
         self.view_changed.emit(view_type)
     
@@ -1934,10 +1994,34 @@ class CalendarWidget(QWidget):
         self.date_changed.emit(d)
     
     def set_events(self, events: list[EventData]):
-        self._day_view.set_events(events)
-        self._week_view.set_events(events)
-        self._month_view.set_events(events)
-        self._list_view.set_events(events)
+        """Set events - only updates the active view, others are marked stale."""
+        self._cached_events = events
+        
+        # Only update the currently active view, mark others as stale
+        if self._current_view == ViewType.DAY:
+            self._day_view.set_events(events)
+            self._day_view_stale = False  # Just got fresh events
+            self._week_view_stale = True
+            self._month_view_stale = True
+            self._list_view_stale = True
+        elif self._current_view == ViewType.WEEK:
+            self._week_view.set_events(events)
+            self._week_view_stale = False  # Just got fresh events
+            self._day_view_stale = True
+            self._month_view_stale = True
+            self._list_view_stale = True
+        elif self._current_view == ViewType.MONTH:
+            self._month_view.set_events(events)
+            self._month_view_stale = False  # Just got fresh events
+            self._day_view_stale = True
+            self._week_view_stale = True
+            self._list_view_stale = True
+        else:  # LIST
+            self._list_view.set_events(events)
+            self._list_view_stale = False  # Just got fresh events
+            self._day_view_stale = True
+            self._week_view_stale = True
+            self._month_view_stale = True
     
     def get_current_view(self) -> ViewType:
         return self._current_view

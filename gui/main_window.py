@@ -642,6 +642,8 @@ class MainWindow(QMainWindow):
         if not self._pending_sources_to_load:
             # All sources loaded - finalize
             self._pending_sources_to_load = None
+            # Set cache window so get_events() doesn't trigger network fetch
+            self.event_store.set_cache_window_from_storage()
             self._update_sync_status()
             
             # Start network sync immediately (loading is complete)
