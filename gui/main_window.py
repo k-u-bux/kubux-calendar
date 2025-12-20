@@ -618,10 +618,8 @@ class MainWindow(QMainWindow):
             # during progressive loading
             self.event_store.set_cache_window_from_storage()
             
-            # Restore scroll position after layout settles
-            # Use minimal delay to avoid re-entrancy during processEvents
-            if not getattr(self, '_skip_auto_scroll_restore', False):
-                QTimer.singleShot(0, self._restore_scroll_position)
+            # Note: Don't restore scroll position here - it's done in _load_events_progressively
+            # AFTER events are loaded and displayed
             
             # Phase 2 & 3: Load events progressively via timer (yield to event loop)
             self._pending_sources_to_load = None  # Will be populated by _load_events_progressively
@@ -659,8 +657,12 @@ class MainWindow(QMainWindow):
             self._update_display_from_cache()
             self._update_sync_status()
             
-            # Start network sync immediately (loading is complete)
-            QTimer.singleShot(0, self._do_async_network_refresh)
+            # NOW restore scroll position (after events are loaded and displayed)
+            # Use singleShot to ensure layout is complete
+            QTimer.singleShot(50, self._restore_scroll_position)
+            
+            # Start network sync after a short delay (let UI settle first)
+            QTimer.singleShot(100, self._do_async_network_refresh)
             return
         
         # Load next source
@@ -822,11 +824,26 @@ class MainWindow(QMainWindow):
         Uses _update_display_from_cache() instead of _refresh_events() to avoid
         triggering additional network fetches. The data change callback is typically
         fired AFTER a network sync, so the repository already has fresh data.
+        
+        Preserves list view scroll position across the update.
         """
+        import sys
+        
+        # Capture current list view position BEFORE updating
+        current_list_dt = None
+        if self._calendar_widget.get_current_view() == ViewType.LIST:
+            current_list_dt = self._calendar_widget.get_list_first_visible_datetime()
+            print(f"DEBUG _on_data_changed: captured list_dt={current_list_dt}", file=sys.stderr)
+        
         self._update_display_from_cache()
         self._sidebar.refresh()
         self._sidebar.update_tooltips()
         self._update_sync_status()
+        
+        # Restore list view position AFTER update
+        if current_list_dt:
+            print(f"DEBUG _on_data_changed: restoring list_dt={current_list_dt}", file=sys.stderr)
+            QTimer.singleShot(50, lambda: self._calendar_widget.scroll_list_to_datetime(current_list_dt))
     
     def _on_sync_status_changed(self, pending_count: int, last_sync_time):
         """Handle sync status change from event store (sync queue callback)."""
