@@ -1673,7 +1673,6 @@ class ListView(QWidget):
         self._content_layout.addStretch()
         
         # Apply pending scroll if set (after events are loaded)
-        from PySide6.QtCore import QTimer
         if self._pending_scroll_datetime:
             target_dt = self._pending_scroll_datetime
             self._pending_scroll_datetime = None  # Clear before applying
@@ -1743,11 +1742,10 @@ class ListView(QWidget):
         
         if target_widget:
             # Scroll so the target widget is at the top
-            from PySide6.QtCore import QTimer
+            # Defer to ensure layout is complete
             def _scroll_to_widget():
                 widget_pos = target_widget.mapTo(self._content, target_widget.rect().topLeft())
                 self._scroll.verticalScrollBar().setValue(max(0, widget_pos.y() - 8))
-            # Defer to ensure layout is complete
             QTimer.singleShot(50, _scroll_to_widget)
     
     def get_date_range(self) -> tuple[datetime, datetime]:
@@ -1803,7 +1801,6 @@ class ListView(QWidget):
             # Use ensureWidgetVisible to scroll the target into view at the top
             self._scroll.ensureWidgetVisible(target_widget, 0, 0)
             # Then adjust to put it at the top
-            from PySide6.QtCore import QTimer
             def _scroll_to_top():
                 widget_pos = target_widget.mapTo(self._content, target_widget.rect().topLeft())
                 self._scroll.verticalScrollBar().setValue(max(0, widget_pos.y() - 8))

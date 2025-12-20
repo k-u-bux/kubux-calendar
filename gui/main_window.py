@@ -609,17 +609,18 @@ class MainWindow(QMainWindow):
             self._sidebar.update_tooltips()
             QApplication.processEvents()  # Show sidebar immediately
             
-            # Restore scroll position early (so it's ready when events load)
+            # Restore scroll position after layout settles
+            # Use minimal delay to avoid re-entrancy during processEvents
             if not getattr(self, '_skip_auto_scroll_restore', False):
-                QTimer.singleShot(50, self._restore_scroll_position)
+                QTimer.singleShot(0, self._restore_scroll_position)
             
-            # Phase 2 & 3: Load events progressively via timer
+            # Phase 2 & 3: Load events progressively via timer (yield to event loop)
             self._pending_sources_to_load = None  # Will be populated by _load_events_progressively
-            QTimer.singleShot(10, self._load_events_progressively)
+            QTimer.singleShot(0, self._load_events_progressively)
         else:
             self._statusbar.showMessage("No cached data - syncing from servers...")
-            # No cached data - still schedule network sync
-            QTimer.singleShot(100, self._do_async_network_refresh)
+            # No cached data - start network sync immediately
+            QTimer.singleShot(0, self._do_async_network_refresh)
     
     def _load_events_progressively(self):
         """Load events from sources progressively, visible sources first.
@@ -641,8 +642,8 @@ class MainWindow(QMainWindow):
             self._pending_sources_to_load = None
             self._update_sync_status()
             
-            # Schedule network sync
-            QTimer.singleShot(500, self._do_async_network_refresh)
+            # Start network sync immediately (loading is complete)
+            QTimer.singleShot(0, self._do_async_network_refresh)
             return
         
         # Load next source
@@ -673,7 +674,7 @@ class MainWindow(QMainWindow):
         self._statusbar.showMessage("Syncing from servers...")
         QApplication.processEvents()
         
-        self.event_store.refresh_all_async()
+        self.event_store.refresh_all_in_background()
         
         self._sidebar.refresh()
         self._refresh_events()
@@ -789,37 +790,23 @@ class MainWindow(QMainWindow):
         self._update_sync_status()
     
     def _on_auto_refresh(self):
-        """Handle auto-refresh timer tick - refresh sources that are due."""
+        """Handle auto-refresh timer tick - refresh sources that are due (non-blocking)."""
         import sys
-        sources_refreshed = self.event_store.refresh_due_sources()
-        if sources_refreshed:
-            print(f"DEBUG: Auto-refresh refreshed {len(sources_refreshed)} sources", file=sys.stderr)
+        # Use background refresh - UI remains responsive
+        self.event_store.refresh_due_sources_in_background()
         
         # Update sidebar tooltips with new sync times
         self._sidebar.update_tooltips()
     
     def _on_sync_timer(self):
-        """Handle sync timer tick - attempt to sync pending changes with exponential backoff."""
+        """Handle sync timer tick - attempt to sync pending changes (non-blocking)."""
         import sys
         
         pending_count = self.event_store.get_pending_sync_count()
         if pending_count > 0:
             print(f"DEBUG: Sync timer - {pending_count} pending changes (interval: {self._current_sync_interval}s)", file=sys.stderr)
-            success, failed = self.event_store.sync_pending_changes()
-            
-            if success > 0:
-                print(f"DEBUG: Synced {success} changes, {failed} failed", file=sys.stderr)
-                # Reset to initial interval on success
-                self._current_sync_interval = self.config.sync.initial_interval
-                print(f"DEBUG: Reset sync interval to {self._current_sync_interval}s", file=sys.stderr)
-            elif failed > 0:
-                # Increase interval on failure (exponential backoff)
-                new_interval = int(self._current_sync_interval * self.config.sync.backoff_multiplier)
-                self._current_sync_interval = min(new_interval, self.config.sync.max_interval)
-                print(f"DEBUG: Backoff - next sync interval: {self._current_sync_interval}s", file=sys.stderr)
-            
-            # Update timer with new interval
-            self._sync_timer.setInterval(self._current_sync_interval * 1000)
+            # Use background sync - UI remains responsive
+            self.event_store.sync_pending_in_background()
         
         # Update status bar
         self._update_sync_status()
@@ -838,15 +825,14 @@ class MainWindow(QMainWindow):
             self._statusbar.showMessage(f"Last sync at {time_str}, {cached_count} events cached")
     
     def _on_reload_clicked(self):
-        """Handle reload button click - force refresh from server."""
+        """Handle reload button click - force refresh from server (non-blocking)."""
         import sys
-        print("DEBUG: Reload clicked - calling event_store.refresh()", file=sys.stderr)
+        print("DEBUG: Reload clicked - calling event_store.refresh_in_background()", file=sys.stderr)
         self._statusbar.showMessage("Reloading from server...")
-        QApplication.processEvents()
         
-        # This will reconnect to CalDAV servers and re-fetch ICS subscriptions,
-        # then invalidate cache and call _on_data_changed() -> _refresh_events()
-        self.event_store.refresh()
+        # Use background refresh - UI remains responsive
+        # Data change callback will trigger _refresh_events() when complete
+        self.event_store.refresh_in_background()
     
     def _on_config_file_changed(self, path: str):
         """Handle config file change - reload configuration."""
@@ -984,8 +970,9 @@ class MainWindow(QMainWindow):
                 self._config_watcher.addPath(str(config_path))
                 print(f"DEBUG: Re-added config path to watcher: {config_path}", file=sys.stderr)
             
-            # Restore scroll position after UI has settled (longer delay for config reload)
-            QTimer.singleShot(500, self._restore_scroll_position)
+            # Restore scroll position after layout is complete
+            QApplication.processEvents()
+            self._restore_scroll_position()
             
             self._statusbar.showMessage("Configuration applied successfully", 3000)
             print("DEBUG: Config applied successfully", file=sys.stderr)
@@ -1162,6 +1149,10 @@ class MainWindow(QMainWindow):
         
         # Save state
         self._save_state()
+        
+        # Shutdown network worker (don't wait for pending operations)
+        from backend.network_worker import shutdown_network_worker
+        shutdown_network_worker()
         
         super().closeEvent(event)
 

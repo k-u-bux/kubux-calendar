@@ -16,6 +16,7 @@ from .caldav_client import CalDAVClient, CalendarInfo
 from .ics_subscription import ICSSubscription, ICSSubscriptionManager
 from .event_wrapper import CalEvent, CalendarSource, EventInstance
 from .event_repository import EventRepository
+from .network_worker import get_network_worker, NetworkWorker
 
 
 def _debug_print(message: str) -> None:
@@ -1008,3 +1009,311 @@ class EventStore:
             return False
         
         return False
+    
+    # ==================== Non-Blocking Network Operations ====================
+    
+    def _setup_network_worker(self) -> NetworkWorker:
+        """Get or set up the network worker with proper signal connections."""
+        worker = get_network_worker()
+        # Connect signals if not already connected (check via attribute)
+        if not getattr(self, '_network_worker_connected', False):
+            worker.operation_finished.connect(self._on_network_operation_finished)
+            worker.operation_error.connect(self._on_network_operation_error)
+            self._network_worker_connected = True
+        return worker
+    
+    def refresh_all_in_background(self) -> None:
+        """
+        Connect to all servers and refresh data in background thread.
+        
+        Non-blocking version of refresh_all_async().
+        UI remains responsive while network operations happen.
+        """
+        worker = self._setup_network_worker()
+        worker.submit("refresh_all", self._do_refresh_all)
+    
+    def _do_refresh_all(self) -> dict:
+        """Background worker for refresh_all - returns status dict."""
+        from .event_storage import SourceMetadata
+        now = datetime.now()
+        results = {"caldav_connected": [], "caldav_failed": [], "ics_refreshed": [], "ics_failed": []}
+        
+        # Connect CalDAV clients
+        for account in self.config.nextcloud_accounts:
+            try:
+                password = account.get_password(self.config.password_program)
+                client = CalDAVClient(
+                    url=account.url,
+                    username=account.username,
+                    password=password,
+                    account_name=account.name
+                )
+                
+                if client.connect():
+                    _debug_print(f"CalDAV {account.name}: connected (background)")
+                    self._caldav_clients[account.name] = client
+                    results["caldav_connected"].append(account.name)
+                    
+                    for cal in client.get_calendars():
+                        source_id = f"caldav:{account.name}:{cal.id}"
+                        default_color = cal.color if cal.color != "#4285f4" else account.color
+                        
+                        # Update or create source
+                        if source_id not in self._calendar_sources:
+                            source = CalendarSource(
+                                id=source_id,
+                                name=cal.name,
+                                color=self._colors.get(source_id, default_color),
+                                account_name=account.name,
+                                read_only=not cal.writable,
+                                source_type="caldav"
+                            )
+                            self._calendar_sources[source_id] = source
+                            self._repository.add_source(source)
+                            
+                            if source_id in self._visibility:
+                                source.visible = self._visibility[source_id]
+                            if account.refresh_interval is not None:
+                                self._source_refresh_intervals[source_id] = account.refresh_interval
+                            if account.outdate_threshold is not None:
+                                self._source_outdate_thresholds[source_id] = account.outdate_threshold
+                        else:
+                            source = self._calendar_sources[source_id]
+                            source.read_only = not cal.writable
+                            source.is_outdated = False
+                        
+                        self._caldav_calendars[source_id] = cal
+                        
+                        # Persist source metadata with last_success
+                        metadata = SourceMetadata(
+                            source_id=source_id,
+                            name=cal.name,
+                            color=default_color,
+                            read_only=not cal.writable,
+                            source_type="caldav",
+                            account_name=account.name,
+                            last_success=now,
+                        )
+                        self._repository.save_source_metadata(metadata)
+                        
+                        # Update success time
+                        self._source_last_success[source_id] = now
+                        self._source_last_attempt[source_id] = now
+                else:
+                    _debug_print(f"CalDAV {account.name}: connection failed (background)")
+                    results["caldav_failed"].append(account.name)
+            except Exception as e:
+                _debug_print(f"CalDAV {account.name}: error (background): {e}")
+                results["caldav_failed"].append(account.name)
+        
+        # Refresh ICS subscriptions
+        for source_id, sub in self._ics_subscriptions.items():
+            self._source_last_attempt[source_id] = now
+            success = sub.fetch()
+            if success:
+                source = self._calendar_sources.get(source_id)
+                if source:
+                    events = sub.get_events(source, force_fetch=False)
+                    if events is not None:
+                        self._repository.store_events(source_id, events)
+                    self._source_last_success[source_id] = now
+                    
+                    # Persist metadata with last_success
+                    metadata = SourceMetadata(
+                        source_id=source_id,
+                        name=source.name,
+                        color=source.color,
+                        read_only=True,
+                        source_type="ics",
+                        last_success=now,
+                    )
+                    self._repository.save_source_metadata(metadata)
+                    results["ics_refreshed"].append(source_id)
+                    _debug_print(f"ICS {source_id}: refreshed (background)")
+            else:
+                results["ics_failed"].append(source_id)
+                _debug_print(f"ICS {source_id}: fetch failed (background)")
+        
+        self._last_sync_time = now
+        return results
+    
+    def refresh_in_background(self, calendar_id: Optional[str] = None) -> None:
+        """
+        Refresh data from sources in background thread.
+        
+        Non-blocking version of refresh().
+        """
+        worker = self._setup_network_worker()
+        op_id = f"refresh:{calendar_id}" if calendar_id else "refresh:all"
+        worker.submit(op_id, self._do_refresh, calendar_id)
+    
+    def _do_refresh(self, calendar_id: Optional[str] = None) -> dict:
+        """Background worker for refresh - returns status dict."""
+        now = datetime.now()
+        results = {"synced": [], "failed": []}
+        
+        # Try to connect any CalDAV accounts that don't have clients yet
+        self._try_connect_missing_caldav_clients()
+        
+        if calendar_id:
+            source = self._calendar_sources.get(calendar_id)
+            if source:
+                self._source_last_attempt[calendar_id] = now
+                
+                if source.source_type == "ics":
+                    sub = self._ics_subscriptions.get(calendar_id)
+                    if sub:
+                        success = sub.fetch()
+                        if success:
+                            events = sub.get_events(source, force_fetch=False)
+                            if events is not None:
+                                self._repository.store_events(calendar_id, events)
+                            results["synced"].append(calendar_id)
+                        else:
+                            results["failed"].append(calendar_id)
+                            
+                elif source.source_type == "caldav":
+                    client = self._caldav_clients.get(source.account_name)
+                    if client and client.reconnect():
+                        for cal in client.get_calendars():
+                            cid = f"caldav:{source.account_name}:{cal.id}"
+                            if cid == calendar_id:
+                                self._caldav_calendars[cid] = cal
+                                if self._cache_start and self._cache_end:
+                                    events = client.get_events(cal, source, self._cache_start, self._cache_end)
+                                    if events is not None:
+                                        self._repository.store_events(cid, events)
+                                results["synced"].append(cid)
+                    else:
+                        results["failed"].append(calendar_id)
+        else:
+            # Refresh all sources
+            for name, client in self._caldav_clients.items():
+                for cid in list(self._calendar_sources.keys()):
+                    if cid.startswith(f"caldav:{name}:"):
+                        self._source_last_attempt[cid] = now
+                
+                if client.reconnect():
+                    for cal in client.get_calendars():
+                        cid = f"caldav:{name}:{cal.id}"
+                        self._caldav_calendars[cid] = cal
+                        source = self._calendar_sources.get(cid)
+                        if source and self._cache_start and self._cache_end:
+                            events = client.get_events(cal, source, self._cache_start, self._cache_end)
+                            if events is not None:
+                                self._repository.store_events(cid, events)
+                        results["synced"].append(cid)
+            
+            for source_id, sub in self._ics_subscriptions.items():
+                self._source_last_attempt[source_id] = now
+                success = sub.fetch()
+                if success:
+                    source = self._calendar_sources.get(source_id)
+                    if source:
+                        events = sub.get_events(source, force_fetch=False)
+                        if events is not None:
+                            self._repository.store_events(source_id, events)
+                    results["synced"].append(source_id)
+                else:
+                    results["failed"].append(source_id)
+        
+        # Update success times for synced sources
+        for source_id in results["synced"]:
+            self._source_last_success[source_id] = now
+            source = self._calendar_sources.get(source_id)
+            if source:
+                source.last_sync_time = now
+        
+        if results["synced"]:
+            self._last_sync_time = now
+        
+        return results
+    
+    def sync_pending_in_background(self) -> None:
+        """
+        Sync pending changes in background thread.
+        
+        Non-blocking version of sync_pending_changes().
+        """
+        pending_events = self._repository.get_pending_events()
+        if not pending_events:
+            return
+        
+        worker = self._setup_network_worker()
+        worker.submit("sync_pending", self._do_sync_pending)
+    
+    def _do_sync_pending(self) -> dict:
+        """Background worker for sync_pending - returns status dict."""
+        pending_events = self._repository.get_pending_events()
+        results = {"success": 0, "failed": 0, "deleted_uids": []}
+        
+        for event in pending_events:
+            try:
+                result = self._sync_event(event)
+                
+                if result:
+                    if event.pending_operation == "delete":
+                        results["deleted_uids"].append((event.source.id, event.uid))
+                    else:
+                        self._repository.clear_pending(event.uid)
+                    results["success"] += 1
+                else:
+                    results["failed"] += 1
+            except Exception as e:
+                _debug_print(f"Sync failed for {event.uid} (background): {e}")
+                results["failed"] += 1
+        
+        if results["success"] > 0:
+            self._last_sync_time = datetime.now()
+        
+        return results
+    
+    def refresh_due_sources_in_background(self) -> None:
+        """
+        Refresh all due sources in background thread.
+        
+        Non-blocking version of refresh_due_sources().
+        """
+        sources_to_refresh = self.get_sources_needing_refresh()
+        if not sources_to_refresh:
+            return
+        
+        worker = self._setup_network_worker()
+        worker.submit("refresh_due", self._do_refresh_due, sources_to_refresh)
+    
+    def _do_refresh_due(self, source_ids: list[str]) -> dict:
+        """Background worker for refresh_due_sources."""
+        results = {"refreshed": []}
+        for source_id in source_ids:
+            result = self._do_refresh(source_id)
+            if result.get("synced"):
+                results["refreshed"].extend(result["synced"])
+        return results
+    
+    def _on_network_operation_finished(self, operation_id: str, result: object) -> None:
+        """Handle completion of background network operation."""
+        _debug_print(f"Network operation finished: {operation_id}")
+        
+        if operation_id == "refresh_all":
+            # Notify UI to update
+            self._notify_change()
+        
+        elif operation_id.startswith("refresh:"):
+            self._notify_change()
+        
+        elif operation_id == "sync_pending":
+            # Handle deleted events
+            if isinstance(result, dict):
+                for source_id, uid in result.get("deleted_uids", []):
+                    self._repository.remove_event(source_id, uid)
+            self._notify_change()
+            self._notify_sync_status()
+        
+        elif operation_id == "refresh_due":
+            self._notify_change()
+    
+    def _on_network_operation_error(self, operation_id: str, error_msg: str) -> None:
+        """Handle error from background network operation."""
+        _debug_print(f"Network operation error: {operation_id}: {error_msg}")
+        # Still notify in case partial data was updated
+        self._notify_change()
