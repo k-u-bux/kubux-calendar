@@ -87,9 +87,6 @@ class ToggleLabel(QLabel):
         self.toggled.emit(self._checked)
         
     def _update_style(self):
-        # opacity = "1.0" if self._checked else "0.4"
-        # self.setStyleSheet(f"opacity: {opacity};")  # May not work directly
-        # Alternative: use color with alpha
         color = "black" if self._checked else "rgba(0,0,0,0.4)"
         self.setStyleSheet(f"color: {color};")
 
@@ -122,11 +119,12 @@ class CalendarSidebarItem(QFrame):
         self._color_box.color_changed.connect(self._on_color_picked)
         layout.addWidget(self._color_box)
         
-        # Checkbox
-        self._checkbox = ToggleLabel(self.calendar.name)
-        self._checkbox.setChecked(self.calendar.visible)
-        self._checkbox.toggled.connect(self._on_checkbox_changed)
-        layout.addWidget(self._checkbox, 1)
+        # Visibility indicator (clickable)
+        # self._visibility_toggle = QCheckBox(self.calendar.name)
+        self._visibility_toggle = ToggleLabel(self.calendar.name)
+        self._visibility_toggle.setChecked(self.calendar.visible)
+        self._visibility_toggle.toggled.connect(self._on_visibility_toggle_changed)
+        layout.addWidget(self._visibility_toggle, 1)
         
         # Source type indicator
         if self.calendar.source_type == "ics":
@@ -134,15 +132,14 @@ class CalendarSidebarItem(QFrame):
             type_label.setToolTip("ICS Subscription (read-only)")
             layout.addWidget(type_label)
     
-    def _on_checkbox_changed(self, checked: bool):
-        # toggled signal passes the new checked state directly
+    def _on_visibility_toggle_changed(self, checked: bool):
         self.on_toggle(self.calendar.id, checked)
     
     def _on_color_picked(self, color: str):
         self.on_color_change(self.calendar.id, color)
     
     def set_visible(self, visible: bool):
-        self._checkbox.setChecked(visible)
+        self._visibility_toggle.setChecked(visible)
     
     def set_color(self, color: str):
         self._color_box.set_color(color)
@@ -163,22 +160,22 @@ class CalendarSidebar(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(4)
         
-        # Header
-        self._header = QLabel(self.event_store.config.labels.sidebar_header)
-        if self._interface_font:
-            header_font = QFont(self._interface_font)
-            header_font.setBold(True)
-            self._header.setFont(header_font)
-        else:
-            font = self._header.font()
-            font.setBold(True)
-            self._header.setFont(font)
-        layout.addWidget(self._header)
-        
-        # Separator
-        sep = QFrame()
-        sep.setFrameStyle(QFrame.HLine | QFrame.Sunken)
-        layout.addWidget(sep)
+        # # Header
+        # self._header = QLabel(self.event_store.config.labels.sidebar_header)
+        # if self._interface_font:
+        #     header_font = QFont(self._interface_font)
+        #     header_font.setBold(True)
+        #     self._header.setFont(header_font)
+        # else:
+        #     font = self._header.font()
+        #     font.setBold(True)
+        #     self._header.setFont(font)
+        # layout.addWidget(self._header)
+        # 
+        # # Separator
+        # sep = QFrame()
+        # sep.setFrameStyle(QFrame.HLine | QFrame.Sunken)
+        # layout.addWidget(sep)
         
         # Calendar list
         self._list_layout = QVBoxLayout()
