@@ -1,46 +1,34 @@
 """
-Kubux Calendar Backend Module
+Kubux Calendar Backend v2
 
-Three-tier event model:
-- CalEvent: Master event (what gets synced)
-- EventInstance: A specific occurrence (expanded from CalEvent)
-- InstanceSlice: Display portion on single day (maps to GUI rectangle)
-
-Modules:
-- config.py: Configuration parsing
-- caldav_client.py: CalDAV client for Nextcloud, returns CalEvent
-- ics_subscription.py: ICS subscription fetching, returns CalEvent
-- event_wrapper.py: CalEvent, EventInstance, InstanceSlice definitions
-- event_repository.py: Stores CalEvent, expands to EventInstance
-- event_store.py: High-level API for GUI
+Functional, immutable backend implementation replacing v1 object-oriented architecture.
 """
 
-from .config import Config
-from .caldav_client import CalDAVClient, CalendarInfo
-from .ics_subscription import ICSSubscription, ICSSubscriptionManager
-from .event_wrapper import (
-    CalEvent,
-    CalendarSource,
-    EventInstance,
-    InstanceSlice,
-    create_instance,
-    create_slices,
-)
-from .event_repository import EventRepository
-from .event_store import EventStore
+__version__ = "2.0.0"
 
-__all__ = [
-    'Config',
-    'CalDAVClient',
-    'CalendarInfo',
-    'ICSSubscription',
-    'ICSSubscriptionManager',
-    'EventStore',
-    'CalEvent',
-    'CalendarSource',
-    'EventInstance',
-    'InstanceSlice',
-    'create_instance',
-    'create_slices',
-    'EventRepository',
-]
+# Re-export shared components
+from .interval_tree import IntervalTree, IntervalHandle
+from .task_dispatch import (
+    dispatch_task,
+    is_pending,
+    tasks_are_pending,
+    count_pending_tasks,
+    cancel_task,
+    shutdown_tasks,
+    wait_for_tasks,
+)
+from .timezone_utils import (
+    get_local_timezone,
+    to_local_datetime,
+    to_utc_datetime,
+    utc_to_local_naive,
+    local_naive_to_utc,
+    to_local_hour,
+    set_timezone,
+)
+
+# v2 components
+from .event import ImmutableEvent, SyncState
+from .event_fs import EventFS
+from .event_index import EventIndex
+from .sync_manager import SyncManager, SyncStatus, SyncResult

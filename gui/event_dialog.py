@@ -19,13 +19,13 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QDateTime
 from PySide6.QtGui import QFont, QCloseEvent, QFontMetrics
 
-from backend.event_wrapper import CalEvent, CalendarSource, EventInstance
-from backend.event_store import EventStore
-
-# EventData can be either EventInstance (received from main_window) or CalEvent (from create_event)
-EventData = EventInstance
+from backend.event_store import EventStore, CalendarSource
+from backend.event import ImmutableEvent as EventData
 from dataclasses import dataclass
 from typing import Optional
+
+from backend.timezone_utils import utc_to_local_naive as utc_to_local, local_naive_to_utc as local_to_utc
+
 
 # Simple RecurrenceRule for UI purposes
 # The actual RRULE is stored in icalendar.Event
@@ -37,7 +37,6 @@ class RecurrenceRule:
     count: Optional[int] = None
     until: Optional[datetime] = None
     by_day: Optional[list[str]] = None
-from backend.timezone_utils import utc_to_local_naive as utc_to_local, local_naive_to_utc as local_to_utc
 
 
 class RecurrenceWidget(QGroupBox):
@@ -484,9 +483,9 @@ class EventDialog(QWidget):
             else:
                 QMessageBox.critical(self, "Error", "Failed to create event.")
         else:
-            # Get the underlying CalEvent for modification
-            # (EventInstance.event is the CalEvent)
-            cal_event = self.event_data.event if hasattr(self.event_data, 'event') else self.event_data
+            # Get the underlying ImmutableEvent for modification
+            # (EventInstanceV2.event is the EventInstanceV2 itself)
+            cal_event = self.event_data
             
             # Check if calendar changed
             selected_calendar_id = self._calendar_combo.currentData()
@@ -495,15 +494,7 @@ class EventDialog(QWidget):
             
             if calendar_changed:
                 # Move event to new calendar (creates in new, deletes from old)
-                # First update the event data
-                cal_event.summary = title
-                cal_event.start = start_dt
-                cal_event.end = end_dt
-                cal_event.description = self._description_edit.toPlainText()
-                cal_event.location = self._location_edit.text().strip()
-                cal_event.all_day = self._all_day_check.isChecked()
-                cal_event.recurrence = recurrence
-                
+                # In v2, move_event handles this
                 moved_event = self.event_store.move_event(cal_event, selected_calendar_id)
                 if moved_event:
                     # Save last used calendar for new events
@@ -514,14 +505,6 @@ class EventDialog(QWidget):
                     QMessageBox.critical(self, "Error", "Failed to move event to new calendar.")
             else:
                 # Same calendar - just update
-                cal_event.summary = title
-                cal_event.start = start_dt
-                cal_event.end = end_dt
-                cal_event.description = self._description_edit.toPlainText()
-                cal_event.location = self._location_edit.text().strip()
-                cal_event.all_day = self._all_day_check.isChecked()
-                cal_event.recurrence = recurrence  # Apply recurrence rule
-                
                 if self.event_store.update_event(cal_event):
                     self.event_saved.emit(self.event_data)
                     self.close()
@@ -532,8 +515,8 @@ class EventDialog(QWidget):
         if self.event_data is None:
             return
         
-        # Get the underlying CalEvent for deletion
-        cal_event = self.event_data.event if hasattr(self.event_data, 'event') else self.event_data
+        # Get the underlying EventInstanceV2 for deletion
+        cal_event = self.event_data
         
         if self.event_data.is_recurring:
             result = QMessageBox.question(self, "Delete Recurring Event",

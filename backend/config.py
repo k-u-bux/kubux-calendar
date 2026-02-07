@@ -1,17 +1,10 @@
 """
-Configuration parser for Kubux Calendar.
-
-Handles TOML file parsing and secure password retrieval via external programs.
+Configuration for Kubux Calendar v2.
 """
 
-import tomllib
-import subprocess
-import os
-import sys
+from typing import Optional
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Optional
-
 
 @dataclass
 class NextcloudAccount:
@@ -20,15 +13,16 @@ class NextcloudAccount:
     url: str
     username: str
     password_key: str
-    color: str = "#4285f4"  # Default Google Blue
-    refresh_interval: Optional[int] = None  # Per-source override (None = use global)
-    outdate_threshold: Optional[int] = None  # Per-source override (None = use global)
+    color: str = "#4285f4"
+    refresh_interval: Optional[int] = None
+    outdate_threshold: Optional[int] = None
     
     _password: Optional[str] = field(default=None, repr=False)
     
     def get_password(self, password_program: str) -> str:
         """Retrieve password using the configured password program."""
         if self._password is None:
+            import subprocess
             try:
                 result = subprocess.run(
                     [password_program, self.password_key],
@@ -48,16 +42,14 @@ class NextcloudAccount:
                 raise RuntimeError(f"Password program not found: {password_program}")
         return self._password
 
-
 @dataclass
 class ICSSubscription:
     """Configuration for a read-only ICS subscription."""
     name: str
     url: str
-    color: str = "#34a853"  # Default Google Green
-    refresh_interval: Optional[int] = None  # Per-source override (None = use global)
-    outdate_threshold: Optional[int] = None  # Per-source override (None = use global)
-
+    color: str = "#34a853"
+    refresh_interval: Optional[int] = None
+    outdate_threshold: Optional[int] = None
 
 @dataclass
 class LayoutConfig:
@@ -66,69 +58,50 @@ class LayoutConfig:
     interface_font_size: int = 12
     text_font: str = "Sans"
     text_font_size: int = 12
-    hour_height: int = 60  # Height of an hour slot in day/week view in pixels
-    drag_snap_minutes: int = 5  # Snap interval when dragging events (minutes)
-
+    hour_height: int = 60
+    drag_snap_minutes: int = 5
 
 @dataclass
 class BindingsConfig:
     """Configuration for keyboard bindings."""
-    next: str = "Right"  # Key to go to next period
-    prev: str = "Left"   # Key to go to previous period
-    new_event: str = ""  # Key to create a new event
-
+    next: str = "Right"
+    prev: str = "Left"
+    new_event: str = ""
 
 @dataclass
 class ColorsConfig:
     """Configuration for UI colors."""
-    # Calendar/Grid Colors
     day_column_background: str = "#ffffff"
     hour_line: str = "#e8e8e8"
     cell_border: str = "#e0e0e0"
     allday_cell_background: str = "#fafafa"
-    current_time_line: str = "#d32f2f"      # Red line indicating current time
-    
-    # Header/Navigation Colors
+    current_time_line: str = "#d32f2f"
     header_background: str = "#f5f5f5"
     today_highlight_background: str = "#e3f2fd"
     today_highlight_text: str = "#1976d2"
-    
-    # Month View Colors
     month_cell_current: str = "#ffffff"
     month_cell_other: str = "#f5f5f5"
     month_text_current: str = "#000000"
     month_text_other: str = "#999999"
-    
-    # UI Element Colors
     color_box_border: str = "#999999"
     secondary_text: str = "rgba(0, 0, 0, 0.6)"
     tertiary_text: str = "rgba(0, 0, 0, 0.7)"
-    
-    # Button Colors (Event Dialog)
     button_save_background: str = "#007bff"
     button_save_text: str = "#ffffff"
     button_delete_background: str = "#dc3545"
     button_delete_text: str = "#ffffff"
-    
-    # Notice/Alert Colors
     readonly_notice_background: str = "#fff3cd"
     readonly_notice_text: str = "#856404"
-
 
 @dataclass
 class LabelsConfig:
     """Configuration for UI labels."""
-    # Main Window Labels
     window_title: str = "Kubux Calendar"
     sidebar_header: str = "Calendars"
-    
-    # View Switcher Labels
     view_day: str = "Day"
     view_week: str = "Week"
     view_month: str = "Month"
     view_list: str = "List"
-    
-    # Toolbar Button Labels
     button_prev: str = "◀"
     button_next: str = "▶"
     button_today: str = "Today"
@@ -136,8 +109,6 @@ class LabelsConfig:
     button_reload: str = "Reload"
     button_edit_config: str = "Edit Config"
     button_quit: str = "Quit"
-    
-    # Event Dialog Labels
     dialog_new_event: str = "New Event"
     dialog_edit_event: str = "Edit: {}"
     field_title: str = "Title:"
@@ -150,8 +121,6 @@ class LabelsConfig:
     button_save: str = "Save"
     button_cancel: str = "Cancel"
     button_delete: str = "Delete"
-    
-    # Recurrence Labels
     recurrence_title: str = "Recurrence"
     recurrence_repeat: str = "Repeat:"
     recurrence_every: str = "Every:"
@@ -166,8 +135,6 @@ class LabelsConfig:
     end_never: str = "Never"
     end_after_count: str = "After N occurrences"
     end_until_date: str = "Until date"
-    
-    # Miscellaneous Labels
     allday_label: str = "All day"
     no_events: str = "No events"
     location_icon: str = "📍"
@@ -175,22 +142,18 @@ class LabelsConfig:
     readonly_notice: str = "🔒 This event is read-only (from a subscription)"
     last_sync_label: str = "Last sync:"
 
-
 @dataclass
 class SyncConfig:
     """Configuration for sync queue behavior."""
-    initial_interval: int = 10      # Initial sync retry interval in seconds
-    max_interval: int = 300         # Maximum sync retry interval in seconds (5 min)
-    backoff_multiplier: float = 2.0 # Multiplier for exponential backoff
-
+    initial_interval: int = 10
+    max_interval: int = 300
+    backoff_multiplier: float = 2.0
 
 @dataclass
 class LocalizationConfig:
     """Configuration for localized day and month names."""
-    # Default to English abbreviated day names
-    day_names: list[str] = None  # Mon Tue Wed Thu Fri Sat Sun
-    # Default to English full month names
-    month_names: list[str] = None  # January February ... December
+    day_names: list[str] = None
+    month_names: list[str] = None
     
     def __post_init__(self):
         if self.day_names is None:
@@ -209,15 +172,38 @@ class LocalizationConfig:
         """Get localized month name (1=January, 12=December)."""
         return self.month_names[month - 1] if 1 <= month <= len(self.month_names) else ""
 
+# Color palette for calendar auto-assignment
+CALENDAR_COLORS = [
+    '#4285f4', '#34a853', '#ea4335', '#fbbc05', '#9c27b0',
+    '#00bcd4', '#ff5722', '#607d8b', '#e91e63', '#3f51b5',
+]
+
+def get_next_color(used_colors: list[str]) -> str:
+    """Get the next available color from the palette."""
+    for color in CALENDAR_COLORS:
+        if color.lower() not in [c.lower() for c in used_colors]:
+            return color
+    return CALENDAR_COLORS[len(used_colors) % len(CALENDAR_COLORS)]
+
 
 @dataclass
 class Config:
-    """Main configuration container for Kubux Calendar."""
+    """
+    Main configuration container for Kubux Calendar v2.
     
+    Compatible with v1 Config API.
+    """
+    
+    # Required fields
     password_program: str
     state_file: Path
-    refresh_interval: int = 300  # Auto-refresh interval in seconds (0 to disable)
-    outdate_threshold: int = 7200  # Seconds since last successful sync before marking events as unconfirmed (default 2 hours)
+    
+    # Optional fields with defaults
+    cache_dir: Path = field(default_factory=lambda: Path(
+        os.environ.get('XDG_CACHE_HOME', os.path.expanduser('~/.cache'))
+    ) / 'kubux-calendar')
+    refresh_interval: int = 300
+    outdate_threshold: int = 7200
     layout: LayoutConfig = field(default_factory=LayoutConfig)
     bindings: BindingsConfig = field(default_factory=BindingsConfig)
     localization: LocalizationConfig = field(default_factory=LocalizationConfig)
@@ -230,18 +216,26 @@ class Config:
     @classmethod
     def get_default_config_path(cls) -> Path:
         """Get the default configuration file path."""
+        import os
         xdg_config = os.environ.get('XDG_CONFIG_HOME', os.path.expanduser('~/.config'))
         return Path(xdg_config) / 'kubux-calendar' / 'kubux-calendar.toml'
     
     @classmethod
     def get_default_state_path(cls) -> Path:
         """Get the default state file path."""
+        import os
         xdg_state = os.environ.get('XDG_STATE_HOME', os.path.expanduser('~/.local/state'))
         return Path(xdg_state) / 'kubux-calendar' / 'state.json'
     
     @classmethod
     def load(cls, config_path: Optional[Path] = None) -> 'Config':
-        """Load configuration from TOML file."""
+        """
+        Load configuration from TOML file.
+        """
+        import tomllib
+        import os
+        import sys
+        
         if config_path is None:
             config_path = cls.get_default_config_path()
         
@@ -263,17 +257,10 @@ class Config:
         # Parse Nextcloud accounts
         # Supports both [Nextcloud.AccountName] and [Nextcloud] with nested accounts
         nextcloud_accounts = []
-        print(f"DEBUG: TOML data keys: {list(data.keys())}", file=sys.stderr)
         for key, value in data.items():
-            print(f"DEBUG: Checking key '{key}' (type={type(value).__name__})", file=sys.stderr)
-            
             # Format 1: [Nextcloud.AccountName]
             if key.startswith('Nextcloud.') and isinstance(value, dict):
                 account_name = key.split('.', 1)[1]
-                print(f"DEBUG: Found Nextcloud account (dot format): {account_name}", file=sys.stderr)
-                print(f"DEBUG:   url={value.get('url', '')}", file=sys.stderr)
-                print(f"DEBUG:   username={value.get('username', '')}", file=sys.stderr)
-                print(f"DEBUG:   password_key={value.get('password_key', '')}", file=sys.stderr)
                 account = NextcloudAccount(
                     name=account_name,
                     url=value.get('url', ''),
@@ -287,16 +274,9 @@ class Config:
             
             # Format 2: [Nextcloud] with nested [Nextcloud.AccountName] sub-tables
             elif key == 'Nextcloud' and isinstance(value, dict):
-                print(f"DEBUG: Found Nextcloud root section, checking sub-accounts...", file=sys.stderr)
-                print(f"DEBUG:   Sub-keys: {list(value.keys())}", file=sys.stderr)
                 for sub_key, sub_value in value.items():
-                    print(f"DEBUG:   Sub-key '{sub_key}' (type={type(sub_value).__name__})", file=sys.stderr)
                     if isinstance(sub_value, dict):
                         account_name = sub_key
-                        print(f"DEBUG: Found Nextcloud account (nested format): {account_name}", file=sys.stderr)
-                        print(f"DEBUG:     url={sub_value.get('url', '')}", file=sys.stderr)
-                        print(f"DEBUG:     username={sub_value.get('username', '')}", file=sys.stderr)
-                        print(f"DEBUG:     password_key={sub_value.get('password_key', '')}", file=sys.stderr)
                         account = NextcloudAccount(
                             name=account_name,
                             url=sub_value.get('url', ''),
@@ -308,8 +288,6 @@ class Config:
                         )
                         nextcloud_accounts.append(account)
         
-        print(f"DEBUG: Total Nextcloud accounts found: {len(nextcloud_accounts)}", file=sys.stderr)
-        
         # Parse ICS subscriptions
         # Supports both [Subscription.Name] and [Subscription] with nested sub-tables
         ics_subscriptions = []
@@ -317,7 +295,6 @@ class Config:
             # Format 1: [Subscription.Name]
             if key.startswith('Subscription.') and isinstance(value, dict):
                 sub_id = key.split('.', 1)[1]
-                print(f"DEBUG: Found ICS subscription (dot format): {sub_id}", file=sys.stderr)
                 subscription = ICSSubscription(
                     name=value.get('name', sub_id),
                     url=value.get('url', ''),
@@ -329,14 +306,9 @@ class Config:
             
             # Format 2: [Subscription] with nested [Subscription.Name] sub-tables
             elif key == 'Subscription' and isinstance(value, dict):
-                print(f"DEBUG: Found Subscription root section, checking sub-subscriptions...", file=sys.stderr)
-                print(f"DEBUG:   Sub-keys: {list(value.keys())}", file=sys.stderr)
                 for sub_key, sub_value in value.items():
                     if isinstance(sub_value, dict):
                         sub_id = sub_key
-                        print(f"DEBUG: Found ICS subscription (nested format): {sub_id}", file=sys.stderr)
-                        print(f"DEBUG:     url={sub_value.get('url', '')}", file=sys.stderr)
-                        print(f"DEBUG:     name={sub_value.get('name', sub_id)}", file=sys.stderr)
                         subscription = ICSSubscription(
                             name=sub_value.get('name', sub_id),
                             url=sub_value.get('url', ''),
@@ -345,8 +317,6 @@ class Config:
                             outdate_threshold=sub_value.get('outdate_threshold')
                         )
                         ics_subscriptions.append(subscription)
-        
-        print(f"DEBUG: Total ICS subscriptions found: {len(ics_subscriptions)}", file=sys.stderr)
         
         # Parse Layout section
         layout_data = data.get('Layout', {})
@@ -480,27 +450,3 @@ class Config:
             nextcloud_accounts=nextcloud_accounts,
             ics_subscriptions=ics_subscriptions
         )
-
-
-# Colors palette for auto-assignment to calendars
-CALENDAR_COLORS = [
-    '#4285f4',  # Blue
-    '#34a853',  # Green
-    '#ea4335',  # Red
-    '#fbbc05',  # Yellow
-    '#9c27b0',  # Purple
-    '#00bcd4',  # Cyan
-    '#ff5722',  # Deep Orange
-    '#607d8b',  # Blue Grey
-    '#e91e63',  # Pink
-    '#3f51b5',  # Indigo
-]
-
-
-def get_next_color(used_colors: list[str]) -> str:
-    """Get the next available color from the palette."""
-    for color in CALENDAR_COLORS:
-        if color.lower() not in [c.lower() for c in used_colors]:
-            return color
-    # If all colors are used, cycle back
-    return CALENDAR_COLORS[len(used_colors) % len(CALENDAR_COLORS)]

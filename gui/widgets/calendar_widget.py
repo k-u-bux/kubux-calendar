@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont, QFontMetrics, QMouseEvent
 
-from backend.event_wrapper import CalEvent as EventData
+from backend.event import ImmutableEvent as EventData
 from backend.config import LayoutConfig, LocalizationConfig, ColorsConfig, LabelsConfig
 from .event_widget import (
     EventWidget, DraggableEventWidget, DragMode,
@@ -117,8 +117,8 @@ class EventPortion:
         
         Returns None if the event doesn't appear on this day.
         """
-        local_start = to_local_datetime(event.start)
-        local_end = to_local_datetime(event.end)
+        local_start = to_local_datetime(event.start_tz)
+        local_end = to_local_datetime(event.end_tz)
         
         # Check if event appears on this day
         if local_end.date() < day or local_start.date() > day:
@@ -158,8 +158,8 @@ class EventPortion:
         delta = new_portion_start - old_portion_start
         
         # Apply the same delta to the actual event times
-        old_event_start = to_local_datetime(self.event.start)
-        old_event_end = to_local_datetime(self.event.end)
+        old_event_start = to_local_datetime(self.event.start_tz)
+        old_event_end = to_local_datetime(self.event.end_tz)
         
         new_event_start = old_event_start + delta
         new_event_end = old_event_end + delta
@@ -525,8 +525,8 @@ class DayColumnWidget(QWidget):
         """
         self._dragging_event = event
         self._drag_mode = mode
-        self._drag_original_start = to_local_datetime(event.start)
-        self._drag_original_end = to_local_datetime(event.end)
+        self._drag_original_start = to_local_datetime(event.start_tz)
+        self._drag_original_end = to_local_datetime(event.end_tz)
         
         # Find which portion is being dragged
         self._dragging_portion = None
@@ -877,8 +877,8 @@ class DayView(QWidget):
         all_day_events = []
         
         for event in self._events:
-            local_start = to_local_datetime(event.start)
-            local_end = to_local_datetime(event.end)
+            local_start = to_local_datetime(event.start_tz)
+            local_end = to_local_datetime(event.end_tz)
             
             if is_all_day_event(event):
                 # Check if this all-day event spans this date
@@ -1077,8 +1077,8 @@ class WeekView(QWidget):
         all_day_by_day: list[list[EventData]] = [[] for _ in range(7)]
         
         for event in self._events:
-            local_start = to_local_datetime(event.start)
-            local_end = to_local_datetime(event.end)
+            local_start = to_local_datetime(event.start_tz)
+            local_end = to_local_datetime(event.end_tz)
             
             if is_all_day_event(event):
                 # Multi-day all-day events should appear on each day they span
@@ -1323,8 +1323,8 @@ class MonthView(QWidget):
             cell.clear_events()
         
         for event in self._events:
-            local_start = to_local_datetime(event.start)
-            local_end = to_local_datetime(event.end)
+            local_start = to_local_datetime(event.start_tz)
+            local_end = to_local_datetime(event.end_tz)
             
             if is_all_day_event(event):
                 # Multi-day all-day events should appear on each day they span
@@ -1434,8 +1434,8 @@ class ListEventWidget(QFrame):
         text_font = get_text_font()
         
         # Date/time column (two lines, width based on font metrics)
-        local_start = to_local_dt(self.event_data.start)
-        local_end = to_local_dt(self.event_data.end)
+        local_start = to_local_dt(self.event_data.start_tz)
+        local_end = to_local_dt(self.event_data.end_tz)
         
         # Build two-line date/time text
         if self.event_data.all_day:
@@ -1655,8 +1655,13 @@ class ListView(QWidget):
             widget.deleteLater()
         self._event_widgets.clear()
         
-        # Sort events chronologically
-        sorted_events = sorted(self._events, key=lambda e: to_local_datetime(e.start))
+        # Sort events chronologically - handle both naive and aware datetimes
+        def _get_sort_key(event):
+            dt = to_local_datetime(event.start_tz)
+            # Strip timezone for comparison to avoid mixing naive/aware
+            return dt.replace(tzinfo=None) if dt.tzinfo else dt
+        
+        sorted_events = sorted(self._events, key=_get_sort_key)
         
         # Remove the stretch at the end temporarily
         stretch_item = self._content_layout.takeAt(self._content_layout.count() - 1)

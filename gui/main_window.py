@@ -21,11 +21,8 @@ from PySide6.QtCore import Qt, QTimer, Signal, QFileSystemWatcher
 from PySide6.QtGui import QAction, QIcon, QCloseEvent, QFont, QFontMetrics, QKeySequence, QShortcut
 
 from backend.config import Config
-from backend.event_store import EventStore, Event
-from backend.event_wrapper import CalEvent, CalendarSource, EventInstance
-
-# EventInstance is what get_events() returns (has all CalEvent properties via delegation)
-EventData = EventInstance
+from backend.event_store import EventStore, CalendarSource
+from backend.event import ImmutableEvent
 
 from .widgets.calendar_widget import CalendarWidget, ViewType, set_layout_config, set_localization_config, get_localization_config, set_colors_config, set_labels_config
 from .event_dialog import EventDialog
@@ -592,12 +589,12 @@ class MainWindow(QMainWindow):
         self._save_ui_state()
     
     def _initialize_data(self):
-        """Initialize calendar data progressively for fast startup.
+        """Initialize calendar data for immediate UI display.
         
         Phase 1: Load source metadata only (fast) - sidebar appears immediately
-        Phase 2: Load events for visible sources first (shows events quickly)
-        Phase 3: Load events for invisible sources (background)
-        Phase 4: Network sync (already deferred via timer)
+        Phase 2: Bulk load ALL cached events for immediate display
+        Phase 3: Show window with cached events NOW
+        Phase 4: Background network refresh (non-blocking via task_dispatch)
         """
         # Force window to paint first (eliminates black flash)
         self.repaint()
@@ -611,18 +608,26 @@ class MainWindow(QMainWindow):
             self._sidebar.update_tooltips()
             QApplication.processEvents()  # Show sidebar immediately
             
-            # Restore scroll position after layout settles
+            # Phase 2: Bulk load ALL cached events for immediate display
+            self._statusbar.showMessage("Loading cached events...")
+            QApplication.processEvents()
+            cached_count = self.event_store.load_all_cached_events()
+            
+            # Phase 3: Show events NOW - window is already visible
+            self._refresh_events()  # Loads events using get_events() which now has cached data
+            self._statusbar.showMessage(f"Loaded {cached_count} cached events", 2000)
+            
+            # Restore scroll position after events are displayed
             # Use minimal delay to avoid re-entrancy during processEvents
             if not getattr(self, '_skip_auto_scroll_restore', False):
                 QTimer.singleShot(0, self._restore_scroll_position)
             
-            # Phase 2 & 3: Load events progressively via timer (yield to event loop)
-            self._pending_sources_to_load = None  # Will be populated by _load_events_progressively
-            QTimer.singleShot(0, self._load_events_progressively)
+            # Phase 4: Background network refresh (non-blocking)
+            QTimer.singleShot(100, self._do_async_network_refresh)
         else:
             self._statusbar.showMessage("No cached data - syncing from servers...")
-            # No cached data - start network sync immediately
-            QTimer.singleShot(0, self._do_async_network_refresh)
+            # No cached data - start network sync immediately (background)
+            QTimer.singleShot(100, self._do_async_network_refresh)
     
     def _load_events_progressively(self):
         """Load events from sources progressively, visible sources first.
@@ -1011,22 +1016,22 @@ class MainWindow(QMainWindow):
         """Handle double-click on empty time slot to create event."""
         self._open_event_dialog(initial_datetime=dt)
     
-    def _on_event_clicked(self, event: EventData):
+    def _on_event_clicked(self, event: ImmutableEvent):
         """Handle single click on event - open for editing."""
         self._open_event_dialog(event=event)
     
-    def _on_event_double_clicked(self, event: EventData):
+    def _on_event_double_clicked(self, event: ImmutableEvent):
         """Handle double-click on event to edit."""
         self._open_event_dialog(event=event)
     
-    def _on_event_time_changed(self, event: EventData, new_start: datetime, new_end: datetime):
+    def _on_event_time_changed(self, event: ImmutableEvent, new_start: datetime, new_end: datetime):
         """Handle event time change from drag-and-drop."""
         import sys
         
         # Skip if times haven't actually changed
         from backend.timezone_utils import to_local_datetime
-        old_start = to_local_datetime(event.start)
-        old_end = to_local_datetime(event.end)
+        old_start = to_local_datetime(event.start_tz)
+        old_end = to_local_datetime(event.end_tz)
         
         # Compare times (ignoring timezone for comparison)
         if (new_start.replace(tzinfo=None) == old_start.replace(tzinfo=None) and
@@ -1060,21 +1065,11 @@ class MainWindow(QMainWindow):
         new_start_utc = local_naive_to_utc(new_start)
         new_end_utc = local_naive_to_utc(new_end)
         
-        # Get the underlying CalEvent for modification
-        # (EventInstance.event is the CalEvent, EventInstance itself is read-only display)
-        cal_event = event.event if hasattr(event, 'event') else event
+        # Update the event's times
+        updated_event = event.with_times(new_start_utc, new_end_utc)
         
-        # Update the CalEvent's times
-        cal_event.start = new_start_utc
-        cal_event.end = new_end_utc
-        
-        # Mark as pending BEFORE sync and refresh to show triangle
-        self.event_store._repository.mark_pending(cal_event.uid, "update")
-        self._refresh_events()
-        QApplication.processEvents()  # Force immediate repaint
-
         # Save through event store (sync to server)
-        success = self.event_store.update_event(cal_event)
+        success = self.event_store.update_event(updated_event)
         if success:
             self._refresh_events()
         else:
@@ -1092,7 +1087,7 @@ class MainWindow(QMainWindow):
     
     def _open_event_dialog(
         self,
-        event: Optional[EventData] = None,
+        event: Optional[ImmutableEvent] = None,
         initial_datetime: Optional[datetime] = None
     ):
         """Open an event dialog window."""
@@ -1111,11 +1106,11 @@ class MainWindow(QMainWindow):
         dialog.raise_()
         dialog.activateWindow()
     
-    def _on_event_saved(self, event: EventData):
+    def _on_event_saved(self, event: ImmutableEvent):
         """Handle event saved."""
         self._refresh_events()
     
-    def _on_event_deleted(self, event: EventData):
+    def _on_event_deleted(self, event: ImmutableEvent):
         """Handle event deleted."""
         self._refresh_events()
         self._statusbar.showMessage(f"Event '{event.summary}' deleted", 3000)
