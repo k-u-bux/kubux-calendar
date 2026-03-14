@@ -1277,6 +1277,7 @@ class EventStore:
                 
                 if result:
                     if event.pending_operation == "delete":
+                        self._repository.clear_pending(event.uid)
                         results["deleted_uids"].append((event.source.id, event.uid))
                     else:
                         self._repository.clear_pending(event.uid)
