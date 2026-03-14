@@ -1,46 +1,42 @@
 """
-Kubux Calendar Backend Module
+Kubux Calendar Backend v2.
 
-Three-tier event model:
-- CalEvent: Master event (what gets synced)
-- EventInstance: A specific occurrence (expanded from CalEvent)
-- InstanceSlice: Display portion on single day (maps to GUI rectangle)
+Architecture:
+- ImmutableEvent: Frozen event wrapping raw iCalendar data
+- EventFS: Filesystem cache (one .ics file per event)
+- EventIndex: IntervalTree for O(log n + k) range queries
+- SyncManager: Background sync via TaskDispatcher
+- EventStore: GUI-facing facade
 
 Modules:
-- config.py: Configuration parsing
-- caldav_client.py: CalDAV client for Nextcloud, returns CalEvent
-- ics_subscription.py: ICS subscription fetching, returns CalEvent
-- event_wrapper.py: CalEvent, EventInstance, InstanceSlice definitions
-- event_repository.py: Stores CalEvent, expands to EventInstance
-- event_store.py: High-level API for GUI
+- config.py: TOML configuration parsing
+- timezone_utils.py: Local timezone conversions
+- event.py: ImmutableEvent, CalendarSource, EventView, RecurrenceRule
+- event_fs.py: Filesystem cache with atomic writes
+- event_index.py: IntervalTree wrapper
+- network_ops.py: Pure CalDAV/ICS HTTP functions
+- sync_manager.py: Background sync orchestration
+- event_store.py: Unified API for GUI
+- interval_tree.py: AVL-balanced augmented interval tree
+- task_dispatch.py: Ticket-based async task dispatcher
 """
 
 from .config import Config
-from .caldav_client import CalDAVClient, CalendarInfo
-from .ics_subscription import ICSSubscription, ICSSubscriptionManager
-from .event_wrapper import (
-    CalEvent,
+from .event import (
+    ImmutableEvent,
     CalendarSource,
-    EventInstance,
-    InstanceSlice,
-    create_instance,
-    create_slices,
+    EventView,
+    RecurrenceRule,
 )
-from .event_repository import EventRepository
 from .event_store import EventStore
+from .task_dispatch import shutdown_tasks
 
 __all__ = [
-    'Config',
-    'CalDAVClient',
-    'CalendarInfo',
-    'ICSSubscription',
-    'ICSSubscriptionManager',
-    'EventStore',
-    'CalEvent',
-    'CalendarSource',
-    'EventInstance',
-    'InstanceSlice',
-    'create_instance',
-    'create_slices',
-    'EventRepository',
+    "Config",
+    "ImmutableEvent",
+    "CalendarSource",
+    "EventView",
+    "RecurrenceRule",
+    "EventStore",
+    "shutdown_tasks",
 ]

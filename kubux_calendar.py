@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
 
 from backend.config import Config
+from backend.timezone_utils import set_timezone
 from gui.main_window import MainWindow
 
 
@@ -80,10 +81,14 @@ color = #4285f4
         print(f"Error loading configuration: {e}")
         sys.exit(1)
     
+    # Apply configured timezone
+    set_timezone(config.timezone)
+    
     if args.debug:
         print(f"Loaded configuration from: {args.config or Config.get_default_config_path()}")
         print(f"  Nextcloud accounts: {len(config.nextcloud_accounts)}")
         print(f"  ICS subscriptions: {len(config.ics_subscriptions)}")
+        print(f"  Timezone: {config.timezone}")
     
     # Create and show main window
     window = MainWindow(config)

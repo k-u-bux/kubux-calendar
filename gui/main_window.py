@@ -21,11 +21,10 @@ from PySide6.QtCore import Qt, QTimer, Signal, QFileSystemWatcher
 from PySide6.QtGui import QAction, QIcon, QCloseEvent, QFont, QFontMetrics, QKeySequence, QShortcut
 
 from backend.config import Config
-from backend.event_store import EventStore, Event
-from backend.event_wrapper import CalEvent, CalendarSource, EventInstance
+from backend.event_store import EventStore
+from backend.event import CalendarSource, EventView
 
-# EventInstance is what get_events() returns (has all CalEvent properties via delegation)
-EventData = EventInstance
+EventData = EventView
 
 from .widgets.calendar_widget import CalendarWidget, ViewType, set_layout_config, set_localization_config, get_localization_config, set_colors_config, set_labels_config
 from .event_dialog import EventDialog
@@ -1115,26 +1114,14 @@ class MainWindow(QMainWindow):
         new_start_utc = local_naive_to_utc(new_start)
         new_end_utc = local_naive_to_utc(new_end)
         
-        # Get the underlying CalEvent for modification
-        # (EventInstance.event is the CalEvent, EventInstance itself is read-only display)
-        cal_event = event.event if hasattr(event, 'event') else event
-        
-        # Update the CalEvent's times
-        cal_event.start = new_start_utc
-        cal_event.end = new_end_utc
-        
-        # Mark as pending BEFORE sync and refresh to show triangle
-        self.event_store._repository.mark_pending(cal_event.uid, "update")
+        # Update event times via EventStore (immutable — creates new event)
+        self.event_store.update_event(
+            uid=event.uid,
+            source_id=event.source.id,
+            start=new_start_utc,
+            end=new_end_utc,
+        )
         self._refresh_events()
-        QApplication.processEvents()  # Force immediate repaint
-
-        # Save through event store (sync to server)
-        success = self.event_store.update_event(cal_event)
-        if success:
-            self._refresh_events()
-        else:
-            # Refresh to restore original display
-            self._refresh_events()
     
     def _on_new_event(self):
         """Handle new event button click."""
@@ -1207,9 +1194,9 @@ class MainWindow(QMainWindow):
         # Save state
         self._save_state()
         
-        # Shutdown network worker (don't wait for pending operations)
-        from backend.network_worker import shutdown_network_worker
-        shutdown_network_worker()
+        # Shutdown task dispatcher (don't wait for pending operations)
+        from backend.task_dispatch import shutdown_tasks
+        shutdown_tasks()
         
         super().closeEvent(event)
 
