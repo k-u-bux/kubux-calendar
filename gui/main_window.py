@@ -21,11 +21,10 @@ from PySide6.QtCore import Qt, QTimer, Signal, QFileSystemWatcher
 from PySide6.QtGui import QAction, QIcon, QCloseEvent, QFont, QFontMetrics, QKeySequence, QShortcut
 
 from backend.config import Config
-from backend.event_store import EventStore, Event
-from backend.event_wrapper import CalEvent, CalendarSource, EventInstance
+from backend import EventStore, EventView, CalendarSource
 
-# EventInstance is what get_events() returns (has all CalEvent properties via delegation)
-EventData = EventInstance
+# EventView is what get_events() returns (has all properties the GUI needs)
+EventData = EventView
 
 from .widgets.calendar_widget import CalendarWidget, ViewType, set_layout_config, set_localization_config, get_localization_config, set_colors_config, set_labels_config
 from .event_dialog import EventDialog
@@ -1207,9 +1206,9 @@ class MainWindow(QMainWindow):
         # Save state
         self._save_state()
         
-        # Shutdown network worker (don't wait for pending operations)
-        from backend.network_worker import shutdown_network_worker
-        shutdown_network_worker()
+        # v2 uses task_dispatch — nothing to shut down explicitly
+        from backend.task_dispatch import shutdown_tasks
+        shutdown_tasks()
         
         super().closeEvent(event)
 

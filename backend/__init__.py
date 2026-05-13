@@ -1,46 +1,29 @@
 """
-Kubux Calendar Backend Module
+Kubux Calendar Backend Module — v2.
 
-Three-tier event model:
-- CalEvent: Master event (what gets synced)
-- EventInstance: A specific occurrence (expanded from CalEvent)
-- InstanceSlice: Display portion on single day (maps to GUI rectangle)
-
-Modules:
-- config.py: Configuration parsing
-- caldav_client.py: CalDAV client for Nextcloud, returns CalEvent
-- ics_subscription.py: ICS subscription fetching, returns CalEvent
-- event_wrapper.py: CalEvent, EventInstance, InstanceSlice definitions
-- event_repository.py: Stores CalEvent, expands to EventInstance
-- event_store.py: High-level API for GUI
+Core types:
+- ImmutableEvent: Frozen dataclass wrapping raw iCalendar data
+- CalendarSource: Calendar metadata (mutable for UI state)
+- EventView: Read-write display adapter for GUI
+- RecurrenceRule: Simple recurrence spec for UI
+- EventStore: Unified facade over EventFS, EventIndex, SyncManager
 """
 
 from .config import Config
-from .caldav_client import CalDAVClient, CalendarInfo
-from .ics_subscription import ICSSubscription, ICSSubscriptionManager
-from .event_wrapper import (
-    CalEvent,
-    CalendarSource,
-    EventInstance,
-    InstanceSlice,
-    create_instance,
-    create_slices,
-)
-from .event_repository import EventRepository
+from .event import ImmutableEvent, CalendarSource, EventView, RecurrenceRule
+from .event_fs import EventFS
+from .event_index import EventIndex
+from .sync_manager import SyncManager
 from .event_store import EventStore
 
 __all__ = [
     'Config',
-    'CalDAVClient',
-    'CalendarInfo',
-    'ICSSubscription',
-    'ICSSubscriptionManager',
     'EventStore',
-    'CalEvent',
+    'ImmutableEvent',
     'CalendarSource',
-    'EventInstance',
-    'InstanceSlice',
-    'create_instance',
-    'create_slices',
-    'EventRepository',
+    'EventView',
+    'RecurrenceRule',
+    'EventFS',
+    'EventIndex',
+    'SyncManager',
 ]

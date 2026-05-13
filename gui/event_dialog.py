@@ -19,11 +19,10 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QDateTime
 from PySide6.QtGui import QFont, QCloseEvent, QFontMetrics
 
-from backend.event_wrapper import CalEvent, CalendarSource, EventInstance
-from backend.event_store import EventStore
+from backend import EventStore, EventView, CalendarSource
 
-# EventData can be either EventInstance (received from main_window) or CalEvent (from create_event)
-EventData = EventInstance
+# EventView is what get_events() and create_event() return
+EventData = EventView
 from dataclasses import dataclass
 from typing import Optional
 
