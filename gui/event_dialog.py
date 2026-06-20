@@ -429,8 +429,6 @@ class EventDialog(QWidget):
         # Timezone selector (shared for start and end)
         tz_row = QHBoxLayout()
         self._tz_combo = QComboBox()
-        self._tz_combo.setEditable(True)
-        self._tz_combo.setInsertPolicy(QComboBox.NoInsert)
         for tz in COMMON_TZ:
             self._tz_combo.addItem(tz)
         self._tz_combo.addItem(FLOATING_LABEL)
@@ -514,7 +512,8 @@ class EventDialog(QWidget):
         if idx >= 0:
             self._tz_combo.setCurrentIndex(idx)
         else:
-            self._tz_combo.setEditText(label)
+            self._tz_combo.addItem(label)
+            self._tz_combo.setCurrentIndex(self._tz_combo.count() - 1)
     
     def _get_tzid_from_combo(self) -> Optional[str]:
         """Return the selected TZID, or None for Floating."""
