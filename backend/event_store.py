@@ -11,7 +11,7 @@ The server is the source of truth. Local cache is disposable.
 import json
 import os
 import shutil
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional, Callable
 import pytz
@@ -289,11 +289,17 @@ class EventStore:
                     ical = ICalCalendar.from_ical(ev.ical_data)
                     expanded = recurring_ical_events.of(ical).between(start, end)
                     for comp in expanded:
-                        dtstart = comp.get("DTSTART").dt
-                        dtend = comp.get("DTEND").dt if "DTEND" in comp else dtstart
+                        dtstart_prop = comp.get("DTSTART")
+                        dtstart = dtstart_prop.dt
+                        dtend_prop = comp.get("DTEND")
+                        dtend = dtend_prop.dt if dtend_prop else dtstart
+
+                        # Use the expanded component's TZID if present,
+                        # otherwise fall back to the master event's TZID.
+                        tzid = dtstart_prop.params.get("TZID") if hasattr(dtstart_prop, 'params') else None
                         instance = ev.with_updates(
-                            _instance_start=_ensure_tz(dtstart),
-                            _instance_end=_ensure_tz(dtend),
+                            _instance_start=_ensure_tz(dtstart, tzid),
+                            _instance_end=_ensure_tz(dtend, tzid),
                         )
                         results.append(instance)
                 except Exception:
@@ -787,11 +793,16 @@ class _RepositoryCompat:
         return self._store.get_pending_sync_count()
 
 
-def _ensure_tz(dt):
-    """Ensure *dt* is timezone-aware (default UTC)."""
-    from datetime import date, datetime
+def _ensure_tz(dt, tzid: Optional[str] = None):
+    """Ensure *dt* is timezone-aware (default UTC, or *tzid* if given)."""
     if isinstance(dt, date) and not isinstance(dt, datetime):
         dt = datetime.combine(dt, datetime.min.time())
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=pytz.UTC)
+        if tzid:
+            try:
+                dt = pytz.timezone(tzid).localize(dt)
+            except Exception:
+                dt = dt.replace(tzinfo=pytz.UTC)
+        else:
+            dt = dt.replace(tzinfo=pytz.UTC)
     return dt
