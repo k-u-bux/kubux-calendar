@@ -161,18 +161,16 @@ class EventStore:
             self._sources[meta.source_id] = src
             success = True
 
-        # Also register ICS URLs from source metadata for refresh
-        for sid in source_ids:
-            meta = self._fs.load_source_meta(sid)
-            if meta and meta.source_type == "ics":
-                self._ics_urls[sid] = sid  # URL stored in source name? No — need to get from config
-
-        # Build mapping from config for ICS URLs
+        # Register ICS subscriptions from config — iterate the config directly
+        # so every subscription gets its real URL, regardless of cache state.
         for sub in self.config.ics_subscriptions:
-            for sid in source_ids:
-                meta = self._fs.load_source_meta(sid)
-                if meta and meta.name == sub.name and meta.source_type == "ics":
-                    self._ics_urls[sid] = sub.url
+            sid = f"ics:{sub.name}"
+            self._ics_urls[sid] = sub.url
+            if sid not in self._sources:
+                self._sources[sid] = CalendarSource(
+                    id=sid, name=sub.name, color=sub.color,
+                    read_only=True, source_type="ics",
+                )
 
         return success
 
@@ -236,6 +234,24 @@ class EventStore:
 
     def get_calendars(self, visible_only: bool = False) -> list[CalendarSource]:
         sources = list(self._sources.values())
+
+        # Sort: CalDAV accounts in config order, calendars alphabetical within
+        # each account, then ICS subscriptions in config order.
+        account_order = {acc.name: i for i, acc in enumerate(self.config.nextcloud_accounts)}
+        sub_order = {sub.name: i for i, sub in enumerate(self.config.ics_subscriptions)}
+
+        def sort_key(src: CalendarSource) -> tuple:
+            if src.account_name:
+                # (group 0, account index, calendar name lowercase)
+                idx = account_order.get(src.account_name, 999)
+                return (0, idx, src.name.lower())
+            else:
+                # ICS — group 1, subscription index, name lowercase
+                idx = sub_order.get(src.name, 999)
+                return (1, idx, src.name.lower())
+
+        sources.sort(key=sort_key)
+
         if visible_only:
             sources = [s for s in sources if self._visibility.get(s.id, True)]
         return sources
