@@ -630,6 +630,8 @@ class EventDialog(QWidget):
         self._display_tzid = new_tzid
     
     def _on_start_changed(self, dt: QDateTime):
+        if self._ignore_tz_change:
+            return
         if self._end_edit.dateTime() <= dt:
             if self._all_day_check.isChecked():
                 self._end_edit.setDateTime(dt.addDays(1))
