@@ -82,13 +82,6 @@ class EventStore:
         self._cache_start: Optional[datetime] = None
         self._cache_end: Optional[datetime] = None
 
-        # Sync timing
-        self._last_sync_time: Optional[datetime] = None
-        self._source_last_attempt: dict[str, datetime] = {}
-        self._source_last_success: dict[str, datetime] = {}
-        self._source_refresh_intervals: dict[str, int] = {}
-        self._source_outdate_thresholds: dict[str, int] = {}
-
         # Callbacks
         self._on_change_callback: Optional[Callable[[], None]] = None
         self._on_sync_status_callback: Optional[Callable[[int, Optional[datetime]], None]] = None
@@ -133,7 +126,7 @@ class EventStore:
         if self._on_sync_status_callback:
             if pending_count == 0 and last_sync_time is None:
                 pending_count = self.get_pending_sync_count()
-                last_sync_time = self._last_sync_time
+                last_sync_time = self.get_last_sync_time()
             self._on_sync_status_callback(pending_count, last_sync_time)
 
     # ------------------------------------------------------------------
@@ -163,8 +156,6 @@ class EventStore:
                 read_only=meta.read_only,
                 source_type=meta.source_type,
             )
-            if meta.last_success:
-                self._source_last_success[meta.source_id] = meta.last_success
             if meta.source_id in self._visibility:
                 src.visible = self._visibility[meta.source_id]
             self._sources[meta.source_id] = src
@@ -441,8 +432,6 @@ class EventStore:
                         except Exception:
                             continue
                     self._fs.replace_source(cid, events)
-                    self._source_last_success[cid] = now
-                    self._source_last_attempt[cid] = now
 
                     # Persist source metadata
                     self._fs.save_source_meta(SourceMeta(
@@ -458,7 +447,6 @@ class EventStore:
 
         # ICS subscriptions
         for sid, url in self._ics_urls.items():
-            self._source_last_attempt[sid] = now
             from .network_ops import ics_fetch, ics_parse_events
             raw = ics_fetch(url)
             if raw is None:
@@ -473,7 +461,6 @@ class EventStore:
                 except Exception:
                     continue
             self._fs.replace_source(sid, events)
-            self._source_last_success[sid] = now
 
             src = self._sources.get(sid)
             if src:
@@ -704,8 +691,6 @@ class EventStore:
                 src.is_outdated = False
         self._rebuild_index()
         self._notify_change()
-        if synced:
-            self._last_sync_time = datetime.now()
 
     def refresh_due_sources(self) -> list[str]:
         """Refresh due sources (blocking)."""
@@ -738,20 +723,20 @@ class EventStore:
         return len(self._fs.load_pending())
 
     def get_last_sync_time(self) -> Optional[datetime]:
-        return self._last_sync_time
+        sm = self._ensure_sync_manager()
+        return sm.last_sync_time
 
     def get_source_last_sync(self, source_id: str) -> Optional[datetime]:
-        return self._source_last_success.get(source_id)
+        sm = self._ensure_sync_manager()
+        return sm.source_last_success(source_id)
 
     def get_source_refresh_interval(self, source_id: str) -> int:
-        return self._source_refresh_intervals.get(source_id, self.config.refresh_interval)
+        sm = self._ensure_sync_manager()
+        return sm.source_refresh_interval(source_id)
 
     def is_source_outdated(self, source_id: str) -> bool:
-        threshold = self._source_outdate_thresholds.get(source_id, self.config.outdate_threshold)
-        last = self._source_last_success.get(source_id)
-        if last is None:
-            return True
-        return (datetime.now() - last).total_seconds() > threshold
+        sm = self._ensure_sync_manager()
+        return sm.is_source_outdated(source_id)
 
     def get_cached_event_count(self) -> int:
         return len(self._index)

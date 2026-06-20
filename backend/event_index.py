@@ -20,21 +20,15 @@ class EventIndex:
     In-memory spatial index for events keyed on UTC time intervals.
 
     Each event is indexed by its master start/end in UTC.  Recurring
-    instance expansion is **not** handled here — the caller must
-    expand recurrences before inserting individual instances, or query
-    with a range that encompasses the master event and filter later.
-
-    For this calendar the typical usage is:
-
-    1. Insert master events (non-recurring use master times).
-    2. Query a display range to get candidate UIDs.
-    3. Expand recurring events via ``recurring_ical_events`` for the
-       display range.
+    events with master intervals far outside the query range would be
+    missed by the interval tree, so they are stored separately and
+    always included in query results.
     """
 
     def __init__(self):
         self._tree: IntervalTree[datetime] = IntervalTree()
         self._handles: dict[str, IntervalHandle[datetime]] = {}   # uid → handle
+        self._recurring: dict[str, ImmutableEvent] = {}           # uid → event (always included in queries)
 
     # === Mutation ===========================================================
 
@@ -44,23 +38,29 @@ class EventIndex:
             self.remove(event.uid)
         handle = self._tree.insert(event.start_utc, event.end_utc, event)
         self._handles[event.uid] = handle
+        if event.is_recurring:
+            self._recurring[event.uid] = event
 
     def remove(self, uid: str) -> None:
         """Remove event from index.  No-op if not present."""
         handle = self._handles.pop(uid, None)
         if handle is not None:
             self._tree.delete(handle)
+        self._recurring.pop(uid, None)
 
     def clear(self) -> None:
         """Drop all entries."""
         self._tree = IntervalTree()
         self._handles.clear()
+        self._recurring.clear()
 
     # === Queries ============================================================
 
     def query_range(self, start: datetime, end: datetime) -> list[ImmutableEvent]:
         """
-        Return events whose UTC interval overlaps ``[start, end]``.
+        Return events whose UTC interval overlaps ``[start, end]``,
+        plus all recurring events (master events are always included
+        so the caller can expand instances for the query range).
 
         Both *start* and *end* should be timezone-aware (UTC preferred).
         """
@@ -68,6 +68,13 @@ class EventIndex:
         end_utc = end.astimezone(pytz.UTC) if end.tzinfo else pytz.UTC.localize(end)
         results: list[ImmutableEvent] = []
         self._tree.find_intersecting(start_utc, end_utc, lambda h: results.append(h.data))
+        # Include all recurring events — their master interval may be
+        # outside the query range but instances could fall inside.
+        seen_uids = set(e.uid for e in results)
+        for uid, ev in self._recurring.items():
+            if uid not in seen_uids:
+                results.append(ev)
+                seen_uids.add(uid)
         return results
 
     def query_point(self, time: datetime) -> list[ImmutableEvent]:
@@ -88,4 +95,6 @@ class EventIndex:
     def get(self, uid: str) -> Optional[ImmutableEvent]:
         """Return the indexed event for *uid*, or *None*."""
         handle = self._handles.get(uid)
-        return handle.data if handle else None
+        if handle:
+            return handle.data
+        return self._recurring.get(uid)

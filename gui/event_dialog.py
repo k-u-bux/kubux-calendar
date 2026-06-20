@@ -36,7 +36,77 @@ class RecurrenceRule:
     count: Optional[int] = None
     until: Optional[datetime] = None
     by_day: Optional[list[str]] = None
-from backend.timezone_utils import utc_to_local_naive as utc_to_local, local_naive_to_utc as local_to_utc
+from backend.timezone_utils import utc_to_local_naive as utc_to_local
+
+
+# Common timezones for the selector.  Sorted by offset for convenience.
+COMMON_TZ = [
+    "UTC",
+    # Americas
+    "America/New_York", "America/Chicago", "America/Denver",
+    "America/Los_Angeles", "America/Anchorage", "Pacific/Honolulu",
+    "America/Toronto", "America/Vancouver", "America/Mexico_City",
+    "America/Sao_Paulo", "America/Argentina/Buenos_Aires",
+    # Europe
+    "Europe/London", "Europe/Paris", "Europe/Berlin",
+    "Europe/Madrid", "Europe/Rome", "Europe/Amsterdam",
+    "Europe/Brussels", "Europe/Vienna", "Europe/Zurich",
+    "Europe/Stockholm", "Europe/Oslo", "Europe/Copenhagen",
+    "Europe/Warsaw", "Europe/Prague", "Europe/Budapest",
+    "Europe/Athens", "Europe/Istanbul", "Europe/Moscow",
+    "Europe/Helsinki", "Europe/Lisbon", "Europe/Dublin",
+    # Africa
+    "Africa/Cairo", "Africa/Casablanca", "Africa/Johannesburg",
+    "Africa/Lagos", "Africa/Nairobi",
+    # Asia
+    "Asia/Dubai", "Asia/Karachi", "Asia/Kolkata",
+    "Asia/Dhaka", "Asia/Bangkok", "Asia/Singapore",
+    "Asia/Hong_Kong", "Asia/Shanghai", "Asia/Tokyo",
+    "Asia/Seoul", "Asia/Jerusalem", "Asia/Riyadh",
+    "Asia/Tehran", "Asia/Baghdad",
+    # Australia / Pacific
+    "Australia/Perth", "Australia/Adelaide", "Australia/Sydney",
+    "Australia/Melbourne", "Australia/Brisbane",
+    "Pacific/Auckland", "Pacific/Fiji", "Pacific/Guam",
+    # Other
+    "Atlantic/Azores", "Atlantic/Reykjavik",
+    "Indian/Maldives", "Indian/Mauritius",
+]
+
+# Floating timezone sentinel
+FLOATING_LABEL = "Floating"
+
+
+def _extract_tzid(ical_data: str) -> Optional[str]:
+    """
+    Extract the TZID from DTSTART in iCalendar data.
+    
+    Returns:
+        TZID string (e.g. "Europe/Amsterdam"),
+        "UTC" if DTSTART has Z suffix,
+        None if floating (no TZID, no Z).
+    """
+    try:
+        from icalendar import Calendar as ICalCalendar
+        cal = ICalCalendar.from_ical(ical_data)
+        for comp in cal.walk():
+            if comp.name == "VEVENT":
+                dtstart = comp.get("DTSTART")
+                if dtstart is not None:
+                    params = dtstart.params
+                    if "TZID" in params:
+                        return str(params["TZID"])
+                    # Z suffix → UTC
+                    dt = dtstart.dt
+                    if isinstance(dt, datetime) and dt.tzinfo is not None:
+                        offset = dt.tzinfo.utcoffset(dt)
+                        if offset is not None and offset.total_seconds() == 0:
+                            return "UTC"
+                    # Floating — no TZID and not UTC
+                    return None
+    except Exception:
+        pass
+    return None
 
 
 class RecurrenceWidget(QGroupBox):
@@ -339,16 +409,34 @@ class EventDialog(QWidget):
         self._all_day_check.stateChanged.connect(self._on_all_day_changed)
         form.addRow("", self._all_day_check)
         
+        # Start time row with timezone
+        start_row = QHBoxLayout()
         self._start_edit = QDateTimeEdit()
         self._start_edit.setCalendarPopup(True)
         self._start_edit.setDisplayFormat("yyyy-MM-dd HH:mm")
         self._start_edit.dateTimeChanged.connect(self._on_start_changed)
-        form.addRow(self.event_store.config.labels.field_start, self._start_edit)
+        start_row.addWidget(self._start_edit, 1)
+        form.addRow(self.event_store.config.labels.field_start, start_row)
         
+        # End time row with timezone
+        end_row = QHBoxLayout()
         self._end_edit = QDateTimeEdit()
         self._end_edit.setCalendarPopup(True)
         self._end_edit.setDisplayFormat("yyyy-MM-dd HH:mm")
-        form.addRow(self.event_store.config.labels.field_end, self._end_edit)
+        end_row.addWidget(self._end_edit, 1)
+        form.addRow(self.event_store.config.labels.field_end, end_row)
+        
+        # Timezone selector (shared for start and end)
+        tz_row = QHBoxLayout()
+        self._tz_combo = QComboBox()
+        self._tz_combo.setEditable(True)
+        self._tz_combo.setInsertPolicy(QComboBox.NoInsert)
+        for tz in COMMON_TZ:
+            self._tz_combo.addItem(tz)
+        self._tz_combo.addItem(FLOATING_LABEL)
+        self._tz_combo.setToolTip("Event timezone. 'Floating' means local time with no fixed timezone.")
+        tz_row.addWidget(self._tz_combo, 1)
+        form.addRow(self.event_store.config.labels.field_timezone, tz_row)
         
         self._location_edit = QLineEdit()
         self._location_edit.setPlaceholderText("Location (optional)")
@@ -406,24 +494,83 @@ class EventDialog(QWidget):
             self._start_edit.setEnabled(False)
             self._end_edit.setEnabled(False)
             self._all_day_check.setEnabled(False)
+            self._tz_combo.setEnabled(False)
             self._recurrence_widget.setEnabled(False)
+    
+    def _get_stored_tzid(self) -> Optional[str]:
+        """Extract the TZID from the event's iCalendar data."""
+        if self.event_data is None:
+            return None
+        try:
+            ev = self.event_data.immutable_event if hasattr(self.event_data, 'immutable_event') else self.event_data
+            return _extract_tzid(ev.ical_data)
+        except Exception:
+            return None
+    
+    def _set_tz_combo(self, tzid: Optional[str]):
+        """Set the timezone combo to match *tzid*.  *None* = Floating."""
+        label = tzid if tzid is not None else FLOATING_LABEL
+        idx = self._tz_combo.findText(label)
+        if idx >= 0:
+            self._tz_combo.setCurrentIndex(idx)
+        else:
+            self._tz_combo.setEditText(label)
+    
+    def _get_tzid_from_combo(self) -> Optional[str]:
+        """Return the selected TZID, or None for Floating."""
+        text = self._tz_combo.currentText().strip()
+        if text == FLOATING_LABEL:
+            return None
+        return text if text else None
+    
+    def _localize_to_tz(self, dt: datetime, tzid: Optional[str]) -> datetime:
+        """Localize naive *dt* to *tzid*, or return naive if *tzid* is None."""
+        if tzid is None:
+            return dt  # floating — no timezone
+        tz = pytz.timezone(tzid)
+        return tz.localize(dt.replace(tzinfo=None))
     
     def _populate_data(self):
         if self.event_data:
+            stored_tzid = self._get_stored_tzid()
+            self._set_tz_combo(stored_tzid)
+            
             self._title_edit.setText(self.event_data.summary)
             self._location_edit.setText(self.event_data.location)
             self._description_edit.setText(self.event_data.description)
             self._all_day_check.setChecked(self.event_data.all_day)
-            # Convert UTC times to local for display
-            start_local = utc_to_local(self.event_data.start)
-            end_local = utc_to_local(self.event_data.end)
-            self._start_edit.setDateTime(QDateTime(start_local))
-            self._end_edit.setDateTime(QDateTime(end_local))
+            
+            # Display times in the event's own timezone
+            start_dt = self.event_data.start
+            end_dt = self.event_data.end
+            if stored_tzid and stored_tzid != "UTC" and start_dt.tzinfo is not None:
+                try:
+                    tz = pytz.timezone(stored_tzid)
+                    start_dt = start_dt.astimezone(tz)
+                    end_dt = end_dt.astimezone(tz)
+                except Exception:
+                    pass
+            
+            self._start_edit.setDateTime(QDateTime(start_dt.replace(tzinfo=None)))
+            self._end_edit.setDateTime(QDateTime(end_dt.replace(tzinfo=None)))
             self._recurrence_widget.set_recurrence(self.event_data.recurrence)
         else:
+            # New event — default to the configured local timezone
+            local_tz = pytz.timezone(
+                self.event_store.config.timezone
+            ) if hasattr(self.event_store.config, 'timezone') else None
+            if local_tz is None:
+                try:
+                    from backend.timezone_utils import get_local_timezone
+                    local_tz = get_local_timezone()
+                except Exception:
+                    local_tz = pytz.timezone("Europe/Amsterdam")
+            
+            self._set_tz_combo(str(local_tz))
+            
             start = self.initial_datetime
             if start.tzinfo:
-                start = start.replace(tzinfo=None)
+                start = start.astimezone(local_tz).replace(tzinfo=None) if local_tz else start.replace(tzinfo=None)
             minutes = (start.minute // 30) * 30
             start = start.replace(minute=minutes, second=0, microsecond=0)
             end = start + timedelta(hours=1)
@@ -450,17 +597,19 @@ class EventDialog(QWidget):
             self._title_edit.setFocus()
             return
         
-        # Get times from UI (these are in local timezone)
-        start_local = self._start_edit.dateTime().toPython()
-        end_local = self._end_edit.dateTime().toPython()
+        # Get times from UI (naive datetimes — timezone from combo)
+        start_naive = self._start_edit.dateTime().toPython()
+        end_naive = self._end_edit.dateTime().toPython()
         
-        if end_local <= start_local:
+        if end_naive <= start_naive:
             QMessageBox.warning(self, "Validation Error", "End time must be after start time.")
             return
         
-        # Convert local times to UTC for storage
-        start_dt = local_to_utc(start_local)
-        end_dt = local_to_utc(end_local)
+        # Apply the selected timezone
+        tzid = self._get_tzid_from_combo()
+        start_dt = self._localize_to_tz(start_naive, tzid)
+        end_dt = self._localize_to_tz(end_naive, tzid)
+        
         recurrence = self._recurrence_widget.get_recurrence()
         
         if self.is_new:

@@ -80,7 +80,7 @@ class SyncManager:
         return self._source_last_attempt.get(source_id)
 
     def is_source_outdated(self, source_id: str) -> bool:
-        threshold = self._source_outdate_threshold(source_id)
+        threshold = self.source_outdate_threshold(source_id)
         last = self._source_last_success.get(source_id)
         if last is None:
             return True
@@ -96,7 +96,7 @@ class SyncManager:
     # Config helpers
     # ------------------------------------------------------------------
 
-    def _source_refresh_interval(self, source_id: str) -> int:
+    def source_refresh_interval(self, source_id: str) -> int:
         """Per-source or global refresh interval in seconds."""
         # Check per-source config from account/subscription
         for acc in self._config.nextcloud_accounts:
@@ -112,7 +112,7 @@ class SyncManager:
                     return sub.refresh_interval
         return self._config.refresh_interval
 
-    def _source_outdate_threshold(self, source_id: str) -> int:
+    def source_outdate_threshold(self, source_id: str) -> int:
         for acc in self._config.nextcloud_accounts:
             if source_id.startswith(f"caldav:{acc.name}:"):
                 if acc.outdate_threshold is not None:
@@ -447,6 +447,8 @@ class SyncManager:
             if src:
                 src.last_sync_time = self._source_last_success.get(sid)
                 src.is_outdated = False
+        if synced_ids:
+            self._last_sync_time = datetime.now()
         self._notify_change()
         self._notify_sync_status()
 
@@ -458,7 +460,7 @@ class SyncManager:
         now = datetime.now()
         due: list[str] = []
         for sid in self._sources:
-            interval = self._source_refresh_interval(sid)
+            interval = self.source_refresh_interval(sid)
             if interval <= 0:
                 continue
             last = self._source_last_attempt.get(sid)

@@ -146,6 +146,7 @@ class LabelsConfig:
     field_end: str = "End:"
     field_location: str = "Location:"
     field_description: str = "Description:"
+    field_timezone: str = "Timezone:"
     checkbox_allday: str = "All-day event"
     button_save: str = "Save"
     button_cancel: str = "Cancel"
@@ -418,6 +419,7 @@ class Config:
             field_end=labels_data.get('field_end', LabelsConfig.field_end),
             field_location=labels_data.get('field_location', LabelsConfig.field_location),
             field_description=labels_data.get('field_description', LabelsConfig.field_description),
+            field_timezone=labels_data.get('field_timezone', LabelsConfig.field_timezone),
             checkbox_allday=labels_data.get('checkbox_allday', LabelsConfig.checkbox_allday),
             button_save=labels_data.get('button_save', LabelsConfig.button_save),
             button_cancel=labels_data.get('button_cancel', LabelsConfig.button_cancel),
