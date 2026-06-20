@@ -284,6 +284,8 @@ class EventDialog(QWidget):
         self.event_data = event_data
         self.is_new = event_data is None
         self.initial_datetime = initial_datetime or datetime.now()
+        self._display_tzid: Optional[str] = None  # tz the time fields currently display
+        self._ignore_tz_change = False
         
         self._setup_window()
         self._setup_ui()
@@ -433,6 +435,7 @@ class EventDialog(QWidget):
             self._tz_combo.addItem(tz)
         self._tz_combo.addItem(FLOATING_LABEL)
         self._tz_combo.setToolTip("Event timezone. 'Floating' means local time with no fixed timezone.")
+        self._tz_combo.currentIndexChanged.connect(self._on_tz_changed)
         tz_row.addWidget(self._tz_combo, 1)
         form.addRow(self.event_store.config.labels.field_timezone, tz_row)
         
@@ -576,11 +579,49 @@ class EventDialog(QWidget):
             self._start_edit.setDateTime(QDateTime(start))
             self._end_edit.setDateTime(QDateTime(end))
     
-    def _on_all_day_changed(self, state: int):
-        is_all_day = state == Qt.Checked
-        fmt = "yyyy-MM-dd" if is_all_day else "yyyy-MM-dd HH:mm"
-        self._start_edit.setDisplayFormat(fmt)
-        self._end_edit.setDisplayFormat(fmt)
+    def _on_tz_changed(self, index: int):
+        """When user changes the timezone combo, adjust displayed time."""
+        if self._ignore_tz_change:
+            return
+        
+        new_tzid = self._get_tzid_from_combo()
+        if new_tzid == self._display_tzid:
+            return
+        old_tzid = self._display_tzid
+        
+        if old_tzid is None:
+            # Was floating — just store the new tz, don't adjust time
+            self._display_tzid = new_tzid
+            return
+        
+        # Localize displayed times from old tz, convert to new tz
+        start_naive = self._start_edit.dateTime().toPython()
+        end_naive = self._end_edit.dateTime().toPython()
+        
+        try:
+            old_tz = pytz.timezone(old_tzid)
+            new_tz = pytz.timezone(new_tzid) if new_tzid else None
+        except Exception:
+            self._display_tzid = new_tzid
+            return
+        
+        start_aware = old_tz.localize(start_naive)
+        end_aware = old_tz.localize(end_naive)
+        
+        if new_tzid:
+            start_naive_new = start_aware.astimezone(new_tz).replace(tzinfo=None)
+            end_naive_new = end_aware.astimezone(new_tz).replace(tzinfo=None)
+        else:
+            # Switching to Floating — display the UTC-equivalent time
+            start_naive_new = start_aware.astimezone(pytz.UTC).replace(tzinfo=None)
+            end_naive_new = end_aware.astimezone(pytz.UTC).replace(tzinfo=None)
+        
+        self._ignore_tz_change = True
+        self._start_edit.setDateTime(QDateTime(start_naive_new))
+        self._end_edit.setDateTime(QDateTime(end_naive_new))
+        self._ignore_tz_change = False
+        
+        self._display_tzid = new_tzid
     
     def _on_start_changed(self, dt: QDateTime):
         if self._end_edit.dateTime() <= dt:
