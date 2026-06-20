@@ -535,6 +535,7 @@ class EventDialog(QWidget):
     def _populate_data(self):
         if self.event_data:
             stored_tzid = self._get_stored_tzid()
+            self._display_tzid = stored_tzid  # init BEFORE setting combo, so _on_tz_changed has a valid old_tzid
             self._set_tz_combo(stored_tzid)
             
             self._title_edit.setText(self.event_data.summary)
@@ -568,7 +569,9 @@ class EventDialog(QWidget):
                 except Exception:
                     local_tz = pytz.timezone("Europe/Amsterdam")
             
-            self._set_tz_combo(str(local_tz))
+            local_tz_str = str(local_tz)
+            self._display_tzid = local_tz_str  # init BEFORE setting combo, so _on_tz_changed has a valid old_tzid
+            self._set_tz_combo(local_tz_str)
             
             start = self.initial_datetime
             if start.tzinfo:
