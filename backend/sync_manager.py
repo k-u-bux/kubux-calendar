@@ -554,14 +554,18 @@ class SyncManager:
 
     def _on_sync_pending_done(self, result: dict):
         """Main-thread callback."""
-        for uid in result.get("done_uids", []):
-            self._fs.remove_pending(uid)
-            # For deletes, also remove the cached event
-            ops_remaining = {o.uid: o for o in self._fs.load_pending()}
-            if uid not in ops_remaining:
-                # Check if it was a delete — we already removed from pending,
-                # so just try to clean up the index
-                self._index.remove(uid)
+        import sys
+        ops_before = {o.uid: o for o in self._fs.load_pending()}
+
+        for op in ops_before.values():
+            uid = op.uid
+            if uid in result.get("done_uids", []):
+                print(f"DEBUG _on_sync_pending_done: success for uid={uid} op={op.operation} source_id={op.source_id}", file=sys.stderr)
+                self._fs.remove_pending(uid)
+                # For deletes, also erase the cached .ics file from disk
+                if op.operation == "delete":
+                    print(f"DEBUG _on_sync_pending_done: deleting .ics for {uid} from disk", file=sys.stderr)
+                    self._fs.delete_event(op.source_id, uid)
 
         self._rebuild_index()
         self._notify_change()

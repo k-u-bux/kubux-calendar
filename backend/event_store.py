@@ -607,6 +607,11 @@ class EventStore:
         ))
         event._set_pending_sync_state("delete")
 
+        # Update the in-memory index so the display picks up the pending state
+        updated_ev = event.immutable_event
+        self._index.remove(updated_ev.uid)
+        self._index.add(updated_ev)
+
         # Debug: log current pending ops count
         pending = self._fs.load_pending()
         print(f"DEBUG delete_event: after add_pending — {len(pending)} pending ops total", file=sys.stderr)
