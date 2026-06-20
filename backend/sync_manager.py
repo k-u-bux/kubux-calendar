@@ -506,14 +506,22 @@ class SyncManager:
 
     def _sync_one(self, op: PendingOp) -> bool:
         """Execute a single pending operation.  Returns success."""
+        import sys
         source_id = op.source_id
         cal_info = self._calendars.get(source_id)
         src = self._sources.get(source_id)
+        print(f"DEBUG _sync_one: op={op.operation} uid={op.uid} source_id={source_id}", file=sys.stderr)
+        if cal_info is None:
+            print(f"DEBUG _sync_one: cal_info for {source_id} NOT FOUND in _calendars (keys={list(self._calendars.keys())})", file=sys.stderr)
+        if src is None:
+            print(f"DEBUG _sync_one: src for {source_id} NOT FOUND in _sources", file=sys.stderr)
         if cal_info is None or src is None:
             return False
         session = self._sessions.get(src.account_name)
         if session is None:
+            print(f"DEBUG _sync_one: session for {src.account_name} NOT FOUND in _sessions (keys={list(self._sessions.keys())})", file=sys.stderr)
             return False
+        print(f"DEBUG _sync_one: session OK for {src.account_name}", file=sys.stderr)
 
         if op.operation == "create":
             ev = self._fs.load_event(source_id, op.uid)

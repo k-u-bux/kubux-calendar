@@ -188,16 +188,23 @@ def caldav_update_event(session: DAVSession, calendar: CalendarInfo,
 def caldav_delete_event(session: DAVSession, calendar: CalendarInfo,
                         uid: str) -> bool:
     """Delete an event by UID.  Returns success."""
+    import sys
     cal = calendar._caldav_cal
+    print(f"DEBUG caldav_delete_event: uid={uid} cal={cal is not None} writable={calendar.writable}", file=sys.stderr)
     if cal is None:
+        print(f"DEBUG caldav_delete_event: calendar._caldav_cal is None", file=sys.stderr)
         return False
     try:
         ev = cal.event_by_uid(uid)
         if ev:
+            print(f"DEBUG caldav_delete_event: found event, deleting...", file=sys.stderr)
             ev.delete()
+            print(f"DEBUG caldav_delete_event: deleted OK", file=sys.stderr)
             return True
-    except Exception:
-        pass
+        else:
+            print(f"DEBUG caldav_delete_event: event_by_uid returned None (not found on server)", file=sys.stderr)
+    except Exception as e:
+        print(f"DEBUG caldav_delete_event: exception: {e}", file=sys.stderr)
     return False
 
 
