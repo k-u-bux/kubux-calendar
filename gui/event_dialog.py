@@ -728,11 +728,12 @@ class EventDialog(QWidget):
                     QMessageBox.critical(self, "Error", "Failed to update event.")
     
     def _on_delete(self):
+        import sys
         if self.event_data is None:
             return
         
-        # Get the underlying CalEvent for deletion
         cal_event = self.event_data.event if hasattr(self.event_data, 'event') else self.event_data
+        print(f"DEBUG _on_delete: uid={self.event_data.uid} summary='{self.event_data.summary}' recurring={self.event_data.is_recurring}", file=sys.stderr)
         
         if self.event_data.is_recurring:
             result = QMessageBox.question(self, "Delete Recurring Event",
@@ -741,26 +742,25 @@ class EventDialog(QWidget):
             if result == QMessageBox.Cancel:
                 return
             elif result == QMessageBox.No:
-                # Delete single instance - use the instance's start time
                 instance_start = self.event_data.start
+                print(f"DEBUG _on_delete: deleting recurring instance at {instance_start}", file=sys.stderr)
                 if self.event_store.delete_recurring_instance(cal_event, instance_start):
+                    print(f"DEBUG _on_delete: delete_recurring_instance returned True", file=sys.stderr)
                     self.event_deleted.emit(self.event_data)
                     self.close()
                 else:
-                    QMessageBox.critical(self, "Error", "Failed to delete event instance.")
+                    print(f"DEBUG _on_delete: delete_recurring_instance returned False", file=sys.stderr)
                 return
         else:
-            result = QMessageBox.question(self, "Delete Event",
-                f"Are you sure you want to delete '{self.event_data.summary}'?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if result != QMessageBox.Yes:
-                return
+            print(f"DEBUG _on_delete: deleting single event", file=sys.stderr)
         
-        if self.event_store.delete_event(cal_event):
+        ok = self.event_store.delete_event(cal_event)
+        print(f"DEBUG _on_delete: delete_event returned {ok}", file=sys.stderr)
+        if ok:
             self.event_deleted.emit(self.event_data)
             self.close()
         else:
-            QMessageBox.critical(self, "Error", "Failed to delete event.")
+            print(f"DEBUG _on_delete: delete_event FAILED", file=sys.stderr)
     
     def closeEvent(self, close_event: QCloseEvent):
         # Save window geometry (encode as base64 for JSON)

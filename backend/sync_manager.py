@@ -489,10 +489,16 @@ class SyncManager:
 
     def _do_sync_pending(self) -> dict:
         """Runs in worker thread."""
+        import sys
         ops = self._fs.load_pending()
         result = {"success": 0, "failed": 0, "done_uids": []}
 
+        print(f"DEBUG _do_sync_pending: {len(ops)} pending ops", file=sys.stderr)
+        print(f"DEBUG _do_sync_pending: _calendars keys: {list(self._calendars.keys())}", file=sys.stderr)
+        print(f"DEBUG _do_sync_pending: _sessions keys: {list(self._sessions.keys())}", file=sys.stderr)
+
         for op in ops:
+            print(f"DEBUG _do_sync_pending: processing op={op.operation} uid={op.uid} source_id={op.source_id}", file=sys.stderr)
             ok = self._sync_one(op)
             if ok:
                 result["success"] += 1

@@ -596,13 +596,24 @@ class EventStore:
 
     def delete_event(self, event: EventView) -> bool:
         """Delete an event (pending_delete)."""
+        import sys
         if event.read_only:
+            print(f"DEBUG delete_event: uid={event.uid} FAILED — read_only", file=sys.stderr)
             return False
 
+        print(f"DEBUG delete_event: uid={event.uid} source_id={event.source.id} — adding PendingOp delete", file=sys.stderr)
         self._fs.add_pending(PendingOp(
             uid=event.uid, source_id=event.source.id, operation="delete"
         ))
         event._set_pending_sync_state("delete")
+
+        # Debug: log current pending ops count
+        pending = self._fs.load_pending()
+        print(f"DEBUG delete_event: after add_pending — {len(pending)} pending ops total", file=sys.stderr)
+        for op in pending:
+            if op.uid == event.uid:
+                print(f"DEBUG delete_event:   found PendingOp for {event.uid}: op={op.operation} source_id={op.source_id}", file=sys.stderr)
+
         self._notify_change()
         self._notify_sync_status()
         return True
