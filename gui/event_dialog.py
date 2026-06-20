@@ -579,6 +579,12 @@ class EventDialog(QWidget):
             self._start_edit.setDateTime(QDateTime(start))
             self._end_edit.setDateTime(QDateTime(end))
     
+    def _on_all_day_changed(self, state: int):
+        is_all_day = state == Qt.Checked
+        fmt = "yyyy-MM-dd" if is_all_day else "yyyy-MM-dd HH:mm"
+        self._start_edit.setDisplayFormat(fmt)
+        self._end_edit.setDisplayFormat(fmt)
+    
     def _on_tz_changed(self, index: int):
         """When user changes the timezone combo, adjust displayed time."""
         if self._ignore_tz_change:
