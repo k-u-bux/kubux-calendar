@@ -196,15 +196,11 @@ class SyncManager:
                     print(f"DEBUG sync:   calendar '{cal_info.name}' id={cal_info.id} writable={cal_info.writable}", file=sys.stderr)
                     self._calendars[source_id] = cal_info
 
-                    default_color = (cal_info.color
-                                     if cal_info.color != "#4285f4"
-                                     else account.color)
-
                     # Create or update CalendarSource
                     if source_id not in self._sources:
                         src = CalendarSource(
                             id=source_id, name=cal_info.name,
-                            color=default_color,
+                            color=cal_info.color,
                             account_name=account.name,
                             read_only=not cal_info.writable,
                             source_type="caldav",
@@ -214,11 +210,12 @@ class SyncManager:
                         src = self._sources[source_id]
                         src.read_only = not cal_info.writable
                         src.is_outdated = False
+                        src.color = cal_info.color
 
                     # Persist metadata
                     self._fs.save_source_meta(SourceMeta(
                         source_id=source_id, name=cal_info.name,
-                        color=default_color,
+                        color=cal_info.color,
                         read_only=not cal_info.writable,
                         source_type="caldav", account_name=account.name,
                         last_success=now,
@@ -401,6 +398,9 @@ class SyncManager:
                 self._fs.replace_source(source_id, events)
                 self._source_last_success[source_id] = now
                 print(f"DEBUG sync: _refresh_caldav stored {len(events)} events for {source_id}", file=sys.stderr)
+
+                # Update in-memory source color from server
+                src.color = cal_info.color
 
                 # Update metadata
                 self._fs.save_source_meta(SourceMeta(
