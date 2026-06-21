@@ -163,6 +163,7 @@ class EventStore:
 
         # Register ICS subscriptions from config — iterate the config directly
         # so every subscription gets its real URL, regardless of cache state.
+        # Always use config color, overriding any cached state.
         for sub in self.config.ics_subscriptions:
             sid = f"ics:{sub.name}"
             self._ics_urls[sid] = sub.url
@@ -171,6 +172,8 @@ class EventStore:
                     id=sid, name=sub.name, color=sub.color,
                     read_only=True, source_type="ics",
                 )
+            else:
+                self._sources[sid].color = sub.color
 
         return success
 
@@ -433,7 +436,7 @@ class EventStore:
                     if cid not in self._sources:
                         src = CalendarSource(
                             id=cid, name=cal_info.name,
-                            color=cal_info.color if cal_info.color != "#4285f4" else account.color,
+                            color=cal_info.color,
                             account_name=account.name,
                             read_only=not cal_info.writable,
                             source_type="caldav",
