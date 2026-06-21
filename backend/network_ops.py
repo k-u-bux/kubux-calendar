@@ -16,7 +16,7 @@ import lxml.etree as etree
 
 import caldav
 from caldav.elements import ical as caldav_ical
-from icalendar import Calendar as ICalCalendar, Event as ICalEvent
+from icalendar import Calendar as ICalCalendar
 import uuid as _uuid
 
 from .log import debug_log, Level
@@ -164,28 +164,6 @@ def caldav_save_event(session: DAVSession, calendar: CalendarInfo,
         return True
     except Exception:
         return False
-
-
-def caldav_update_event(session: DAVSession, calendar: CalendarInfo,
-                        uid: str, ical_event: ICalEvent) -> bool:
-    """Update an existing event identified by *uid*.  Returns success."""
-    cal = calendar._caldav_cal
-    if cal is None or not calendar.writable:
-        return False
-    try:
-        caldav_ev = cal.event_by_uid(uid)
-        if not caldav_ev:
-            return False
-        vcal = ICalCalendar()
-        vcal.add("prodid", "-//Kubux Calendar//kubux.net//")
-        vcal.add("version", "2.0")
-        vcal.add_component(ical_event)
-        caldav_ev.data = vcal.to_ical().decode("utf-8")
-        caldav_ev.save()
-        return True
-    except Exception:
-        return False
-
 
 def caldav_delete_event(session: DAVSession, calendar: CalendarInfo,
                         uid: str) -> bool:
