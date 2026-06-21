@@ -290,22 +290,75 @@ class SyncManager:
 
         ids = [source_id] if source_id else list(self._sources.keys())
         debug_log(Level.DEBUG, f"sync: _do_refresh sources={ids}")
+
+        # Group CalDAV sources by account so we connect once per account
+        caldav_by_account: dict[str, list[str]] = {}
+        ics_ids: list[str] = []
         for sid in ids:
-            self._source_last_attempt[sid] = now
             src = self._sources.get(sid)
             if src is None:
-                debug_log(Level.DEBUG, f"sync:   source {sid} not found in _sources")
+                continue
+            if src.source_type == "caldav":
+                caldav_by_account.setdefault(src.account_name, []).append(sid)
+            elif src.source_type == "ics":
+                ics_ids.append(sid)
+
+        # Refresh CalDAV — connect once per account, then fetch per calendar
+        for account_name, source_ids in caldav_by_account.items():
+            debug_log(Level.DEBUG, f"sync: connecting CalDAV account '{account_name}' for {len(source_ids)} calendars")
+            session = self._sessions.get(account_name)
+            if session is None:
+                # Find matching account config and connect
+                for acc in self._config.nextcloud_accounts:
+                    if acc.name == account_name:
+                        try:
+                            pw = acc.get_password(self._config.password_program)
+                            session = caldav_connect(acc.url, acc.username, pw, acc.name)
+                            self._sessions[account_name] = session
+                            debug_log(Level.DEBUG, f"sync: connected {account_name}")
+                        except Exception as e:
+                            debug_log(Level.ERROR, f"sync: connect failed for {account_name}: {e}")
+                        break
+                if session is None:
+                    debug_log(Level.DEBUG, f"sync: no account config for {account_name}")
+                    continue
+
+            # List calendars once per account
+            try:
+                calendars = caldav_list_calendars(session)
+            except Exception as e:
+                debug_log(Level.ERROR, f"sync: list calendars failed for {account_name}: {e}")
                 continue
 
+            # Build lookup: source_id → CalendarInfo
+            cal_info_map: dict[str, CalendarInfo] = {}
+            for cal_info in calendars:
+                cid = f"caldav:{account_name}:{cal_info.id}"
+                cal_info_map[cid] = cal_info
+                self._calendars[cid] = cal_info
+
+            # Fetch each source
+            for sid in source_ids:
+                self._source_last_attempt[sid] = now
+                cal_info = cal_info_map.get(sid)
+                if cal_info is None:
+                    debug_log(Level.DEBUG, f"sync:   {sid} not found in server calendar list")
+                    continue
+                try:
+                    ok = self._fetch_caldav_source(sid, cal_info, now)
+                    if ok:
+                        synced.append(sid)
+                        debug_log(Level.DEBUG, f"sync:   {sid} OK")
+                    else:
+                        debug_log(Level.DEBUG, f"sync:   {sid} FAILED")
+                except Exception as e:
+                    debug_log(Level.ERROR, f"sync:   {sid} exception: {e}")
+
+        # Refresh ICS — each source is independent
+        for sid in ics_ids:
+            self._source_last_attempt[sid] = now
             try:
-                if src.source_type == "caldav":
-                    debug_log(Level.DEBUG, f"sync:   refreshing CalDAV {sid}")
-                    ok = self._refresh_caldav(sid, now)
-                elif src.source_type == "ics":
-                    debug_log(Level.DEBUG, f"sync:   refreshing ICS {sid}")
-                    ok = self._refresh_ics(sid, now)
-                else:
-                    ok = False
+                ok = self._refresh_ics(sid, now)
                 if ok:
                     synced.append(sid)
                     debug_log(Level.DEBUG, f"sync:   {sid} OK")
@@ -318,69 +371,46 @@ class SyncManager:
             self._last_sync_time = now
         return synced
 
-    def _refresh_caldav(self, source_id: str, now: datetime) -> bool:
+    def _fetch_caldav_source(self, source_id: str, cal_info: CalendarInfo, now: datetime) -> bool:
+        """Fetch events for a single CalDAV source (assumes session + cal_info are ready)."""
         src = self._sources.get(source_id)
         if src is None:
-            debug_log(Level.DEBUG, f"sync: _refresh_caldav {source_id}: source not found")
             return False
         session = self._sessions.get(src.account_name)
         if session is None:
-            debug_log(Level.DEBUG, f"sync: _refresh_caldav {source_id}: no session for {src.account_name}")
-
-        # Find matching account config for password
-        for acc in self._config.nextcloud_accounts:
-            if acc.name == src.account_name:
-                try:
-                    pw = acc.get_password(self._config.password_program)
-                    session = caldav_connect(acc.url, acc.username, pw, acc.name)
-                    self._sessions[acc.name] = session
-                    debug_log(Level.DEBUG, f"sync: _refresh_caldav reconnected {acc.name}")
-                except Exception as e:
-                    debug_log(Level.ERROR, f"sync: _refresh_caldav reconnect failed: {e}")
-                    return False
-                break
-        else:
-            debug_log(Level.DEBUG, f"sync: _refresh_caldav no account config for {src.account_name}")
             return False
 
-        for cal_info in caldav_list_calendars(session):
-            cid = f"caldav:{src.account_name}:{cal_info.id}"
-            if cid == source_id:
-                self._calendars[cid] = cal_info
-                window_start = now - timedelta(days=120)
-                window_end = now + timedelta(days=240)
-                debug_log(Level.DEBUG, f"sync: _refresh_caldav fetching {source_id}...")
-                raw_events = caldav_fetch_events(session, cal_info,
-                                                 window_start, window_end)
-                debug_log(Level.DEBUG, f"sync: _refresh_caldav got {len(raw_events)} raw events")
-                events = []
-                config_tz = pytz.timezone(self._config.timezone)
-                for ical_text, href in raw_events:
-                    try:
-                        ev = ImmutableEvent.from_ical(
-                            ical_text, source_id, config_tz=config_tz, caldav_href=href)
-                        events.append(ev)
-                    except Exception as e:
-                        debug_log(Level.DEBUG, f"sync:   parse error: {e}")
-                        continue
-                self._fs.replace_source(source_id, events)
-                self._source_last_success[source_id] = now
-                debug_log(Level.DEBUG, f"sync: _refresh_caldav stored {len(events)} events for {source_id}")
+        window_start = now - timedelta(days=120)
+        window_end = now + timedelta(days=240)
+        debug_log(Level.DEBUG, f"sync: fetching {source_id}...")
+        raw_events = caldav_fetch_events(session, cal_info, window_start, window_end)
+        debug_log(Level.DEBUG, f"sync: got {len(raw_events)} raw events")
+        events = []
+        config_tz = pytz.timezone(self._config.timezone)
+        for ical_text, href in raw_events:
+            try:
+                ev = ImmutableEvent.from_ical(
+                    ical_text, source_id, config_tz=config_tz, caldav_href=href)
+                events.append(ev)
+            except Exception as e:
+                debug_log(Level.DEBUG, f"sync:   parse error: {e}")
+                continue
+        self._fs.replace_source(source_id, events)
+        self._source_last_success[source_id] = now
+        debug_log(Level.DEBUG, f"sync: stored {len(events)} events for {source_id}")
 
-                # Update in-memory source color from server
-                src.color = cal_info.color
+        # Update in-memory source color from server
+        src.color = cal_info.color
 
-                # Update metadata
-                self._fs.save_source_meta(SourceMeta(
-                    source_id=source_id, name=cal_info.name,
-                    color=cal_info.color,
-                    read_only=not cal_info.writable,
-                    source_type="caldav", account_name=src.account_name,
-                    last_success=now,
-                ))
-                return True
-        debug_log(Level.DEBUG, f"sync: _refresh_caldav calendar {source_id} not found in server list")
-        return False
+        # Update metadata
+        self._fs.save_source_meta(SourceMeta(
+            source_id=source_id, name=cal_info.name,
+            color=cal_info.color,
+            read_only=not cal_info.writable,
+            source_type="caldav", account_name=src.account_name,
+            last_success=now,
+        ))
+        return True
 
     def _refresh_ics(self, source_id: str, now: datetime) -> bool:
         url = self._ics_urls.get(source_id)
