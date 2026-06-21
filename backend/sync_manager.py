@@ -161,25 +161,7 @@ class SyncManager:
         for account in self._config.nextcloud_accounts:
             debug_log(Level.DEBUG, f"sync: connecting CalDAV account '{account.name}' at {account.url}")
             try:
-                # Timeout the password retrieval (30s) to avoid hanging
-                # on pinentry prompts in headless environments.
-                import threading
-                pw_result = [None]
-                pw_error = [None]
-                def _get_pw():
-                    try:
-                        pw_result[0] = account.get_password(self._config.password_program)
-                    except Exception as e:
-                        pw_error[0] = e
-                pw_thread = threading.Thread(target=_get_pw, daemon=True)
-                pw_thread.start()
-                pw_thread.join(timeout=30)
-                if pw_thread.is_alive():
-                    debug_log(Level.WARN, f"sync: password retrieval for {account.name} timed out (30s)")
-                    continue
-                if pw_error[0]:
-                    raise pw_error[0]
-                pw = pw_result[0]
+                pw = account.get_password(self._config.password_program)
                 debug_log(Level.DEBUG, f"sync: got password for {account.name}")
                 session = caldav_connect(account.url, account.username, pw,
                                          account.name)
