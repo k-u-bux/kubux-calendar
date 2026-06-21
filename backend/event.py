@@ -529,11 +529,11 @@ class EventView:
         self._dirty["all_day"] = value
 
     @property
-    def recurrence(self):
+    def recurrence(self) -> Optional[RecurrenceRule]:
         return self._dirty.get("recurrence", self._event.recurrence)
 
     @recurrence.setter
-    def recurrence(self, value):
+    def recurrence(self, value: Optional[RecurrenceRule]):
         self._dirty["recurrence"] = value
 
     @property
