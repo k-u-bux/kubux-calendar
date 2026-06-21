@@ -347,13 +347,20 @@ class EventStore:
         """
         Return EventView objects for the given time range.
 
-        Triggers network fetch if cache window is invalid.
+        Never blocks.  If cache window is invalid, triggers a background
+        refresh and returns whatever cached data is available immediately.
+        The UI will update when the background refresh completes (via
+        the on_change callback).
         """
         if not self._is_cache_valid(start, end):
             center = start
             window_start = center - timedelta(days=self.CACHE_WINDOW_PAST_MONTHS * 30)
             window_end = center + timedelta(days=self.CACHE_WINDOW_FUTURE_MONTHS * 30)
-            self._fetch_into_cache(window_start, window_end)
+            # Widen cache window now so we don't keep re-triggering on
+            # subsequent calls while the background fetch is in flight.
+            self._cache_start = window_start
+            self._cache_end = window_end
+            self._trigger_background_fetch()
 
         return self._build_event_views(start, end, calendar_ids, visible_only)
 
@@ -504,6 +511,13 @@ class EventStore:
         for sid in self._sources:
             for ev in self._fs.list_events(sid):
                 self._index.add(ev)
+
+    def _trigger_background_fetch(self) -> None:
+        """
+        Kick off a background refresh of all sources without blocking.
+        The on_change callback will fire when data arrives.
+        """
+        self.refresh_in_background()
 
     # ------------------------------------------------------------------
     # Event CRUD

@@ -19,23 +19,10 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QDateTime
 from PySide6.QtGui import QFont, QCloseEvent, QFontMetrics
 
-from backend import EventStore, EventView, CalendarSource
+from backend import EventStore, EventView, CalendarSource, RecurrenceRule
 
 # EventView is what get_events() and create_event() return
 EventData = EventView
-from dataclasses import dataclass
-from typing import Optional
-
-# Simple RecurrenceRule for UI purposes
-# The actual RRULE is stored in icalendar.Event
-@dataclass
-class RecurrenceRule:
-    """Simple representation for UI configuration."""
-    frequency: str  # DAILY, WEEKLY, MONTHLY, YEARLY
-    interval: int = 1
-    count: Optional[int] = None
-    until: Optional[datetime] = None
-    by_day: Optional[list[str]] = None
 from backend.timezone_utils import utc_to_local_naive as utc_to_local
 
 
