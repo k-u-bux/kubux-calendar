@@ -30,16 +30,6 @@ from .task_dispatch import dispatch_task
 from .log import debug_log, Level
 
 
-def _load_recurring_ical_events(ical_data: str, start: datetime, end: datetime) -> list:
-    """Expand recurring events in *ical_data* into the [start, end] range."""
-    try:
-        cal = ICalCalendar.from_ical(ical_data)
-        expanded = recurring_ical_events.of(cal).between(start, end)
-        return expanded
-    except Exception:
-        return []
-
-
 class EventStore:
     """
     v2 EventStore — facade over EventFS, EventIndex, SyncManager.
@@ -203,13 +193,6 @@ class EventStore:
             else:
                 invisible.append(sid)
         return visible, invisible
-
-    def initialize(self) -> bool:
-        """Legacy — load everything at once."""
-        success = self.initialize_sources_only()
-        for sid in list(self._sources.keys()):
-            self.load_events_for_source(sid)
-        return success
 
     # ------------------------------------------------------------------
     # SyncManager lazy init
@@ -598,13 +581,6 @@ class EventStore:
         except Exception:
             pass
 
-    def get_state(self) -> dict:
-        return {'visibility': self._visibility.copy(), 'colors': self._colors.copy()}
-
-    def set_state(self, state: dict) -> None:
-        self._visibility = state.get('visibility', {})
-        self._colors = state.get('colors', {})
-
     # ------------------------------------------------------------------
     # Sync operations (background)
     # ------------------------------------------------------------------
@@ -650,25 +626,6 @@ class EventStore:
         self._rebuild_index()
         self._notify_change()
 
-    def refresh_due_sources(self) -> list[str]:
-        """Refresh due sources (blocking)."""
-        sm = self._ensure_sync_manager()
-        due = sm.get_sources_needing_refresh()
-        for sid in due:
-            self.refresh(sid)
-        return due
-
-    def sync_pending_changes(self) -> tuple[int, int]:
-        """Sync pending changes (blocking). Returns (success, fail)."""
-        sm = self._ensure_sync_manager()
-        result = sm._do_sync_pending()
-        for uid in result.get("done_uids", []):
-            self._fs.remove_pending(uid)
-        self._rebuild_index()
-        self._notify_change()
-        self._notify_sync_status()
-        return (result.get("success", 0), result.get("failed", 0))
-
     # ------------------------------------------------------------------
     # Sync status
     # ------------------------------------------------------------------
@@ -687,10 +644,6 @@ class EventStore:
     def get_source_last_sync(self, source_id: str) -> Optional[datetime]:
         sm = self._ensure_sync_manager()
         return sm.source_last_success(source_id)
-
-    def get_source_refresh_interval(self, source_id: str) -> int:
-        sm = self._ensure_sync_manager()
-        return sm.source_refresh_interval(source_id)
 
     def is_source_outdated(self, source_id: str) -> bool:
         sm = self._ensure_sync_manager()
@@ -737,13 +690,6 @@ class _RepositoryCompat:
         ))
         self._store._notify_change()
         self._store._notify_sync_status()
-
-    def get_pending_events(self) -> list:
-        return []
-
-    def get_pending_count(self) -> int:
-        return self._store.get_pending_sync_count()
-
 
 def _ensure_tz(dt, tzid: Optional[str] = None):
     """Ensure *dt* is timezone-aware (default UTC, or *tzid* if given)."""
