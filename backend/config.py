@@ -217,6 +217,7 @@ class Config:
 
     password_program: str
     state_file: Path
+    log_level: str = "warn"  # Log threshold: debug, info, warn, error
     refresh_interval: int = 300  # Auto-refresh interval in seconds (0 to disable)
     outdate_threshold: int = 7200  # Seconds since last successful sync before marking events as unconfirmed (default 2 hours)
     timezone: str = "Europe/Amsterdam"  # v2: explicit timezone for display and floating-event conversion
@@ -256,6 +257,7 @@ class Config:
         # Parse General section
         general = data.get('General', {})
         password_program = general.get('password_program', '/usr/bin/pass')
+        log_level = general.get('log_level', 'warn')
         refresh_interval = general.get('refresh_interval', 300)  # Default 5 minutes
         outdate_threshold = general.get('outdate_threshold', 7200)  # Default 2 hours
         timezone = general.get('timezone', 'Europe/Amsterdam')  # v2 default
@@ -449,6 +451,7 @@ class Config:
         return cls(
             password_program=password_program,
             state_file=state_file,
+            log_level=log_level,
             refresh_interval=refresh_interval,
             outdate_threshold=outdate_threshold,
             timezone=timezone,

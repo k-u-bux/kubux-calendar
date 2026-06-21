@@ -9,6 +9,8 @@ from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Callable, Any, Dict, Optional
 from PySide6.QtCore import QObject, Signal, Qt, QTimer, QEventLoop
 
+from .log import debug_log, Level
+
 # --- Private Implementation ---
 
 class _DispatcherEngine(QObject):
@@ -48,7 +50,7 @@ class _DispatcherEngine(QObject):
                 self.task_completed.emit(ticket, result)
             except Exception as e:
                 # Fail Hard: Background thread crashes exit the process
-                print(f"CRITICAL: Task {ticket} crashed: {e}", file=sys.stderr)
+                debug_log(Level.ERROR, f"Task {ticket} crashed: {e}")
                 sys.exit(1)
 
         future = self._executor.submit(_wrapper)
@@ -65,7 +67,7 @@ class _DispatcherEngine(QObject):
             try:
                 callback(result)
             except Exception as e:
-                print(f"WARNING: Callback for task {ticket} failed: {e}", file=sys.stderr)
+                debug_log(Level.ERROR, f"Callback for task {ticket} failed: {e}")
 
 # Internal singleton (late initialization avoids problems with QT)
 _instance: Optional[_DispatcherEngine] = None

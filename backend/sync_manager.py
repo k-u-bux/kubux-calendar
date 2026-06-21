@@ -26,6 +26,7 @@ from .network_ops import (
     ics_fetch, ics_parse_events,
 )
 from .task_dispatch import dispatch_task
+from .log import debug_log, Level
 
 
 class SyncManager:
@@ -148,21 +149,17 @@ class SyncManager:
 
     def connect_all_in_background(self) -> None:
         """Connect to every configured CalDAV account + fetch ICS, in background."""
-        import sys
-        print(f"DEBUG sync: connect_all_in_background called, accounts={len(self._config.nextcloud_accounts)}, ics_urls={len(self._ics_urls)}", file=sys.stderr)
         dispatch_task(self._on_connect_all_done, self._do_connect_all)
 
     def _do_connect_all(self) -> dict:
         """Runs in worker thread."""
-        import sys
-        import signal
         now = datetime.now()
         result: dict = {"caldav": {}, "ics": {}}
-        print(f"DEBUG sync: _do_connect_all running, accounts={len(self._config.nextcloud_accounts)}, ics_urls={len(self._ics_urls)}", file=sys.stderr)
+        debug_log(Level.DEBUG, f"sync: _do_connect_all running, accounts={len(self._config.nextcloud_accounts)}, ics_urls={len(self._ics_urls)}")
 
         # --- CalDAV -------------------------------------------------------
         for account in self._config.nextcloud_accounts:
-            print(f"DEBUG sync: connecting CalDAV account '{account.name}' at {account.url}", file=sys.stderr)
+            debug_log(Level.DEBUG, f"sync: connecting CalDAV account '{account.name}' at {account.url}")
             try:
                 # Timeout the password retrieval (30s) to avoid hanging
                 # on pinentry prompts in headless environments.
@@ -178,22 +175,22 @@ class SyncManager:
                 pw_thread.start()
                 pw_thread.join(timeout=30)
                 if pw_thread.is_alive():
-                    print(f"DEBUG sync: password retrieval for {account.name} timed out (30s)", file=sys.stderr)
+                    debug_log(Level.WARN, f"sync: password retrieval for {account.name} timed out (30s)")
                     continue
                 if pw_error[0]:
                     raise pw_error[0]
                 pw = pw_result[0]
-                print(f"DEBUG sync: got password for {account.name}", file=sys.stderr)
+                debug_log(Level.DEBUG, f"sync: got password for {account.name}")
                 session = caldav_connect(account.url, account.username, pw,
                                          account.name)
                 self._sessions[account.name] = session
-                print(f"DEBUG sync: connected to {account.name}", file=sys.stderr)
+                debug_log(Level.DEBUG, f"sync: connected to {account.name}")
 
                 calendars = caldav_list_calendars(session)
-                print(f"DEBUG sync: found {len(calendars)} calendars for {account.name}", file=sys.stderr)
+                debug_log(Level.DEBUG, f"sync: found {len(calendars)} calendars for {account.name}")
                 for cal_info in calendars:
                     source_id = f"caldav:{account.name}:{cal_info.id}"
-                    print(f"DEBUG sync:   calendar '{cal_info.name}' id={cal_info.id} writable={cal_info.writable}", file=sys.stderr)
+                    debug_log(Level.DEBUG, f"sync:   calendar '{cal_info.name}' id={cal_info.id} writable={cal_info.writable}")
                     self._calendars[source_id] = cal_info
 
                     # Create or update CalendarSource
@@ -226,10 +223,10 @@ class SyncManager:
                     # Fetch events
                     window_start = now - timedelta(days=120)
                     window_end = now + timedelta(days=240)
-                    print(f"DEBUG sync: fetching events for {source_id}...", file=sys.stderr)
+                    debug_log(Level.DEBUG, f"sync: fetching events for {source_id}...")
                     raw_events = caldav_fetch_events(session, cal_info,
                                                      window_start, window_end)
-                    print(f"DEBUG sync: got {len(raw_events)} raw events from {source_id}", file=sys.stderr)
+                    debug_log(Level.DEBUG, f"sync: got {len(raw_events)} raw events from {source_id}")
                     events = []
                     config_tz = pytz.timezone(self._config.timezone)
                     for ical_text, href in raw_events:
@@ -238,22 +235,22 @@ class SyncManager:
                                 ical_text, source_id, config_tz=config_tz, caldav_href=href)
                             events.append(ev)
                         except Exception as e:
-                            print(f"DEBUG sync:   parse error for {href}: {e}", file=sys.stderr)
+                            debug_log(Level.DEBUG, f"sync:   parse error for {href}: {e}")
                             continue
                     self._fs.replace_source(source_id, events)
                     result["caldav"][source_id] = len(events)
-                    print(f"DEBUG sync: stored {len(events)} events for {source_id}", file=sys.stderr)
+                    debug_log(Level.DEBUG, f"sync: stored {len(events)} events for {source_id}")
 
             except Exception as e:
-                print(f"DEBUG sync: CalDAV error for {account.name}: {e}", file=sys.stderr)
+                debug_log(Level.ERROR, f"sync: CalDAV error for {account.name}: {e}")
 
         # --- ICS ----------------------------------------------------------
         for source_id, url in self._ics_urls.items():
-            print(f"DEBUG sync: fetching ICS {source_id}", file=sys.stderr)
+            debug_log(Level.DEBUG, f"sync: fetching ICS {source_id}")
             self._source_last_attempt[source_id] = now
             raw = ics_fetch(url)
             if raw is None:
-                print(f"DEBUG sync:   ICS fetch returned None for {source_id}", file=sys.stderr)
+                debug_log(Level.DEBUG, f"sync:   ICS fetch returned None for {source_id}")
                 continue
             texts = ics_parse_events(raw)
             events = []
@@ -265,7 +262,7 @@ class SyncManager:
                     continue
             self._fs.replace_source(source_id, events)
             self._source_last_success[source_id] = now
-            print(f"DEBUG sync: stored {len(events)} events for ICS {source_id}", file=sys.stderr)
+            debug_log(Level.DEBUG, f"sync: stored {len(events)} events for ICS {source_id}")
 
             # Persist metadata
             src = self._sources.get(source_id)
@@ -282,14 +279,13 @@ class SyncManager:
 
     def _on_connect_all_done(self, result):
         """Main-thread callback after connect_all finishes."""
-        import sys
         caldav_counts = result.get("caldav", {})
         ics_counts = result.get("ics", {})
-        print(f"DEBUG sync: connect_all done — CalDAV calendars: {list(caldav_counts.keys())}", file=sys.stderr)
+        debug_log(Level.DEBUG, f"sync: connect_all done — CalDAV calendars: {list(caldav_counts.keys())}")
         for sid, count in caldav_counts.items():
-            print(f"DEBUG sync:   {sid}: {count} events", file=sys.stderr)
+            debug_log(Level.DEBUG, f"sync:   {sid}: {count} events")
         for sid, count in ics_counts.items():
-            print(f"DEBUG sync:   {sid}: {count} events", file=sys.stderr)
+            debug_log(Level.DEBUG, f"sync:   {sid}: {count} events")
         self._rebuild_index()
         self._notify_change()
         self._notify_sync_status()
@@ -304,7 +300,6 @@ class SyncManager:
 
     def _do_refresh(self, source_id: Optional[str] = None) -> list[str]:
         """Runs in worker thread.  Returns list of successfully synced source IDs."""
-        import sys
         now = datetime.now()
         synced: list[str] = []
 
@@ -312,44 +307,43 @@ class SyncManager:
         self._try_connect_missing()
 
         ids = [source_id] if source_id else list(self._sources.keys())
-        print(f"DEBUG sync: _do_refresh sources={ids}", file=sys.stderr)
+        debug_log(Level.DEBUG, f"sync: _do_refresh sources={ids}")
         for sid in ids:
             self._source_last_attempt[sid] = now
             src = self._sources.get(sid)
             if src is None:
-                print(f"DEBUG sync:   source {sid} not found in _sources", file=sys.stderr)
+                debug_log(Level.DEBUG, f"sync:   source {sid} not found in _sources")
                 continue
 
             try:
                 if src.source_type == "caldav":
-                    print(f"DEBUG sync:   refreshing CalDAV {sid}", file=sys.stderr)
+                    debug_log(Level.DEBUG, f"sync:   refreshing CalDAV {sid}")
                     ok = self._refresh_caldav(sid, now)
                 elif src.source_type == "ics":
-                    print(f"DEBUG sync:   refreshing ICS {sid}", file=sys.stderr)
+                    debug_log(Level.DEBUG, f"sync:   refreshing ICS {sid}")
                     ok = self._refresh_ics(sid, now)
                 else:
                     ok = False
                 if ok:
                     synced.append(sid)
-                    print(f"DEBUG sync:   {sid} OK", file=sys.stderr)
+                    debug_log(Level.DEBUG, f"sync:   {sid} OK")
                 else:
-                    print(f"DEBUG sync:   {sid} FAILED", file=sys.stderr)
+                    debug_log(Level.DEBUG, f"sync:   {sid} FAILED")
             except Exception as e:
-                print(f"DEBUG sync:   {sid} exception: {e}", file=sys.stderr)
+                debug_log(Level.ERROR, f"sync:   {sid} exception: {e}")
 
         if synced:
             self._last_sync_time = now
         return synced
 
     def _refresh_caldav(self, source_id: str, now: datetime) -> bool:
-        import sys
         src = self._sources.get(source_id)
         if src is None:
-            print(f"DEBUG sync: _refresh_caldav {source_id}: source not found", file=sys.stderr)
+            debug_log(Level.DEBUG, f"sync: _refresh_caldav {source_id}: source not found")
             return False
         session = self._sessions.get(src.account_name)
         if session is None:
-            print(f"DEBUG sync: _refresh_caldav {source_id}: no session for {src.account_name}", file=sys.stderr)
+            debug_log(Level.DEBUG, f"sync: _refresh_caldav {source_id}: no session for {src.account_name}")
 
         # Reconnect to get fresh calendar list
         try:
@@ -366,13 +360,13 @@ class SyncManager:
                     pw = acc.get_password(self._config.password_program)
                     session = caldav_connect(acc.url, acc.username, pw, acc.name)
                     self._sessions[acc.name] = session
-                    print(f"DEBUG sync: _refresh_caldav reconnected {acc.name}", file=sys.stderr)
+                    debug_log(Level.DEBUG, f"sync: _refresh_caldav reconnected {acc.name}")
                 except Exception as e:
-                    print(f"DEBUG sync: _refresh_caldav reconnect failed: {e}", file=sys.stderr)
+                    debug_log(Level.ERROR, f"sync: _refresh_caldav reconnect failed: {e}")
                     return False
                 break
         else:
-            print(f"DEBUG sync: _refresh_caldav no account config for {src.account_name}", file=sys.stderr)
+            debug_log(Level.DEBUG, f"sync: _refresh_caldav no account config for {src.account_name}")
             return False
 
         for cal_info in caldav_list_calendars(session):
@@ -381,10 +375,10 @@ class SyncManager:
                 self._calendars[cid] = cal_info
                 window_start = now - timedelta(days=120)
                 window_end = now + timedelta(days=240)
-                print(f"DEBUG sync: _refresh_caldav fetching {source_id}...", file=sys.stderr)
+                debug_log(Level.DEBUG, f"sync: _refresh_caldav fetching {source_id}...")
                 raw_events = caldav_fetch_events(session, cal_info,
                                                  window_start, window_end)
-                print(f"DEBUG sync: _refresh_caldav got {len(raw_events)} raw events", file=sys.stderr)
+                debug_log(Level.DEBUG, f"sync: _refresh_caldav got {len(raw_events)} raw events")
                 events = []
                 config_tz = pytz.timezone(self._config.timezone)
                 for ical_text, href in raw_events:
@@ -393,11 +387,11 @@ class SyncManager:
                             ical_text, source_id, config_tz=config_tz, caldav_href=href)
                         events.append(ev)
                     except Exception as e:
-                        print(f"DEBUG sync:   parse error: {e}", file=sys.stderr)
+                        debug_log(Level.DEBUG, f"sync:   parse error: {e}")
                         continue
                 self._fs.replace_source(source_id, events)
                 self._source_last_success[source_id] = now
-                print(f"DEBUG sync: _refresh_caldav stored {len(events)} events for {source_id}", file=sys.stderr)
+                debug_log(Level.DEBUG, f"sync: _refresh_caldav stored {len(events)} events for {source_id}")
 
                 # Update in-memory source color from server
                 src.color = cal_info.color
@@ -411,7 +405,7 @@ class SyncManager:
                     last_success=now,
                 ))
                 return True
-        print(f"DEBUG sync: _refresh_caldav calendar {source_id} not found in server list", file=sys.stderr)
+        debug_log(Level.DEBUG, f"sync: _refresh_caldav calendar {source_id} not found in server list")
         return False
 
     def _refresh_ics(self, source_id: str, now: datetime) -> bool:
@@ -489,16 +483,15 @@ class SyncManager:
 
     def _do_sync_pending(self) -> dict:
         """Runs in worker thread."""
-        import sys
         ops = self._fs.load_pending()
         result = {"success": 0, "failed": 0, "done_uids": []}
 
-        print(f"DEBUG _do_sync_pending: {len(ops)} pending ops", file=sys.stderr)
-        print(f"DEBUG _do_sync_pending: _calendars keys: {list(self._calendars.keys())}", file=sys.stderr)
-        print(f"DEBUG _do_sync_pending: _sessions keys: {list(self._sessions.keys())}", file=sys.stderr)
+        debug_log(Level.DEBUG, f"sync: {len(ops)} pending ops")
+        debug_log(Level.DEBUG, f"sync: _calendars keys: {list(self._calendars.keys())}")
+        debug_log(Level.DEBUG, f"sync: _sessions keys: {list(self._sessions.keys())}")
 
         for op in ops:
-            print(f"DEBUG _do_sync_pending: processing op={op.operation} uid={op.uid} source_id={op.source_id}", file=sys.stderr)
+            debug_log(Level.DEBUG, f"sync: processing op={op.operation} uid={op.uid} source_id={op.source_id}")
             ok = self._sync_one(op)
             if ok:
                 result["success"] += 1
@@ -512,22 +505,21 @@ class SyncManager:
 
     def _sync_one(self, op: PendingOp) -> bool:
         """Execute a single pending operation.  Returns success."""
-        import sys
         source_id = op.source_id
         cal_info = self._calendars.get(source_id)
         src = self._sources.get(source_id)
-        print(f"DEBUG _sync_one: op={op.operation} uid={op.uid} source_id={source_id}", file=sys.stderr)
+        debug_log(Level.DEBUG, f"sync: _sync_one op={op.operation} uid={op.uid} source_id={source_id}")
         if cal_info is None:
-            print(f"DEBUG _sync_one: cal_info for {source_id} NOT FOUND in _calendars (keys={list(self._calendars.keys())})", file=sys.stderr)
+            debug_log(Level.DEBUG, f"sync: cal_info for {source_id} NOT FOUND in _calendars (keys={list(self._calendars.keys())})")
         if src is None:
-            print(f"DEBUG _sync_one: src for {source_id} NOT FOUND in _sources", file=sys.stderr)
+            debug_log(Level.DEBUG, f"sync: src for {source_id} NOT FOUND in _sources")
         if cal_info is None or src is None:
             return False
         session = self._sessions.get(src.account_name)
         if session is None:
-            print(f"DEBUG _sync_one: session for {src.account_name} NOT FOUND in _sessions (keys={list(self._sessions.keys())})", file=sys.stderr)
+            debug_log(Level.DEBUG, f"sync: session for {src.account_name} NOT FOUND in _sessions (keys={list(self._sessions.keys())})")
             return False
-        print(f"DEBUG _sync_one: session OK for {src.account_name}", file=sys.stderr)
+        debug_log(Level.DEBUG, f"sync: session OK for {src.account_name}")
 
         if op.operation == "create":
             ev = self._fs.load_event(source_id, op.uid)
@@ -554,17 +546,16 @@ class SyncManager:
 
     def _on_sync_pending_done(self, result: dict):
         """Main-thread callback."""
-        import sys
         ops_before = {o.uid: o for o in self._fs.load_pending()}
 
         for op in ops_before.values():
             uid = op.uid
             if uid in result.get("done_uids", []):
-                print(f"DEBUG _on_sync_pending_done: success for uid={uid} op={op.operation} source_id={op.source_id}", file=sys.stderr)
+                debug_log(Level.DEBUG, f"sync: success for uid={uid} op={op.operation} source_id={op.source_id}")
                 self._fs.remove_pending(uid)
                 # For deletes, also erase the cached .ics file from disk
                 if op.operation == "delete":
-                    print(f"DEBUG _on_sync_pending_done: deleting .ics for {uid} from disk", file=sys.stderr)
+                    debug_log(Level.DEBUG, f"sync: deleting .ics for {uid} from disk")
                     self._fs.delete_event(op.source_id, uid)
 
         self._rebuild_index()

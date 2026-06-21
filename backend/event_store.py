@@ -27,12 +27,7 @@ from .network_ops import (
     caldav_connect, caldav_list_calendars, DAVSession, CalendarInfo,
 )
 from .task_dispatch import dispatch_task
-
-
-def _debug_print(message: str) -> None:
-    import sys
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    print(f"[{timestamp}] {message}", file=sys.stderr)
+from .log import debug_log, Level
 
 
 def _load_recurring_ical_events(ical_data: str, start: datetime, end: datetime) -> list:
@@ -102,9 +97,9 @@ class EventStore:
         if v1_storage.is_dir():
             try:
                 shutil.rmtree(v1_storage)
-                _debug_print(f"Purged old v1 cache: {v1_storage}")
+                debug_log(Level.INFO, f"Purged old v1 cache: {v1_storage}")
             except Exception as e:
-                _debug_print(f"Could not purge v1 cache: {e}")
+                debug_log(Level.ERROR, f"Could not purge v1 cache: {e}")
 
     # ------------------------------------------------------------------
     # Callbacks
@@ -370,7 +365,6 @@ class EventStore:
         visible_only: bool = True,
     ) -> list[EventView]:
         """Query index, load from FS, expand recurrences, wrap in EventView."""
-        import sys
         # Ensure start/end are tz-aware (GUI passes naive datetimes)
         if start.tzinfo is None:
             start = start.replace(tzinfo=pytz.UTC)
@@ -379,23 +373,23 @@ class EventStore:
 
         # Get candidate master events from index
         candidates = self._index.query_range(start, end)
-        print(f"DEBUG _build_event_views: index.query_range returned {len(candidates)} candidates", file=sys.stderr)
+        debug_log(Level.DEBUG, f"store: query_range returned {len(candidates)} candidates")
 
         # Filter by calendar
         if calendar_ids is not None:
             candidates = [e for e in candidates if e.source_id in calendar_ids]
-            print(f"DEBUG _build_event_views: after calendar_ids filter: {len(candidates)}", file=sys.stderr)
+            debug_log(Level.DEBUG, f"store: after calendar_ids filter: {len(candidates)}")
         elif visible_only:
             before = len(candidates)
             candidates = [
                 e for e in candidates
                 if self._visibility.get(e.source_id, True)
             ]
-            print(f"DEBUG _build_event_views: after visible_only filter: {len(candidates)} (was {before})", file=sys.stderr)
+            debug_log(Level.DEBUG, f"store: after visible_only filter: {len(candidates)} (was {before})")
 
         # Expand recurrences
         instances = self._expand_instances(candidates, start, end)
-        print(f"DEBUG _build_event_views: after _expand_instances: {len(instances)}", file=sys.stderr)
+        debug_log(Level.DEBUG, f"store: after _expand_instances: {len(instances)}")
 
         # Filter to time range (recurrence expansion may include out-of-range)
         before = len(instances)
@@ -403,14 +397,14 @@ class EventStore:
             ev for ev in instances
             if ev.start < end and ev.end > start
         ]
-        print(f"DEBUG _build_event_views: after time-range filter: {len(filtered)} (was {before})", file=sys.stderr)
+        debug_log(Level.DEBUG, f"store: after time-range filter: {len(filtered)} (was {before})")
 
         # Apply color overrides and outdated status
         views: list[EventView] = []
         for ev in filtered:
             src = self._sources.get(ev.source_id)
             if src is None:
-                print(f"DEBUG _build_event_views: skipping event {ev.uid} — source {ev.source_id} not found", file=sys.stderr)
+                debug_log(Level.DEBUG, f"store: skipping event {ev.uid} — source {ev.source_id} not found")
                 continue
             if src.id in self._colors:
                 src.color = self._colors[src.id]
@@ -424,7 +418,7 @@ class EventStore:
         Fetch events from CalDAV servers and ICS subscriptions.
         This is a blocking call — used by get_events when cache is invalid.
         """
-        _debug_print(f"Fetching events {start.date()} to {end.date()}")
+        debug_log(Level.INFO, f"store: fetching events {start.date()} to {end.date()}")
         now = datetime.now()
 
         # Build account list from config
@@ -475,7 +469,7 @@ class EventStore:
                         last_success=now,
                     ))
             except Exception as e:
-                _debug_print(f"CalDAV {account.name}: {e}")
+                debug_log(Level.ERROR, f"store: CalDAV {account.name}: {e}")
 
         # ICS subscriptions
         for sid, url in self._ics_urls.items():
@@ -629,28 +623,21 @@ class EventStore:
 
     def delete_event(self, event: EventView) -> bool:
         """Delete an event (pending_delete)."""
-        import sys
         if event.read_only:
-            print(f"DEBUG delete_event: uid={event.uid} FAILED — read_only", file=sys.stderr)
+            debug_log(Level.DEBUG, f"store: delete uid={event.uid} FAILED — read_only")
             return False
 
-        print(f"DEBUG delete_event: uid={event.uid} source_id={event.source.id} — adding PendingOp delete", file=sys.stderr)
+        debug_log(Level.DEBUG, f"store: delete uid={event.uid} source_id={event.source.id}")
         self._fs.add_pending(PendingOp(
             uid=event.uid, source_id=event.source.id, operation="delete"
         ))
         event._set_pending_sync_state("delete")
 
-        # Update the in-memory index so the display picks up the pending state
         updated_ev = event.immutable_event
         self._index.remove(updated_ev.uid)
         self._index.add(updated_ev)
 
-        # Debug: log current pending ops count
-        pending = self._fs.load_pending()
-        print(f"DEBUG delete_event: after add_pending — {len(pending)} pending ops total", file=sys.stderr)
-        for op in pending:
-            if op.uid == event.uid:
-                print(f"DEBUG delete_event:   found PendingOp for {event.uid}: op={op.operation} source_id={op.source_id}", file=sys.stderr)
+        debug_log(Level.DEBUG, f"store: delete pending ops: {len(self._fs.load_pending())}")
 
         self._notify_change()
         self._notify_sync_status()

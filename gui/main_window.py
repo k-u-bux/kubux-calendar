@@ -28,6 +28,7 @@ EventData = EventView
 
 from .widgets.calendar_widget import CalendarWidget, ViewType, set_layout_config, set_localization_config, get_localization_config, set_colors_config, set_labels_config
 from .event_dialog import EventDialog
+from backend.log import debug_log, Level
 
 
 class ClickableColorBox(QFrame):
@@ -308,7 +309,7 @@ class MainWindow(QMainWindow):
         # Start auto-refresh timer - always runs every 60 seconds to check which sources need refresh
         # Individual per-source refresh intervals are checked in refresh_due_sources()
         self._auto_refresh_timer.start(60 * 1000)  # Fixed 60-second check interval
-        print(f"DEBUG: Auto-refresh check enabled every 60 seconds", file=__import__('sys').stderr)
+        debug_log(Level.DEBUG, "Auto-refresh check enabled every 60 seconds")
     
     def _setup_window(self):
         """Configure main window properties."""
@@ -488,7 +489,7 @@ class MainWindow(QMainWindow):
                     state = json.load(f)
                     self._ui_state = state.get('ui', {})
             except Exception as e:
-                print(f"Error loading UI state: {e}", file=__import__('sys').stderr)
+                debug_log(Level.ERROR, f"Error loading UI state: {e}")
                 self._ui_state = {}
         else:
             self._ui_state = {}
@@ -511,11 +512,10 @@ class MainWindow(QMainWindow):
             with open(self._state_file, 'w') as f:
                 json.dump(existing_state, f, indent=2)
         except Exception as e:
-            print(f"Error saving UI state: {e}", file=__import__('sys').stderr)
+            debug_log(Level.ERROR, f"Error saving UI state: {e}")
     
     def _load_state(self):
         """Load persisted application state from JSON."""
-        import sys
         
         # View type
         view_str = self._ui_state.get("view_type", "week")
@@ -544,7 +544,7 @@ class MainWindow(QMainWindow):
         scroll_pos = self._ui_state.get("scroll_position", 0)
         list_top_datetime_str = self._ui_state.get("list_top_datetime")
         
-        print(f"DEBUG _load_state: view_type={view_type}, scroll_pos={scroll_pos}, list_dt={list_top_datetime_str}", file=sys.stderr)
+        debug_log(Level.DEBUG, f"_load_state: view_type={view_type}, scroll_pos={scroll_pos}, list_dt={list_top_datetime_str}")
         
         # Store for deferred scroll restoration
         self._pending_restore_view_type = view_type
@@ -559,7 +559,6 @@ class MainWindow(QMainWindow):
     def _save_state(self):
         """Save application state to JSON."""
         import base64
-        import sys
         
         # Window geometry (encode as base64 string for JSON)
         self._ui_state["geometry"] = base64.b64encode(self.saveGeometry().data()).decode('utf-8')
@@ -578,11 +577,11 @@ class MainWindow(QMainWindow):
             first_visible_dt = self._calendar_widget.get_list_first_visible_datetime()
             if first_visible_dt:
                 self._ui_state["list_top_datetime"] = first_visible_dt.isoformat()
-                print(f"DEBUG _save_state: list_top_datetime={first_visible_dt.isoformat()}", file=sys.stderr)
+                debug_log(Level.DEBUG, f"_save_state: list_top_datetime={first_visible_dt.isoformat()}")
         else:
             scroll_pos = self._calendar_widget.get_scroll_position()
             self._ui_state["scroll_position"] = scroll_pos
-            print(f"DEBUG _save_state: scroll_position={scroll_pos}", file=sys.stderr)
+            debug_log(Level.DEBUG, f"_save_state: scroll_position={scroll_pos}")
         
         # Splitter sizes (sidebar width)
         self._ui_state["splitter_sizes"] = self._splitter.sizes()
@@ -630,8 +629,6 @@ class MainWindow(QMainWindow):
         
         Called via timer to allow UI updates between loads.
         """
-        import sys
-        
         # First call: set up the queue of sources to load
         if not hasattr(self, '_pending_sources_to_load') or self._pending_sources_to_load is None:
             visible, invisible = self.event_store.get_sources_by_visibility()
@@ -672,7 +669,7 @@ class MainWindow(QMainWindow):
         
         # Load events for this source from storage (no network)
         event_count = self.event_store.load_events_for_source(source_id)
-        print(f"DEBUG: Loaded {event_count} events from {source_id}", file=sys.stderr)
+        debug_log(Level.DEBUG, f"Loaded {event_count} events from {source_id}")
         
         # Schedule next source load (don't refresh display for each source - wait until all loaded)
         QTimer.singleShot(1, self._load_events_progressively)
@@ -684,8 +681,7 @@ class MainWindow(QMainWindow):
         network worker's completion callback via _on_data_changed().
         This prevents multiple redundant display updates.
         """
-        import sys
-        print("DEBUG: Starting async network refresh", file=sys.stderr)
+        debug_log(Level.DEBUG, "Starting async network refresh")
         self._statusbar.showMessage("Syncing from servers...")
         
         # Start background refresh - completion will trigger _on_data_changed()
@@ -695,12 +691,11 @@ class MainWindow(QMainWindow):
     
     def _restore_scroll_position(self):
         """Restore scroll position after data load (deferred from _load_state)."""
-        import sys
         view_type = getattr(self, '_pending_restore_view_type', None)
         scroll_pos = getattr(self, '_pending_restore_scroll_pos', 0)
         list_dt_str = getattr(self, '_pending_restore_list_dt_str', None)
         
-        print(f"DEBUG _restore_scroll_position: view_type={view_type}, scroll_pos={scroll_pos}, list_dt={list_dt_str}", file=sys.stderr)
+        debug_log(Level.DEBUG, f"_restore_scroll_position: view_type={view_type}, scroll_pos={scroll_pos}, list_dt={list_dt_str}")
         
         if view_type == ViewType.LIST:
             if list_dt_str:
@@ -715,7 +710,7 @@ class MainWindow(QMainWindow):
                 # No saved datetime - scroll to upcoming events
                 self._calendar_widget.go_today()
         else:
-            print(f"DEBUG _restore_scroll_position: calling set_scroll_position({scroll_pos})", file=sys.stderr)
+            debug_log(Level.DEBUG, f"_restore_scroll_position: calling set_scroll_position({scroll_pos})")
             self._calendar_widget.set_scroll_position(scroll_pos)
     
     def _refresh_events(self):
@@ -735,7 +730,6 @@ class MainWindow(QMainWindow):
         Used during initial load to display events from repository without
         triggering network access.
         """
-        import sys
         self._statusbar.showMessage("Displaying events...")
         
         start, end = self._calendar_widget.get_date_range()
@@ -743,7 +737,7 @@ class MainWindow(QMainWindow):
         events = self.event_store.get_events_from_cache(start, end)
         self._calendar_widget.set_events(events)
         
-        print(f"DEBUG: _update_display_from_cache: {len(events)} events", file=sys.stderr)
+        debug_log(Level.DEBUG, f"_update_display_from_cache: {len(events)} events")
         self._statusbar.showMessage(f"Loaded {len(events)} events from cache", 3000)
     
     def _update_date_label(self):
@@ -823,13 +817,11 @@ class MainWindow(QMainWindow):
         
         Preserves list view scroll position across the update.
         """
-        import sys
-        
         # Capture current list view position BEFORE updating
         current_list_dt = None
         if self._calendar_widget.get_current_view() == ViewType.LIST:
             current_list_dt = self._calendar_widget.get_list_first_visible_datetime()
-            print(f"DEBUG _on_data_changed: captured list_dt={current_list_dt}", file=sys.stderr)
+            debug_log(Level.DEBUG, f"_on_data_changed: captured list_dt={current_list_dt}")
         
         self._update_display_from_cache()
         self._sidebar.refresh()
@@ -838,7 +830,7 @@ class MainWindow(QMainWindow):
         
         # Restore list view position AFTER update
         if current_list_dt:
-            print(f"DEBUG _on_data_changed: restoring list_dt={current_list_dt}", file=sys.stderr)
+            debug_log(Level.DEBUG, f"_on_data_changed: restoring list_dt={current_list_dt}")
             QTimer.singleShot(50, lambda: self._calendar_widget.scroll_list_to_datetime(current_list_dt))
     
     def _on_sync_status_changed(self, pending_count: int, last_sync_time):
@@ -847,7 +839,6 @@ class MainWindow(QMainWindow):
     
     def _on_auto_refresh(self):
         """Handle auto-refresh timer tick - refresh sources that are due (non-blocking)."""
-        import sys
         # Use background refresh - UI remains responsive
         self.event_store.refresh_due_sources_in_background()
         
@@ -856,11 +847,9 @@ class MainWindow(QMainWindow):
     
     def _on_sync_timer(self):
         """Handle sync timer tick - attempt to sync pending changes (non-blocking)."""
-        import sys
-        
         pending_count = self.event_store.get_pending_sync_count()
         if pending_count > 0:
-            print(f"DEBUG: Sync timer - {pending_count} pending changes (interval: {self._current_sync_interval}s)", file=sys.stderr)
+            debug_log(Level.DEBUG, f"Sync timer - {pending_count} pending changes (interval: {self._current_sync_interval}s)")
             # Use background sync - UI remains responsive
             self.event_store.sync_pending_in_background()
         
@@ -882,8 +871,7 @@ class MainWindow(QMainWindow):
     
     def _on_reload_clicked(self):
         """Handle reload button click - force refresh from server (non-blocking)."""
-        import sys
-        print("DEBUG: Reload clicked - calling event_store.refresh_in_background()", file=sys.stderr)
+        debug_log(Level.DEBUG, "Reload clicked - calling event_store.refresh_in_background()")
         self._statusbar.showMessage("Reloading from server...")
         
         # Use background refresh - UI remains responsive
@@ -892,8 +880,7 @@ class MainWindow(QMainWindow):
     
     def _on_config_file_changed(self, path: str):
         """Handle config file change - reload configuration."""
-        import sys
-        print(f"DEBUG: Config file changed: {path}", file=sys.stderr)
+        debug_log(Level.DEBUG, f"Config file changed: {path}")
         
         # Some editors (like vim) delete and recreate the file, which removes it from the watcher
         # Re-add the path if it exists
@@ -906,7 +893,6 @@ class MainWindow(QMainWindow):
     
     def _load_pending_config(self):
         """Load new config and apply or defer depending on open dialogs."""
-        import sys
         try:
             new_config = Config.load()
             
@@ -918,7 +904,7 @@ class MainWindow(QMainWindow):
             if current_view == ViewType.LIST:
                 current_list_dt = self._calendar_widget.get_list_first_visible_datetime()
             
-            print(f"DEBUG _load_pending_config: captured scroll_pos={current_scroll_pos}, view={current_view}", file=sys.stderr)
+            debug_log(Level.DEBUG, f"_load_pending_config: captured scroll_pos={current_scroll_pos}, view={current_view}")
             
             if self._event_dialogs:
                 # Dialogs are open - defer config application
@@ -930,7 +916,7 @@ class MainWindow(QMainWindow):
                     'list_dt': current_list_dt
                 }
                 self._statusbar.showMessage("Config changed. Will apply when edit dialogs close.", 5000)
-                print("DEBUG: Config change deferred until dialogs close", file=sys.stderr)
+                debug_log(Level.DEBUG, "Config change deferred until dialogs close")
             else:
                 # No dialogs open - apply immediately with captured scroll position
                 self._apply_config(new_config, captured_scroll={
@@ -942,7 +928,7 @@ class MainWindow(QMainWindow):
                 
         except Exception as e:
             error_msg = f"Failed to load config: {e}"
-            print(f"ERROR: {error_msg}", file=sys.stderr)
+            debug_log(Level.ERROR, error_msg)
             self._statusbar.showMessage(error_msg, 5000)
     
     def _on_event_dialog_closed(self, dialog: EventDialog):
@@ -960,8 +946,7 @@ class MainWindow(QMainWindow):
     
     def _apply_config(self, new_config: Config, captured_scroll: dict = None):
         """Apply new configuration by rebuilding the UI in place."""
-        import sys
-        print("DEBUG: Applying new config...", file=sys.stderr)
+        debug_log(Level.DEBUG, "Applying new config...")
         
         try:
             # Save current UI state before rebuild (primarily for geometry)
@@ -1009,7 +994,7 @@ class MainWindow(QMainWindow):
                 self._pending_restore_list_dt_str = captured_scroll['list_dt'].isoformat() if captured_scroll['list_dt'] else None
                 # Also apply the current date
                 self._calendar_widget.set_date(captured_scroll['date'])
-                print(f"DEBUG _apply_config: using captured scroll_pos={captured_scroll['scroll_pos']}", file=sys.stderr)
+                debug_log(Level.DEBUG, f"_apply_config: using captured scroll_pos={captured_scroll['scroll_pos']}")
             
             # Initialize data (skip automatic scroll restoration - we'll do it explicitly)
             self._skip_auto_scroll_restore = True
@@ -1018,24 +1003,24 @@ class MainWindow(QMainWindow):
             
             # Restart auto-refresh timer - fixed 60-second check interval
             self._auto_refresh_timer.start(60 * 1000)
-            print(f"DEBUG: Auto-refresh check enabled every 60 seconds", file=sys.stderr)
+            debug_log(Level.DEBUG, "Auto-refresh check enabled every 60 seconds")
             
             # Re-add config path to watcher (may have been removed during file editing)
             config_path = Config.get_default_config_path()
             if config_path.exists() and str(config_path) not in self._config_watcher.files():
                 self._config_watcher.addPath(str(config_path))
-                print(f"DEBUG: Re-added config path to watcher: {config_path}", file=sys.stderr)
+                debug_log(Level.DEBUG, f"Re-added config path to watcher: {config_path}")
             
             # Restore scroll position after layout is complete
             QApplication.processEvents()
             self._restore_scroll_position()
             
             self._statusbar.showMessage("Configuration applied successfully", 3000)
-            print("DEBUG: Config applied successfully", file=sys.stderr)
+            debug_log(Level.DEBUG, "Config applied successfully")
             
         except Exception as e:
             error_msg = f"Failed to apply config: {e}"
-            print(f"ERROR: {error_msg}", file=sys.stderr)
+            debug_log(Level.ERROR, error_msg)
             self._statusbar.showMessage(error_msg, 5000)
             QMessageBox.warning(
                 self,
@@ -1087,9 +1072,9 @@ class MainWindow(QMainWindow):
             new_end.replace(tzinfo=None) == old_end.replace(tzinfo=None)):
             return
         
-        print(f"DEBUG: Event time changed: {event.summary}", file=sys.stderr)
-        print(f"DEBUG: Old: {old_start} - {old_end}", file=sys.stderr)
-        print(f"DEBUG: New: {new_start} - {new_end}", file=sys.stderr)
+        debug_log(Level.DEBUG, f"Event time changed: {event.summary}")
+        debug_log(Level.DEBUG, f"  Old: {old_start} - {old_end}")
+        debug_log(Level.DEBUG, f"  New: {new_start} - {new_end}")
         
         # Handle recurring events - ask user what to do
         if event.is_recurring:

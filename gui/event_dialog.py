@@ -24,6 +24,7 @@ from backend import EventStore, EventView, CalendarSource, RecurrenceRule
 # EventView is what get_events() and create_event() return
 EventData = EventView
 from backend.timezone_utils import utc_to_local_naive as utc_to_local
+from backend.log import debug_log, Level
 
 
 # Common timezones for the selector.  Sorted by offset for convenience.
@@ -328,7 +329,7 @@ class EventDialog(QWidget):
             with open(self._state_file, 'w') as f:
                 json.dump(existing_state, f, indent=2)
         except Exception as e:
-            print(f"Error saving dialog state: {e}", file=__import__('sys').stderr)
+            debug_log(Level.ERROR, f"Error saving dialog state: {e}")
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -720,7 +721,7 @@ class EventDialog(QWidget):
             return
         
         cal_event = self.event_data.event if hasattr(self.event_data, 'event') else self.event_data
-        print(f"DEBUG _on_delete: uid={self.event_data.uid} summary='{self.event_data.summary}' recurring={self.event_data.is_recurring}", file=sys.stderr)
+        debug_log(Level.DEBUG, f"dialog: delete uid={self.event_data.uid} summary='{self.event_data.summary}' recurring={self.event_data.is_recurring}")
         
         if self.event_data.is_recurring:
             result = QMessageBox.question(self, "Delete Recurring Event",
@@ -730,24 +731,24 @@ class EventDialog(QWidget):
                 return
             elif result == QMessageBox.No:
                 instance_start = self.event_data.start
-                print(f"DEBUG _on_delete: deleting recurring instance at {instance_start}", file=sys.stderr)
+                debug_log(Level.DEBUG, f"dialog: deleting recurring instance at {instance_start}")
                 if self.event_store.delete_recurring_instance(cal_event, instance_start):
-                    print(f"DEBUG _on_delete: delete_recurring_instance returned True", file=sys.stderr)
+                    debug_log(Level.DEBUG, "dialog: delete_recurring_instance OK")
                     self.event_deleted.emit(self.event_data)
                     self.close()
                 else:
-                    print(f"DEBUG _on_delete: delete_recurring_instance returned False", file=sys.stderr)
+                    debug_log(Level.DEBUG, "dialog: delete_recurring_instance FAILED")
                 return
         else:
-            print(f"DEBUG _on_delete: deleting single event", file=sys.stderr)
+            debug_log(Level.DEBUG, "dialog: deleting single event")
         
         ok = self.event_store.delete_event(cal_event)
-        print(f"DEBUG _on_delete: delete_event returned {ok}", file=sys.stderr)
+        debug_log(Level.DEBUG, f"dialog: delete_event returned {ok}")
         if ok:
             self.event_deleted.emit(self.event_data)
             self.close()
         else:
-            print(f"DEBUG _on_delete: delete_event FAILED", file=sys.stderr)
+            debug_log(Level.DEBUG, "dialog: delete_event FAILED")
     
     def closeEvent(self, close_event: QCloseEvent):
         # Save window geometry (encode as base64 for JSON)

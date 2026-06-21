@@ -19,6 +19,8 @@ from caldav.elements import ical as caldav_ical
 from icalendar import Calendar as ICalCalendar, Event as ICalEvent
 import uuid as _uuid
 
+from .log import debug_log, Level
+
 
 # ==================== Data Types ====================
 
@@ -188,23 +190,22 @@ def caldav_update_event(session: DAVSession, calendar: CalendarInfo,
 def caldav_delete_event(session: DAVSession, calendar: CalendarInfo,
                         uid: str) -> bool:
     """Delete an event by UID.  Returns success."""
-    import sys
     cal = calendar._caldav_cal
-    print(f"DEBUG caldav_delete_event: uid={uid} cal={cal is not None} writable={calendar.writable}", file=sys.stderr)
+    debug_log(Level.DEBUG, f"caldav: delete uid={uid} cal={cal is not None} writable={calendar.writable}")
     if cal is None:
-        print(f"DEBUG caldav_delete_event: calendar._caldav_cal is None", file=sys.stderr)
+        debug_log(Level.DEBUG, "caldav: delete — calendar._caldav_cal is None")
         return False
     try:
         ev = cal.event_by_uid(uid)
         if ev:
-            print(f"DEBUG caldav_delete_event: found event, deleting...", file=sys.stderr)
+            debug_log(Level.DEBUG, "caldav: delete — found event, deleting...")
             ev.delete()
-            print(f"DEBUG caldav_delete_event: deleted OK", file=sys.stderr)
+            debug_log(Level.DEBUG, "caldav: delete — OK")
             return True
         else:
-            print(f"DEBUG caldav_delete_event: event_by_uid returned None (not found on server)", file=sys.stderr)
+            debug_log(Level.DEBUG, "caldav: delete — event_by_uid returned None (not found)")
     except Exception as e:
-        print(f"DEBUG caldav_delete_event: exception: {e}", file=sys.stderr)
+        debug_log(Level.ERROR, f"caldav: delete exception: {e}")
     return False
 
 

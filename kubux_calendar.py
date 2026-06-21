@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
 
 from backend.config import Config
+from backend.log import set_level, Level
 from gui.main_window import MainWindow
 
 
@@ -80,10 +81,14 @@ color = #4285f4
         print(f"Error loading configuration: {e}")
         sys.exit(1)
     
+    # Set log level: CLI --debug overrides config
     if args.debug:
-        print(f"Loaded configuration from: {args.config or Config.get_default_config_path()}")
-        print(f"  Nextcloud accounts: {len(config.nextcloud_accounts)}")
-        print(f"  ICS subscriptions: {len(config.ics_subscriptions)}")
+        set_level(Level.DEBUG)
+    else:
+        level_map = {"debug": Level.DEBUG, "info": Level.INFO,
+                     "warn": Level.WARN, "error": Level.ERROR,
+                     "silent": Level.SILENT}
+        set_level(level_map.get(config.log_level, Level.WARN))
     
     # Create and show main window
     window = MainWindow(config)
