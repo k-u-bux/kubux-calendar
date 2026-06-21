@@ -1,6 +1,5 @@
 from typing import Any, Callable, Optional, TypeVar, Generic
 from datetime import datetime
-import pytz
 
 # T represents the Totally Ordered type used for coordinates (Time)
 T = TypeVar('T')
@@ -77,24 +76,6 @@ class IntervalTree(Generic[T]):
                 self._rotate_left(node)
             node = node.parent
 
-    # --- Datetime Comparison Helper ---
-    
-    @staticmethod
-    def _ensure_comparable(a, b):
-        """Ensure two values are comparable, handling datetime timezone mismatches."""
-        if isinstance(a, datetime) and isinstance(b, datetime):
-            # If both have timezone info but different timezones, convert both to UTC
-            if a.tzinfo is not None and b.tzinfo is not None:
-                # Both have timezone info, ensure they're comparable
-                return a.astimezone(pytz.UTC), b.astimezone(pytz.UTC)
-            elif a.tzinfo is not None and b.tzinfo is None:
-                # a is aware, b is naive - assume b is UTC
-                return a, pytz.UTC.localize(b)
-            elif a.tzinfo is None and b.tzinfo is not None:
-                # a is naive, b is aware - assume a is UTC
-                return pytz.UTC.localize(a), b
-        return a, b
-
     # --- Public API ---
 
     def insert(self, start: T, end: T, data: Any) -> IntervalHandle[T]:
@@ -107,16 +88,13 @@ class IntervalTree(Generic[T]):
         parent = None
         while curr:
             parent = curr
-            # Make sure we can compare start and curr.start
-            comp_start, comp_curr_start = self._ensure_comparable(start, curr.start)
-            if comp_start < comp_curr_start:
+            if start < curr.start:
                 curr = curr.left
             else:
                 curr = curr.right
 
         new_node.parent = parent
-        comp_start, comp_parent_start = self._ensure_comparable(start, parent.start)
-        if comp_start < comp_parent_start:
+        if start < parent.start:
             parent.left = new_node
         else:
             parent.right = new_node
@@ -155,24 +133,17 @@ class IntervalTree(Generic[T]):
         def _search(node):
             if not node: return
             
-            # Ensure start and node.max_end are comparable
-            comp_start, comp_max_end = IntervalTree._ensure_comparable(start, node.max_end)
-            if comp_start > comp_max_end:
+            if start > node.max_end:
                 return
                 
             if node.left:
-                comp_start_left, comp_left_max = IntervalTree._ensure_comparable(start, node.left.max_end)
-                if comp_left_max >= comp_start_left:
+                if node.left.max_end >= start:
                     _search(node.left)
             
-            # Ensure node.start and end are comparable
-            comp_node_start, comp_end = IntervalTree._ensure_comparable(node.start, end)
-            comp_start_node, comp_node_end = IntervalTree._ensure_comparable(start, node.end)
-            
-            if comp_node_start <= comp_end and comp_node_end >= comp_start_node:
+            if node.start <= end and node.end >= start:
                 callback(node)
             
-            if comp_node_start <= comp_end:
+            if node.start <= end:
                 _search(node.right)
         _search(self.root)
 
@@ -181,23 +152,17 @@ class IntervalTree(Generic[T]):
         def _search(node):
             if not node: return
             
-            comp_start, comp_max_end = IntervalTree._ensure_comparable(start, node.max_end)
-            if comp_start > comp_max_end:
+            if start > node.max_end:
                 return
                 
             if node.left:
-                comp_start_left, comp_left_max = IntervalTree._ensure_comparable(start, node.left.max_end)
-                if comp_left_max >= comp_start_left:
+                if node.left.max_end >= start:
                     _search(node.left)
             
-            comp_node_start, comp_end = IntervalTree._ensure_comparable(node.start, end)
-            comp_start_node, comp_node_end = IntervalTree._ensure_comparable(start, node.end)
-            
-            if comp_node_start <= comp_end and comp_node_end >= comp_start_node:
+            if node.start <= end and node.end >= start:
                 callback(node)
             
-            comp_node_start_start, comp_start_start = IntervalTree._ensure_comparable(node.start, start)
-            if comp_node_start_start <= comp_start_start:
+            if node.start <= start:
                 _search(node.right)
         _search(self.root)
 
@@ -206,23 +171,17 @@ class IntervalTree(Generic[T]):
         def _search(node):
             if not node: return
             
-            comp_start, comp_max_end = IntervalTree._ensure_comparable(start, node.max_end)
-            if comp_start > comp_max_end:
+            if start > node.max_end:
                 return
                 
             if node.left:
-                comp_start_left, comp_left_max = IntervalTree._ensure_comparable(start, node.left.max_end)
-                if comp_left_max >= comp_start_left:
+                if node.left.max_end >= start:
                     _search(node.left)
             
-            comp_node_start, comp_start_node = IntervalTree._ensure_comparable(node.start, start)
-            comp_node_end, comp_end_end = IntervalTree._ensure_comparable(node.end, end)
-            
-            if comp_node_start >= comp_start_node and comp_node_end <= comp_end_end:
+            if node.start >= start and node.end <= end:
                 callback(node)
             
-            comp_node_start_end, comp_end_end2 = IntervalTree._ensure_comparable(node.start, end)
-            if comp_node_start_end <= comp_end_end2:
+            if node.start <= end:
                 _search(node.right)
         _search(self.root)
 
@@ -231,22 +190,17 @@ class IntervalTree(Generic[T]):
         def _search(node):
             if not node: return
             
-            comp_time, comp_max_end = IntervalTree._ensure_comparable(time, node.max_end)
-            if comp_time > comp_max_end:
+            if time > node.max_end:
                 return
                 
             if node.left:
-                comp_time_left, comp_left_max = IntervalTree._ensure_comparable(time, node.left.max_end)
-                if comp_left_max >= comp_time_left:
+                if node.left.max_end >= time:
                     _search(node.left)
             
-            comp_node_start, comp_time_node = IntervalTree._ensure_comparable(node.start, time)
-            comp_time_node2, comp_node_end = IntervalTree._ensure_comparable(time, node.end)
-            
-            if comp_node_start <= comp_time_node and comp_node_end >= comp_time_node2:
+            if node.start <= time and node.end >= time:
                 callback(node)
             
-            if comp_node_start <= comp_time_node:
+            if node.start <= time:
                 _search(node.right)
         _search(self.root)
 
