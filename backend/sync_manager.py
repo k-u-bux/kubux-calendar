@@ -345,14 +345,6 @@ class SyncManager:
         if session is None:
             debug_log(Level.DEBUG, f"sync: _refresh_caldav {source_id}: no session for {src.account_name}")
 
-        # Reconnect to get fresh calendar list
-        try:
-            session = caldav_connect(
-                self._config.nextcloud_accounts[0].url,  # Will be matched below
-                "", "", src.account_name)
-        except Exception:
-            pass
-
         # Find matching account config for password
         for acc in self._config.nextcloud_accounts:
             if acc.name == src.account_name:
