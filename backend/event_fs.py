@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Optional
 
 from .event import ImmutableEvent
+import pytz
 
 
 # ==================== Helpers ====================
@@ -146,11 +147,12 @@ class EventFS:
     (writes are atomic at the OS level).
     """
 
-    def __init__(self, base: Optional[Path] = None):
+    def __init__(self, base: Optional[Path] = None, config_tz: Optional[pytz.BaseTzInfo] = None):
         self.base = Path(base) if base else _default_base()
         self._cache_dir = self.base / "cache"
         self._sources_dir = self.base / "sources"
         self._pending_file = self.base / "pending.json"
+        self._config_tz = config_tz
 
     # --- internal paths ----------------------------------------------------
 
@@ -177,7 +179,7 @@ class EventFS:
             return None
         try:
             ical_data = path.read_text(encoding="utf-8")
-            return ImmutableEvent.from_ical(ical_data, source_id)
+            return ImmutableEvent.from_ical(ical_data, source_id, config_tz=self._config_tz)
         except Exception:
             return None
 
@@ -198,7 +200,7 @@ class EventFS:
         for p in src_dir.glob("*.ics"):
             try:
                 ical_data = p.read_text(encoding="utf-8")
-                ev = ImmutableEvent.from_ical(ical_data, source_id)
+                ev = ImmutableEvent.from_ical(ical_data, source_id, config_tz=self._config_tz)
                 events.append(ev)
             except Exception:
                 continue

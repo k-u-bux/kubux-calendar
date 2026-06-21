@@ -57,7 +57,8 @@ class EventStore:
         self.config = config
 
         # v2 components
-        self._fs = EventFS()
+        self._config_tz = pytz.timezone(config.timezone)
+        self._fs = EventFS(config_tz=self._config_tz)
         self._index = EventIndex()
         self._sources: dict[str, CalendarSource] = {}
         self._sync_manager: Optional[SyncManager] = None
@@ -556,6 +557,7 @@ class EventStore:
             location=location,
             all_day=all_day,
             recurrence=rrule,
+            config_tz=self._config_tz,
         )
 
         self._fs.save_event(ev)

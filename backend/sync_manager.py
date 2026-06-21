@@ -417,9 +417,10 @@ class SyncManager:
             return False
         texts = ics_parse_events(raw)
         events = []
+        config_tz = pytz.timezone(self._config.timezone)
         for t in texts:
             try:
-                events.append(ImmutableEvent.from_ical(t, source_id))
+                events.append(ImmutableEvent.from_ical(t, source_id, config_tz=config_tz))
             except Exception:
                 continue
         self._fs.replace_source(source_id, events)

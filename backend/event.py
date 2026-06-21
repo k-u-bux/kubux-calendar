@@ -77,8 +77,18 @@ def _aware(dt, fallback_tz=None):
     return dt
 
 
-def _parse_vevent(ical_data: str) -> dict:
-    """Parse a VEVENT into a flat dict of display-ready values."""
+def _parse_vevent(ical_data: str, config_tz: Optional[pytz.BaseTzInfo] = None) -> dict:
+    """
+    Parse a VEVENT into a flat dict of display-ready values.
+
+    *config_tz* is used to interpret floating (timezone-naive) times.
+    Non-floating times are returned as-is with their original timezone.
+    Floating times are localized to *config_tz* (or UTC if not given).
+    The original *ical_data* is never modified — this conversion is only
+    for in-memory display / comparison, not for sync.
+    """
+    fallback = config_tz or pytz.UTC
+
     vevent = _extract_vevent(ical_data)
     if vevent is None:
         now = datetime.now(pytz.UTC)
@@ -101,10 +111,10 @@ def _parse_vevent(ical_data: str) -> dict:
         and not isinstance(dtstart_prop.dt, datetime)
     )
 
-    start = _aware(dtstart_prop.dt) if dtstart_prop else datetime.now(pytz.UTC)
+    start = _aware(dtstart_prop.dt, fallback) if dtstart_prop else datetime.now(pytz.UTC)
 
     dtend_prop = vevent.get("DTEND")
-    end = _aware(dtend_prop.dt) if dtend_prop else start + timedelta(hours=1)
+    end = _aware(dtend_prop.dt, fallback) if dtend_prop else start + timedelta(hours=1)
 
     duration = end - start
 
@@ -201,24 +211,6 @@ def _rebuild_ical(ical_data: str, **updates) -> str:
     return _wrap_as_vcalendar(vevent)
 
 
-def _normalize_floating(ical_data: str, config_tz: pytz.BaseTzInfo) -> str:
-    """Convert floating DTSTART/DTEND to explicit TZID."""
-    vevent = _extract_vevent(ical_data)
-    if vevent is None:
-        return ical_data
-
-    changed = False
-    for prop_name in ("DTSTART", "DTEND"):
-        prop = vevent.get(prop_name)
-        if prop and isinstance(prop.dt, datetime) and prop.dt.tzinfo is None:
-            localized = config_tz.localize(prop.dt)
-            del vevent[prop_name]
-            vevent.add(prop_name.lower(), localized)
-            changed = True
-
-    return _wrap_as_vcalendar(vevent) if changed else ical_data
-
-
 # ==================== ImmutableEvent ====================
 
 @dataclass(frozen=True)
@@ -248,8 +240,14 @@ class ImmutableEvent:
         default_factory=dict, init=False, repr=False, compare=False, hash=False
     )
 
+    # Fallback timezone for floating times (set by from_ical).
+    _config_tz: Optional[pytz.BaseTzInfo] = field(
+        default=None, init=False, repr=False, compare=False, hash=False
+    )
+
     def __post_init__(self):
         object.__setattr__(self, "_cache", _parse_vevent(self.ical_data))
+        # _config_tz is set by from_ical via object.__setattr__ before init
 
     # --- content properties ------------------------------------------------
 
@@ -326,23 +324,26 @@ class ImmutableEvent:
         Timezone rules:
         - UTC events → keep as UTC
         - TZID events → keep original TZID
-        - Floating events → convert to *config_tz* (if given)
-        """
-        if config_tz:
-            ical_text = _normalize_floating(ical_text, config_tz)
+        - Floating events → interpreted in *config_tz* for display/comparison
 
+        The original *ical_text* is stored verbatim — floating times are
+        NEVER rewritten. They are only localized when accessed via
+        ``start``/``end`` properties.
+        """
         vevent = _extract_vevent(ical_text)
         uid = str(vevent.get("UID") or "") if vevent else ""
         if not uid:
             uid = str(_uuid.uuid4())
 
-        return cls(
+        ev = cls(
             uid=uid,
             source_id=source_id,
             ical_data=ical_text,
             sync_state=sync_state,
             caldav_href=caldav_href,
         )
+        object.__setattr__(ev, "_config_tz", config_tz)
+        return ev
 
     @classmethod
     def create_new(
@@ -355,6 +356,7 @@ class ImmutableEvent:
         location: str = "",
         all_day: bool = False,
         recurrence: Optional[RecurrenceRule] = None,
+        config_tz: Optional[pytz.BaseTzInfo] = None,
     ) -> "ImmutableEvent":
         """Create a brand-new event (pending_create)."""
         uid = str(_uuid.uuid4())
@@ -387,12 +389,14 @@ class ImmutableEvent:
                 rd["byday"] = recurrence.by_day
             vevent.add("rrule", rd)
 
-        return cls(
+        ev = cls(
             uid=uid,
             source_id=source_id,
             ical_data=_wrap_as_vcalendar(vevent),
             sync_state="pending_create",
         )
+        object.__setattr__(ev, "_config_tz", config_tz)
+        return ev
 
     # --- copy-on-write -----------------------------------------------------
 
@@ -410,7 +414,7 @@ class ImmutableEvent:
 
         new_ical = _rebuild_ical(self.ical_data, **content) if content else self.ical_data
 
-        return ImmutableEvent(
+        new = ImmutableEvent(
             uid=self.uid,
             source_id=kwargs.get("source_id", self.source_id),
             ical_data=new_ical,
@@ -419,10 +423,12 @@ class ImmutableEvent:
             _instance_start=kwargs.get("_instance_start", self._instance_start),
             _instance_end=kwargs.get("_instance_end", self._instance_end),
         )
+        object.__setattr__(new, "_config_tz", self._config_tz)
+        return new
 
     def as_instance(self, instance_start: datetime) -> "ImmutableEvent":
         """Ephemeral view for a specific recurring-event occurrence."""
-        return ImmutableEvent(
+        new = ImmutableEvent(
             uid=self.uid,
             source_id=self.source_id,
             ical_data=self.ical_data,
@@ -431,6 +437,8 @@ class ImmutableEvent:
             _instance_start=_aware(instance_start),
             _instance_end=_aware(instance_start) + self.duration,
         )
+        object.__setattr__(new, "_config_tz", self._config_tz)
+        return new
 
     # --- identity ----------------------------------------------------------
 
@@ -626,6 +634,7 @@ class EventView:
             sync_state=sync_state,
             caldav_href=self._event.caldav_href,
         )
+        object.__setattr__(result, "_config_tz", self._event._config_tz)
         # Reset dirty
         object.__setattr__(self, "_dirty", {})
         object.__setattr__(self, "_event", result)
@@ -648,6 +657,7 @@ class EventView:
             uid=orig.uid, source_id=orig.source_id, ical_data=orig.ical_data,
             sync_state=new_state, caldav_href=orig.caldav_href,
         )
+        object.__setattr__(new, "_config_tz", orig._config_tz)
         object.__setattr__(self, "_event", new)
 
     # --- dunder ------------------------------------------------------------
