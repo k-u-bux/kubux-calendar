@@ -574,20 +574,19 @@ class SyncManager:
     def _rebuild_index(self) -> None:
         """Reload all events from filesystem into the in-memory index."""
         self._index.clear()
+        # Build uid→op lookup once instead of re-parsing pending.json per event
+        state_map = {
+            "create": "pending_create",
+            "update": "pending_update",
+            "delete": "pending_delete",
+            "delete_instance": "pending_delete_instance",
+        }
+        pending_by_uid: dict[str, str] = {}
+        for op in self._fs.load_pending():
+            pending_by_uid[op.uid] = state_map.get(op.operation, "clean")
         for source_id in self._sources:
             for ev in self._fs.list_events(source_id):
-                # Restore sync_state from pending ops
-                pending_op = None
-                for op in self._fs.load_pending():
-                    if op.uid == ev.uid:
-                        state_map = {
-                            "create": "pending_create",
-                            "update": "pending_update",
-                            "delete": "pending_delete",
-                            "delete_instance": "pending_delete_instance",
-                        }
-                        pending_op = state_map.get(op.operation, "clean")
-                        break
+                pending_op = pending_by_uid.get(ev.uid)
                 if pending_op and pending_op != ev.sync_state:
                     ev = ev.with_updates(sync_state=pending_op)
                 self._index.add(ev)

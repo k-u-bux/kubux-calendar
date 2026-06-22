@@ -1099,21 +1099,17 @@ class MainWindow(QMainWindow):
         new_start_utc = local_naive_to_utc(new_start)
         new_end_utc = local_naive_to_utc(new_end)
         
-        # Get the underlying CalEvent for modification
-        # (EventInstance.event is the CalEvent, EventInstance itself is read-only display)
-        cal_event = event.event if hasattr(event, 'event') else event
-        
-        # Update the CalEvent's times
-        cal_event.start = new_start_utc
-        cal_event.end = new_end_utc
+        # event is an EventView — mutable via dirty-tracking
+        event.start = new_start_utc
+        event.end = new_end_utc
         
         # Mark as pending BEFORE sync and refresh to show triangle
-        self.event_store._repository.mark_pending(cal_event.uid, "update")
+        self.event_store._repository.mark_pending(event.uid, "update")
         self._refresh_events()
         QApplication.processEvents()  # Force immediate repaint
 
         # Save through event store (sync to server)
-        success = self.event_store.update_event(cal_event)
+        success = self.event_store.update_event(event)
         if success:
             self._refresh_events()
         else:
