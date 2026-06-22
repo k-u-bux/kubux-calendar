@@ -397,13 +397,6 @@ class EventStore:
 
         return views
 
-    def _rebuild_index(self) -> None:
-        """Rebuild in-memory index from filesystem cache."""
-        self._index.clear()
-        for sid in self._sources:
-            for ev in self._fs.list_events(sid):
-                self._index.add(ev)
-
     def _trigger_background_fetch(self) -> None:
         """
         Kick off a background refresh of all sources without blocking.
@@ -613,18 +606,6 @@ class EventStore:
     # ------------------------------------------------------------------
     # Sync operations (blocking — legacy)
     # ------------------------------------------------------------------
-
-    def refresh(self, calendar_id: Optional[str] = None) -> None:
-        """Blocking refresh (used by old code paths)."""
-        sm = self._ensure_sync_manager()
-        synced = sm._do_refresh(calendar_id)
-        for sid in synced:
-            src = self._sources.get(sid)
-            if src:
-                src.last_sync_time = sm.source_last_success(sid)
-                src.is_outdated = False
-        self._rebuild_index()
-        self._notify_change()
 
     # ------------------------------------------------------------------
     # Sync status
