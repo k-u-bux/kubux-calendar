@@ -547,15 +547,11 @@ class EventDialog(QWidget):
             self._recurrence_widget.set_recurrence(self.event_data.recurrence)
         else:
             # New event — default to the configured local timezone
-            local_tz = pytz.timezone(
-                self.event_store.config.timezone
-            ) if hasattr(self.event_store.config, 'timezone') else None
-            if local_tz is None:
-                try:
-                    from backend.timezone_utils import get_local_timezone
-                    local_tz = get_local_timezone()
-                except Exception:
-                    local_tz = pytz.timezone("Europe/Amsterdam")
+            try:
+                local_tz = pytz.timezone(self.event_store.config.timezone)
+            except Exception:
+                from backend.timezone_utils import get_local_timezone
+                local_tz = get_local_timezone()
             
             local_tz_str = str(local_tz)
             self._display_tzid = local_tz_str  # init BEFORE setting combo, so _on_tz_changed has a valid old_tzid

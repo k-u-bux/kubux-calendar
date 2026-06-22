@@ -21,6 +21,7 @@ from PySide6.QtCore import Qt, QTimer, Signal, QFileSystemWatcher
 from PySide6.QtGui import QAction, QIcon, QCloseEvent, QFont, QFontMetrics, QKeySequence, QShortcut
 
 from backend.config import Config
+from backend.timezone_utils import set_timezone
 from backend import EventStore, EventView, CalendarSource
 
 # EventView is what get_events() returns (has all properties the GUI needs)
@@ -247,6 +248,7 @@ class MainWindow(QMainWindow):
     def __init__(self, config: Config, parent=None):
         super().__init__(parent)
         self.config = config
+        set_timezone(config.timezone)
         
         # Set layout config, localization, colors, and labels for calendar widget BEFORE creating UI
         set_layout_config(config.layout)

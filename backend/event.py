@@ -595,11 +595,6 @@ class EventView:
         return self
 
     @property
-    def mutable_event(self) -> "EventView":
-        """Alias for cases where the GUI expects a mutable CalEvent-like reference."""
-        return self
-
-    @property
     def immutable_event(self) -> ImmutableEvent:
         """Access the underlying ImmutableEvent for store operations."""
         return self._event
