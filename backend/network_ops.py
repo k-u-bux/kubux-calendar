@@ -85,7 +85,8 @@ def _check_writable(cal: caldav.Calendar) -> bool:
         lower = raw.lower()
         return ("<d:write" in lower or "<write" in lower or
                 "<d:bind" in lower or "<bind" in lower)
-    except Exception:
+    except Exception as e:
+        debug_log(Level.WARN, f"caldav: _check_writable failed — {e}")
         return True  # Assume writable on error
 
 
@@ -95,7 +96,8 @@ def caldav_list_calendars(session: DAVSession) -> list[CalendarInfo]:
     for cal in session.principal.calendars():
         try:
             name = cal.name or "Unnamed"
-        except Exception:
+        except Exception as e:
+            debug_log(Level.WARN, f"caldav: failed to get calendar name — {e}")
             name = "Unnamed"
 
         color = "#4285f4"
@@ -105,8 +107,8 @@ def caldav_list_calendars(session: DAVSession) -> list[CalendarInfo]:
                 if v and isinstance(v, str):
                     color = v.strip()
                     break
-        except Exception:
-            pass
+        except Exception as e:
+            debug_log(Level.DEBUG, f"caldav: failed to get calendar color — {e}")
 
         url_str = str(cal.url)
         cal_id = (url_str.split("/")[-2] if url_str.endswith("/")
@@ -146,10 +148,11 @@ def caldav_fetch_events(session: DAVSession, calendar: CalendarInfo,
             try:
                 href = str(ev.url) if ev.url else None
                 results.append((ev.data, href))
-            except Exception:
+            except Exception as e:
+                debug_log(Level.DEBUG, f"caldav: skip unparseable event — {e}")
                 continue
-    except Exception:
-        pass
+    except Exception as e:
+        debug_log(Level.ERROR, f"caldav: fetch_events failed — {e}")
     return results
 
 
@@ -162,7 +165,8 @@ def caldav_save_event(session: DAVSession, calendar: CalendarInfo,
     try:
         cal.save_event(ical_text)
         return True
-    except Exception:
+    except Exception as e:
+        debug_log(Level.ERROR, f"caldav: save_event failed — {e}")
         return False
 
 def caldav_delete_event(session: DAVSession, calendar: CalendarInfo,
@@ -205,7 +209,8 @@ def caldav_add_exdate(session: DAVSession, calendar: CalendarInfo,
         ev.data = ical.to_ical().decode("utf-8")
         ev.save()
         return True
-    except Exception:
+    except Exception as e:
+        debug_log(Level.ERROR, f"caldav: add_exdate failed — {e}")
         return False
 
 
@@ -226,7 +231,8 @@ def ics_fetch(url: str, timeout: int = 30) -> Optional[str]:
         resp.raise_for_status()
         resp.encoding = "utf-8"
         return resp.text
-    except Exception:
+    except Exception as e:
+        debug_log(Level.ERROR, f"ics: fetch failed — {e}")
         return None
 
 
@@ -239,7 +245,8 @@ def ics_parse_events(vcalendar_text: str) -> list[str]:
     """
     try:
         cal = ICalCalendar.from_ical(vcalendar_text)
-    except Exception:
+    except Exception as e:
+        debug_log(Level.WARN, f"ics: parse_events failed — {e}")
         return []
 
     results: list[str] = []

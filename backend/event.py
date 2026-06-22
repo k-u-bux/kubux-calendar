@@ -14,6 +14,7 @@ from typing import Optional
 import pytz
 from icalendar import Calendar as ICalCalendar, Event as ICalEvent
 import uuid as _uuid
+from .log import debug_log, Level
 
 
 # ==================== Recurrence Rule ====================
@@ -63,8 +64,8 @@ def _extract_vevent(ical_data: str) -> Optional[ICalEvent]:
         for component in cal.walk():
             if component.name == "VEVENT":
                 return component
-    except Exception:
-        pass
+    except Exception as e:
+        debug_log(Level.DEBUG, f"_find_vevent: ical parse failed — {e}")
     return None
 
 
@@ -470,9 +471,9 @@ class EventView:
     __slots__ = ("_event", "_source", "_dirty")
 
     def __init__(self, event: ImmutableEvent, source: CalendarSource):
-        object.__setattr__(self, "_event", event)
-        object.__setattr__(self, "_source", source)
-        object.__setattr__(self, "_dirty", {})
+        self._event = event
+        self._source = source
+        self._dirty = {}
 
     # --- content properties (read from event, fall back to dirty) ----------
 
@@ -636,8 +637,8 @@ class EventView:
         )
         object.__setattr__(result, "_config_tz", self._event._config_tz)
         # Reset dirty
-        object.__setattr__(self, "_dirty", {})
-        object.__setattr__(self, "_event", result)
+        self._dirty = {}
+        self._event = result
         return result
 
     def _set_pending_sync_state(self, op: str):
@@ -658,7 +659,7 @@ class EventView:
             sync_state=new_state, caldav_href=orig.caldav_href,
         )
         object.__setattr__(new, "_config_tz", orig._config_tz)
-        object.__setattr__(self, "_event", new)
+        self._event = new
 
     # --- dunder ------------------------------------------------------------
 

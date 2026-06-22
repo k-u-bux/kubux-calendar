@@ -240,7 +240,8 @@ class SyncManager:
             for t in texts:
                 try:
                     events.append(ImmutableEvent.from_ical(t, source_id, config_tz=config_tz))
-                except Exception:
+                except Exception as e:
+                    debug_log(Level.DEBUG, f"sync: ics_event parse — skipping: {e}")
                     continue
             self._fs.replace_source(source_id, events)
             self._source_last_success[source_id] = now
@@ -425,7 +426,8 @@ class SyncManager:
         for t in texts:
             try:
                 events.append(ImmutableEvent.from_ical(t, source_id, config_tz=config_tz))
-            except Exception:
+            except Exception as e:
+                debug_log(Level.DEBUG, f"sync: ics_event parse — skipping: {e}")
                 continue
         self._fs.replace_source(source_id, events)
         self._source_last_success[source_id] = now
@@ -606,5 +608,5 @@ class SyncManager:
                 for cal_info in caldav_list_calendars(session):
                     cid = f"caldav:{acc.name}:{cal_info.id}"
                     self._calendars[cid] = cal_info
-            except Exception:
-                pass
+            except Exception as e:
+                debug_log(Level.WARN, f"sync: _try_connect_missing failed for {acc.name}: {e}")

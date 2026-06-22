@@ -300,7 +300,8 @@ class EventStore:
                             _instance_end=_ensure_tz(dtend, tzid),
                         )
                         results.append(instance)
-                except Exception:
+                except Exception as e:
+                    debug_log(Level.WARN, f"store: _expand_instances — falling back to master: {e}")
                     # Fall back to master event if expansion fails
                     results.append(ev)
             else:
@@ -560,8 +561,8 @@ class EventStore:
                     state = json.load(f)
                     self._visibility = state.get('visibility', {})
                     self._colors = state.get('colors', {})
-            except Exception:
-                pass
+            except Exception as e:
+                debug_log(Level.WARN, f"store: _load_state failed — {e}")
 
     def _save_state(self) -> None:
         try:
@@ -571,8 +572,8 @@ class EventStore:
                     {'visibility': self._visibility, 'colors': self._colors},
                     f, indent=2,
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            debug_log(Level.WARN, f"store: _save_state failed — {e}")
 
     # ------------------------------------------------------------------
     # Sync operations (background)
@@ -680,7 +681,8 @@ def _ensure_tz(dt, tzid: Optional[str] = None):
         if tzid:
             try:
                 dt = pytz.timezone(tzid).localize(dt)
-            except Exception:
+            except Exception as e:
+                debug_log(Level.DEBUG, f"_ensure_tz: failed to localize in {tzid}: {e}")
                 dt = dt.replace(tzinfo=pytz.UTC)
         else:
             dt = dt.replace(tzinfo=pytz.UTC)

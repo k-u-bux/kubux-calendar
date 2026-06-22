@@ -180,7 +180,8 @@ class EventFS:
         try:
             ical_data = path.read_text(encoding="utf-8")
             return ImmutableEvent.from_ical(ical_data, source_id, config_tz=self._config_tz)
-        except Exception:
+        except Exception as e:
+            debug_log(Level.WARN, f"event_fs: load_event failed — {e}")
             return None
 
     def delete_event(self, source_id: str, uid: str) -> None:
@@ -202,7 +203,8 @@ class EventFS:
                 ical_data = p.read_text(encoding="utf-8")
                 ev = ImmutableEvent.from_ical(ical_data, source_id, config_tz=self._config_tz)
                 events.append(ev)
-            except Exception:
+            except Exception as e:
+                debug_log(Level.DEBUG, f"event_fs: list_events — skipping unparseable event: {e}")
                 continue
         return events
 
@@ -283,7 +285,8 @@ class EventFS:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             return SourceMeta.from_dict(data)
-        except Exception:
+        except Exception as e:
+            debug_log(Level.WARN, f"event_fs: load_source_meta failed — {e}")
             return None
 
     def list_source_ids(self) -> list[str]:
@@ -299,8 +302,8 @@ class EventFS:
                     data = json.loads(f.read_text(encoding="utf-8"))
                     if "source_id" in data:
                         ids.add(data["source_id"])
-                except Exception:
-                    pass
+                except Exception as e:
+                    debug_log(Level.WARN, f"event_fs: list_source_ids — skipping corrupt entry: {e}")
         return list(ids)
 
     # === Pending Operations ================================================
@@ -315,7 +318,8 @@ class EventFS:
         try:
             data = json.loads(self._pending_file.read_text(encoding="utf-8"))
             return [PendingOp.from_dict(d) for d in data]
-        except Exception:
+        except Exception as e:
+            debug_log(Level.WARN, f"event_fs: load_pending failed — {e}")
             return []
 
     def add_pending(self, op: PendingOp) -> None:
