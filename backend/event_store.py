@@ -666,9 +666,9 @@ class _RepositoryCompat:
     def __init__(self, store: EventStore):
         self._store = store
 
-    def mark_pending(self, uid: str, operation: str) -> None:
+    def mark_pending(self, uid: str, operation: str, source_id: str = "") -> None:
         self._store._fs.add_pending(PendingOp(
-            uid=uid, source_id="",
+            uid=uid, source_id=source_id,
             operation=operation,
         ))
         self._store._notify_change()
