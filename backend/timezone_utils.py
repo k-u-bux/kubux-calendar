@@ -36,24 +36,17 @@ def set_timezone(timezone_name: str):
 def get_local_timezone():
     """
     Get the local timezone as a pytz timezone object.
+
+    First tries the configured/detected timezone name.
+    Falls back to fresh system detection if that fails.
     
     Returns:
-        pytz timezone object for the configured local timezone.
+        pytz timezone object for the local timezone.
     """
     try:
         return pytz.timezone(_local_timezone_name)
     except pytz.UnknownTimeZoneError:
-        # Fallback: try system timezone name
-        try:
-            return pytz.timezone(_time.tzname[0])
-        except:
-            # Last resort: calculate offset and use fixed offset timezone
-            is_dst = _time.localtime().tm_isdst
-            if is_dst:
-                offset_seconds = -_time.altzone
-            else:
-                offset_seconds = -_time.timezone
-            return pytz.FixedOffset(offset_seconds // 60)
+        return pytz.timezone(_system_timezone_name())
 
 
 def to_local_datetime(dt: datetime) -> datetime:
