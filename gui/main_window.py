@@ -247,81 +247,97 @@ class MainWindow(QMainWindow):
     
     def __init__(self, config: Config, parent=None):
         super().__init__(parent)
-        self.config = config
-        set_timezone(config.timezone)
-        
-        # Set layout config, localization, colors, and labels for calendar widget BEFORE creating UI
-        set_layout_config(config.layout)
-        set_localization_config(config.localization)
-        set_colors_config(config.colors)
-        set_labels_config(config.labels)
-        
-        # Apply text_font as application default (for tooltips, event content, etc.)
-        text_font = QFont(config.layout.text_font, config.layout.text_font_size)
-        QApplication.instance().setFont(text_font)
-        
-        # Store interface font for explicit use on UI elements
-        self._interface_font = QFont(config.layout.interface_font, config.layout.interface_font_size)
-        
-        # Initialize event store
-        self.event_store = EventStore(config)
-        self.event_store.set_on_change_callback(self._on_data_changed)
-        self.event_store.set_on_sync_status_callback(self._on_sync_status_changed)
 
         # Track open event dialogs
         self._event_dialogs: list[EventDialog] = []
-        
+
         # State file for persistence (using JSON, not QSettings)
-        self._state_file = config.state_file
         self._ui_state: dict = {}
-        
+
         # Auto-refresh timer
         self._auto_refresh_timer = QTimer(self)
         self._auto_refresh_timer.timeout.connect(self._on_auto_refresh)
-        
+
         # Sync timer for pending changes (uses exponential backoff)
         self._sync_timer = QTimer(self)
         self._sync_timer.timeout.connect(self._on_sync_timer)
         self._current_sync_interval = config.sync.initial_interval  # Start with initial interval
         self._sync_timer.start(self._current_sync_interval * 1000)  # Convert to milliseconds
-        
+
         # Config file watcher
         self._config_watcher = QFileSystemWatcher(self)
         config_path = Config.get_default_config_path()
         if config_path.exists():
             self._config_watcher.addPath(str(config_path))
         self._config_watcher.fileChanged.connect(self._on_config_file_changed)
-        
+
+        self._init_from_config(config)
+
         self._setup_window()
+
+    def _init_from_config(self, config: Config, captured_scroll: dict = None):
+        """Apply *config* to the running UI.  Shared between __init__ and _apply_config.
+
+        Sets module-level config singletons, rebuilds the UI, (re)creates the
+        event store, loads persisted state, and starts data loading.
+        """
+        self.config = config
+        self._state_file = config.state_file
+
+        set_timezone(config.timezone)
+        set_layout_config(config.layout)
+        set_localization_config(config.localization)
+        set_colors_config(config.colors)
+        set_labels_config(config.labels)
+
+        # Apply text_font as application default
+        text_font = QFont(config.layout.text_font, config.layout.text_font_size)
+        QApplication.instance().setFont(text_font)
+        self._interface_font = QFont(config.layout.interface_font, config.layout.interface_font_size)
+
+        # (Re)create event store with new config
+        self.event_store = EventStore(config)
+        self.event_store.set_on_change_callback(self._on_data_changed)
+        self.event_store.set_on_sync_status_callback(self._on_sync_status_changed)
+
+        # Rebuild UI widgets
         self._setup_ui()
         self._setup_toolbar()
         self._setup_shortcuts()
         self._setup_statusbar()
-        
-        # Flag to suppress _refresh_events() during initial data load
-        self._initializing = True
-        
-        # Load state (view type, date, scroll position)
+
+        # Restore persisted state
+        self._load_ui_state()
         self._load_state()
-        
-        # Defer data loading until after window is shown
-        # This ensures window appears immediately, then data loads progressively
+
+        # Override scroll restoration with captured data if provided
+        if captured_scroll:
+            self._pending_restore_view_type = captured_scroll['view']
+            self._pending_restore_scroll_pos = captured_scroll['scroll_pos']
+            self._pending_restore_list_dt_str = (
+                captured_scroll['list_dt'].isoformat() if captured_scroll['list_dt'] else None
+            )
+            self._calendar_widget.set_date(captured_scroll['date'])
+
+        self._initializing = True
         QTimer.singleShot(0, self._initialize_data)
-        
-        # Start auto-refresh timer - always runs every 60 seconds to check which sources need refresh
-        # Individual per-source refresh intervals are checked in refresh_due_sources()
-        self._auto_refresh_timer.start(60 * 1000)  # Fixed 60-second check interval
-        debug_log(Level.DEBUG, "Auto-refresh check enabled every 60 seconds")
+
+        # Start / restart auto-refresh timer
+        self._auto_refresh_timer.start(60 * 1000)
+
+        # Re-add config path to watcher (may have been removed during file editing)
+        config_path = Config.get_default_config_path()
+        if config_path.exists() and str(config_path) not in self._config_watcher.files():
+            self._config_watcher.addPath(str(config_path))
+
+        debug_log(Level.DEBUG, f"Config applied, timezone={config.timezone}")
     
     def _setup_window(self):
         """Configure main window properties."""
         self.setWindowTitle(self.config.labels.window_title)
         self.setMinimumSize(800, 600)
         
-        # Load UI state from JSON file
-        self._load_ui_state()
-        
-        # Restore window geometry
+        # Restore window geometry (ui_state already loaded by _init_from_config)
         geometry = self._ui_state.get("geometry")
         if geometry:
             import base64
@@ -949,86 +965,19 @@ class MainWindow(QMainWindow):
     def _apply_config(self, new_config: Config, captured_scroll: dict = None):
         """Apply new configuration by rebuilding the UI in place."""
         debug_log(Level.DEBUG, "Applying new config...")
-        
         try:
-            # Save current UI state before rebuild (primarily for geometry)
             self._save_state()
-            
-            # Update config reference
-            self.config = new_config
-            self._state_file = new_config.state_file
-            
-            # Update global config modules
-            set_layout_config(new_config.layout)
-            set_localization_config(new_config.localization)
-            set_colors_config(new_config.colors)
-            set_labels_config(new_config.labels)
-            
-            # Update fonts
-            text_font = QFont(new_config.layout.text_font, new_config.layout.text_font_size)
-            QApplication.instance().setFont(text_font)
-            self._interface_font = QFont(new_config.layout.interface_font, new_config.layout.interface_font_size)
-            
-            # Stop auto-refresh timer during rebuild
             self._auto_refresh_timer.stop()
-            
-            # Clear existing UI (keep window shell)
             self._clear_ui()
-            
-            # Reinitialize event store
-            self.event_store = EventStore(new_config)
-            self.event_store.set_on_change_callback(self._on_data_changed)
-            
-            # Rebuild UI with new config
-            self._setup_ui()
-            self._setup_toolbar()
-            self._setup_shortcuts()
-            self._setup_statusbar()
-            
-            # Restore state - use captured scroll data if provided
-            self._load_ui_state()
-            self._load_state()
-            
-            # Override pending scroll restoration with captured data if available
-            if captured_scroll:
-                self._pending_restore_view_type = captured_scroll['view']
-                self._pending_restore_scroll_pos = captured_scroll['scroll_pos']
-                self._pending_restore_list_dt_str = captured_scroll['list_dt'].isoformat() if captured_scroll['list_dt'] else None
-                # Also apply the current date
-                self._calendar_widget.set_date(captured_scroll['date'])
-                debug_log(Level.DEBUG, f"_apply_config: using captured scroll_pos={captured_scroll['scroll_pos']}")
-            
-            # Initialize data (skip automatic scroll restoration - we'll do it explicitly)
-            self._skip_auto_scroll_restore = True
-            self._initialize_data()
-            self._skip_auto_scroll_restore = False
-            
-            # Restart auto-refresh timer - fixed 60-second check interval
-            self._auto_refresh_timer.start(60 * 1000)
-            debug_log(Level.DEBUG, "Auto-refresh check enabled every 60 seconds")
-            
-            # Re-add config path to watcher (may have been removed during file editing)
-            config_path = Config.get_default_config_path()
-            if config_path.exists() and str(config_path) not in self._config_watcher.files():
-                self._config_watcher.addPath(str(config_path))
-                debug_log(Level.DEBUG, f"Re-added config path to watcher: {config_path}")
-            
-            # Restore scroll position after layout is complete
+            self._init_from_config(new_config, captured_scroll)
             QApplication.processEvents()
             self._restore_scroll_position()
-            
             self._statusbar.showMessage("Configuration applied successfully", 3000)
-            debug_log(Level.DEBUG, "Config applied successfully")
-            
         except Exception as e:
             error_msg = f"Failed to apply config: {e}"
             debug_log(Level.ERROR, error_msg)
             self._statusbar.showMessage(error_msg, 5000)
-            QMessageBox.warning(
-                self,
-                "Config Apply Error",
-                f"Failed to apply configuration:\n{e}"
-            )
+            QMessageBox.warning(self, "Config Apply Error", f"Failed to apply configuration:\n{e}")
     
     def _clear_ui(self):
         """Clear existing UI components to prepare for rebuild."""
