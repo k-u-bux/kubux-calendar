@@ -772,7 +772,11 @@ class DayView(QWidget):
         # Calculate time column width dynamically
         time_col_width = _get_time_column_width()
         
-        # All-day events section (with time column spacer)
+        # Scrollbar width for alignment spacer
+        from PySide6.QtWidgets import QApplication, QStyle
+        scrollbar_width = QApplication.style().pixelMetric(QStyle.PM_ScrollBarExtent)
+        
+        # All-day events section (with time column spacer + dynamic scrollbar spacer)
         all_day_container = QWidget()
         all_day_layout = QHBoxLayout(all_day_container)
         all_day_layout.setContentsMargins(0, 0, 0, 0)
@@ -789,6 +793,12 @@ class DayView(QWidget):
         self._all_day_row.event_double_clicked.connect(self.event_double_clicked.emit)
         self._all_day_row.hide()  # Hidden initially
         all_day_layout.addWidget(self._all_day_row, 1)
+        
+        # Dynamic scrollbar-width spacer — shown only when main scroll area needs a scrollbar
+        self._all_day_scrollbar_spacer = QWidget()
+        self._all_day_scrollbar_spacer.setFixedWidth(scrollbar_width)
+        self._all_day_scrollbar_spacer.hide()
+        all_day_layout.addWidget(self._all_day_scrollbar_spacer)
         
         main_layout.addWidget(all_day_container)
         
@@ -844,6 +854,14 @@ class DayView(QWidget):
         
         scroll.setWidget(self._day_column)
         self._scroll = scroll
+        
+        # Sync scrollbar visibility: show/hide all-day spacer
+        def _on_scrollbar_range_changed(min_val, max_val):
+            self._all_day_scrollbar_spacer.setVisible(max_val > 0)
+        scroll.verticalScrollBar().rangeChanged.connect(_on_scrollbar_range_changed)
+        QTimer.singleShot(0, lambda: _on_scrollbar_range_changed(
+            scroll.verticalScrollBar().minimum(),
+            scroll.verticalScrollBar().maximum()))
         
         # Sync scrollbars
         scroll.verticalScrollBar().valueChanged.connect(time_scroll.verticalScrollBar().setValue)
@@ -936,7 +954,6 @@ class WeekView(QWidget):
         time_col_width = _get_time_column_width()
         
         # Header with day names
-        # Account for scrollbar width on the right (typically ~16px on most systems)
         from PySide6.QtWidgets import QApplication, QStyle
         scrollbar_width = QApplication.style().pixelMetric(QStyle.PM_ScrollBarExtent)
         
@@ -944,20 +961,23 @@ class WeekView(QWidget):
         header = QWidget()
         header.setStyleSheet(f"background: {colors.header_background};")
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(time_col_width, 0, scrollbar_width, 0)  # Match time column + scrollbar
+        header_layout.setContentsMargins(time_col_width, 0, 0, 0)  # no right-margin spacer yet
         header_layout.setSpacing(1)
         
         self._header_labels = []
+        self._header_scrollbar_spacer = QWidget()
+        self._header_scrollbar_spacer.setFixedWidth(scrollbar_width)
         for i in range(7):
             label = QLabel()
             label.setAlignment(Qt.AlignCenter)
             label.setStyleSheet(f"font-weight: bold; padding: 8px; background: {colors.header_background};")
             header_layout.addWidget(label, 1)
             self._header_labels.append(label)
+        header_layout.addWidget(self._header_scrollbar_spacer)
         
         main_layout.addWidget(header)
         
-        # All-day events section (with time column spacer)
+        # All-day events section (with time column spacer + dynamic scrollbar spacer)
         all_day_container = QWidget()
         all_day_layout = QHBoxLayout(all_day_container)
         all_day_layout.setContentsMargins(0, 0, 0, 0)
@@ -976,6 +996,12 @@ class WeekView(QWidget):
         self._all_day_row.event_double_clicked.connect(self.event_double_clicked.emit)
         self._all_day_row.hide()  # Hidden initially
         all_day_layout.addWidget(self._all_day_row, 1)
+        
+        # Dynamic scrollbar-width spacer — shown only when main scroll area needs a scrollbar
+        self._all_day_scrollbar_spacer = QWidget()
+        self._all_day_scrollbar_spacer.setFixedWidth(scrollbar_width)
+        self._all_day_scrollbar_spacer.hide()
+        all_day_layout.addWidget(self._all_day_scrollbar_spacer)
         
         main_layout.addWidget(all_day_container)
         
@@ -1034,6 +1060,18 @@ class WeekView(QWidget):
         scroll.setWidget(content)
         self._scroll = scroll
         main_layout.addWidget(scroll, 1)
+
+        # Sync header/all-day spacers with scrollbar visibility
+        def _on_scrollbar_range_changed(min_val, max_val):
+            needs_scrollbar = max_val > 0
+            self._header_scrollbar_spacer.setVisible(needs_scrollbar)
+            self._all_day_scrollbar_spacer.setVisible(needs_scrollbar)
+        scroll.verticalScrollBar().rangeChanged.connect(_on_scrollbar_range_changed)
+        # Initial sync (will be correct after first layout)
+        QTimer.singleShot(0, lambda: _on_scrollbar_range_changed(
+            scroll.verticalScrollBar().minimum(),
+            scroll.verticalScrollBar().maximum()))
+
         self._update_headers()
     
     def get_scroll_position(self) -> int:
