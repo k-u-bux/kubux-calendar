@@ -15,6 +15,7 @@ import pytz
 from icalendar import Calendar as ICalCalendar, Event as ICalEvent
 import uuid as _uuid
 from .log import debug_log, Level
+from .timezone_utils import ensure_tz
 
 
 # ==================== Recurrence Rule ====================
@@ -69,13 +70,6 @@ def _extract_vevent(ical_data: str) -> Optional[ICalEvent]:
     return None
 
 
-def _aware(dt, fallback_tz=None):
-    """Ensure *dt* is a timezone-aware datetime."""
-    if isinstance(dt, date) and not isinstance(dt, datetime):
-        dt = datetime.combine(dt, datetime.min.time())
-    if dt.tzinfo is None:
-        dt = (fallback_tz or pytz.UTC).localize(dt)
-    return dt
 
 
 def _parse_vevent(ical_data: str, config_tz: Optional[pytz.BaseTzInfo] = None) -> dict:
@@ -112,10 +106,23 @@ def _parse_vevent(ical_data: str, config_tz: Optional[pytz.BaseTzInfo] = None) -
         and not isinstance(dtstart_prop.dt, datetime)
     )
 
-    start = _aware(dtstart_prop.dt, fallback) if dtstart_prop else datetime.now(pytz.UTC)
+    # Extract TZID from DTSTART params (None if floating, "UTC" if Z suffix)
+    tzid = None
+    if dtstart_prop is not None and hasattr(dtstart_prop, 'params'):
+        params = dtstart_prop.params
+        if "TZID" in params:
+            tzid = str(params["TZID"])
+        else:
+            dt = dtstart_prop.dt
+            if isinstance(dt, datetime) and dt.tzinfo is not None:
+                offset = dt.tzinfo.utcoffset(dt)
+                if offset is not None and offset.total_seconds() == 0:
+                    tzid = "UTC"
+
+    start = ensure_tz(dtstart_prop.dt, default=fallback) if dtstart_prop else datetime.now(pytz.UTC)
 
     dtend_prop = vevent.get("DTEND")
-    end = _aware(dtend_prop.dt, fallback) if dtend_prop else start + timedelta(hours=1)
+    end = ensure_tz(dtend_prop.dt, default=fallback) if dtend_prop else start + timedelta(hours=1)
 
     duration = end - start
 
@@ -142,7 +149,7 @@ def _parse_vevent(ical_data: str, config_tz: Optional[pytz.BaseTzInfo] = None) -
 
     return dict(
         summary=summary, description=description, location=location,
-        start=start, end=end, all_day=all_day,
+        start=start, end=end, all_day=all_day, tzid=tzid,
         is_recurring=is_recurring, recurrence=recurrence,
         duration=duration,
     )
@@ -279,6 +286,11 @@ class ImmutableEvent:
     @property
     def duration(self) -> timedelta:
         return self._cache["duration"]
+
+    @property
+    def tzid(self) -> Optional[str]:
+        """Original TZID from DTSTART, or None if floating, or 'UTC'."""
+        return self._cache.get("tzid")
 
     # --- time properties ---------------------------------------------------
 
@@ -435,8 +447,8 @@ class ImmutableEvent:
             ical_data=self.ical_data,
             sync_state=self.sync_state,
             caldav_href=self.caldav_href,
-            _instance_start=_aware(instance_start),
-            _instance_end=_aware(instance_start) + self.duration,
+            _instance_start=ensure_tz(instance_start),
+            _instance_end=ensure_tz(instance_start) + self.duration,
         )
         object.__setattr__(new, "_config_tz", self._config_tz)
         return new

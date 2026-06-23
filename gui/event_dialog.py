@@ -23,7 +23,7 @@ from backend import EventStore, EventView, CalendarSource, RecurrenceRule
 
 # EventView is what get_events() and create_event() return
 EventData = EventView
-from backend.timezone_utils import utc_to_local_naive as utc_to_local
+from backend.timezone_utils import utc_to_local_naive as utc_to_local, ensure_tz
 from backend.log import debug_log, Level
 
 
@@ -63,38 +63,6 @@ COMMON_TZ = [
 
 # Floating timezone sentinel
 FLOATING_LABEL = "Floating"
-
-
-def _extract_tzid(ical_data: str) -> Optional[str]:
-    """
-    Extract the TZID from DTSTART in iCalendar data.
-    
-    Returns:
-        TZID string (e.g. "Europe/Amsterdam"),
-        "UTC" if DTSTART has Z suffix,
-        None if floating (no TZID, no Z).
-    """
-    try:
-        from icalendar import Calendar as ICalCalendar
-        cal = ICalCalendar.from_ical(ical_data)
-        for comp in cal.walk():
-            if comp.name == "VEVENT":
-                dtstart = comp.get("DTSTART")
-                if dtstart is not None:
-                    params = dtstart.params
-                    if "TZID" in params:
-                        return str(params["TZID"])
-                    # Z suffix → UTC
-                    dt = dtstart.dt
-                    if isinstance(dt, datetime) and dt.tzinfo is not None:
-                        offset = dt.tzinfo.utcoffset(dt)
-                        if offset is not None and offset.total_seconds() == 0:
-                            return "UTC"
-                    # Floating — no TZID and not UTC
-                    return None
-    except Exception:
-        pass
-    return None
 
 
 class RecurrenceWidget(QGroupBox):
@@ -487,12 +455,12 @@ class EventDialog(QWidget):
             self._recurrence_widget.setEnabled(False)
     
     def _get_stored_tzid(self) -> Optional[str]:
-        """Extract the TZID from the event's iCalendar data."""
+        """Read TZID directly from the ImmutableEvent (already parsed)."""
         if self.event_data is None:
             return None
         try:
             ev = self.event_data.immutable_event if hasattr(self.event_data, 'immutable_event') else self.event_data
-            return _extract_tzid(ev.ical_data)
+            return ev.tzid if hasattr(ev, 'tzid') else None
         except Exception:
             return None
     
@@ -513,12 +481,6 @@ class EventDialog(QWidget):
             return None
         return text if text else None
     
-    def _localize_to_tz(self, dt: datetime, tzid: Optional[str]) -> datetime:
-        """Localize naive *dt* to *tzid*, or return naive if *tzid* is None."""
-        if tzid is None:
-            return dt  # floating — no timezone
-        tz = pytz.timezone(tzid)
-        return tz.localize(dt.replace(tzinfo=None))
     
     def _populate_data(self):
         if self.event_data:
@@ -642,8 +604,8 @@ class EventDialog(QWidget):
         
         # Apply the selected timezone
         tzid = self._get_tzid_from_combo()
-        start_dt = self._localize_to_tz(start_naive, tzid)
-        end_dt = self._localize_to_tz(end_naive, tzid)
+        start_dt = ensure_tz(start_naive, tzid)
+        end_dt = ensure_tz(end_naive, tzid)
         
         recurrence = self._recurrence_widget.get_recurrence()
         

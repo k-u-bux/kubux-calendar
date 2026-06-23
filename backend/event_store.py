@@ -27,6 +27,7 @@ from .network_ops import (
     caldav_connect, caldav_list_calendars, DAVSession, CalendarInfo,
 )
 from .task_dispatch import dispatch_task
+from .timezone_utils import ensure_tz
 from .log import debug_log, Level
 
 
@@ -296,8 +297,8 @@ class EventStore:
                         # otherwise fall back to the master event's TZID.
                         tzid = dtstart_prop.params.get("TZID") if hasattr(dtstart_prop, 'params') else None
                         instance = ev.with_updates(
-                            _instance_start=_ensure_tz(dtstart, tzid),
-                            _instance_end=_ensure_tz(dtend, tzid),
+                            _instance_start=ensure_tz(dtstart, tzid),
+                            _instance_end=ensure_tz(dtend, tzid),
                         )
                         results.append(instance)
                 except Exception as e:
@@ -673,17 +674,3 @@ class _RepositoryCompat:
         self._store._notify_change()
         self._store._notify_sync_status()
 
-def _ensure_tz(dt, tzid: Optional[str] = None):
-    """Ensure *dt* is timezone-aware (default UTC, or *tzid* if given)."""
-    if isinstance(dt, date) and not isinstance(dt, datetime):
-        dt = datetime.combine(dt, datetime.min.time())
-    if dt.tzinfo is None:
-        if tzid:
-            try:
-                dt = pytz.timezone(tzid).localize(dt)
-            except Exception as e:
-                debug_log(Level.DEBUG, f"_ensure_tz: failed to localize in {tzid}: {e}")
-                dt = dt.replace(tzinfo=pytz.UTC)
-        else:
-            dt = dt.replace(tzinfo=pytz.UTC)
-    return dt

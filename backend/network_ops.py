@@ -20,6 +20,7 @@ from icalendar import Calendar as ICalCalendar
 import uuid as _uuid
 
 from .log import debug_log, Level
+from .timezone_utils import to_utc
 
 
 # ==================== Data Types ====================
@@ -137,10 +138,8 @@ def caldav_fetch_events(session: DAVSession, calendar: CalendarInfo,
     if cal is None:
         return []
 
-    if start.tzinfo is None:
-        start = pytz.UTC.localize(start)
-    if end.tzinfo is None:
-        end = pytz.UTC.localize(end)
+    start = to_utc(start)
+    end = to_utc(end)
 
     results: list[tuple[str, Optional[str]]] = []
     try:

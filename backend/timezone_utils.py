@@ -5,11 +5,10 @@ Provides unified timezone conversion functions for the entire application.
 All event times are stored in UTC and converted to local time for display.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import time as _time
-import zoneinfo
-import datetime
 import pytz
+from typing import Optional, Union
 from .log import debug_log, Level
 
 
@@ -17,10 +16,6 @@ def _system_timezone_name() -> str:
     """Detect system timezone via pytz, or 'UTC' as last resort."""
     result = "UTC"
     try:
-        # now = datetime.datetime.now()
-        # local_now = now.astimezone()
-        # local_tz = local_now.tzinfo
-        # result = local_tz.tzname(local_now)
         result = str(pytz.timezone(_time.tzname[0]))
     except:
         debug_log( Level.WARN, "timezone info not found, using UTC")
@@ -52,6 +47,51 @@ def get_local_timezone():
         return pytz.timezone(_local_timezone_name)
     except pytz.UnknownTimeZoneError:
         return pytz.timezone(_system_timezone_name())
+
+
+# ==================== Core helpers ====================
+
+
+def ensure_tz(
+    dt: datetime,
+    tz_or_id: Optional[Union[str, pytz.BaseTzInfo]] = None,
+    default: Optional[pytz.BaseTzInfo] = None,
+) -> datetime:
+    """
+    Return *dt* as a timezone-aware datetime.
+
+    - If *dt* is a :class:`date` (not a :class:`datetime`), combine with midnight.
+    - If *dt* is already aware, return as-is.
+    - If *tz_or_id* is a string, interpret as an IANA timezone name.
+    - If *tz_or_id* is a ``pytz.BaseTzInfo``, use directly.
+    - If *tz_or_id* is *None*, use *default* (which itself defaults to UTC).
+    """
+    if isinstance(dt, date) and not isinstance(dt, datetime):
+        dt = datetime.combine(dt, datetime.min.time())
+    if dt.tzinfo is not None:
+        return dt
+    if isinstance(tz_or_id, str):
+        try:
+            return pytz.timezone(tz_or_id).localize(dt)
+        except Exception:
+            pass
+    tz = tz_or_id if isinstance(tz_or_id, pytz.BaseTzInfo) else (default or pytz.UTC)
+    return tz.localize(dt)
+
+
+def to_utc(dt: datetime) -> datetime:
+    """
+    Normalize *dt* to a UTC-aware datetime.
+
+    - Naive datetimes are assumed to be in UTC.
+    - Aware datetimes are converted to UTC.
+    """
+    if dt.tzinfo is None:
+        return pytz.UTC.localize(dt)
+    return dt.astimezone(pytz.UTC)
+
+
+# ==================== Local-time conversions ====================
 
 
 def to_local_datetime(dt: datetime) -> datetime:

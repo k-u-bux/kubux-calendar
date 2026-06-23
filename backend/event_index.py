@@ -9,10 +9,9 @@ for consistent cross-timezone comparison.
 from datetime import datetime
 from typing import Optional
 
-import pytz
-
 from .interval_tree import IntervalTree, IntervalHandle
 from .event import ImmutableEvent
+from .timezone_utils import to_utc
 
 
 class EventIndex:
@@ -64,8 +63,8 @@ class EventIndex:
 
         Both *start* and *end* should be timezone-aware (UTC preferred).
         """
-        start_utc = start.astimezone(pytz.UTC) if start.tzinfo else pytz.UTC.localize(start)
-        end_utc = end.astimezone(pytz.UTC) if end.tzinfo else pytz.UTC.localize(end)
+        start_utc = to_utc(start)
+        end_utc = to_utc(end)
         results: list[ImmutableEvent] = []
         self._tree.find_intersecting(start_utc, end_utc, lambda h: results.append(h.data))
         # Include all recurring events — their master interval may be
@@ -79,7 +78,7 @@ class EventIndex:
 
     def query_point(self, time: datetime) -> list[ImmutableEvent]:
         """Return events that cover a specific point in time."""
-        t = time.astimezone(pytz.UTC) if time.tzinfo else pytz.UTC.localize(time)
+        t = to_utc(time)
         results: list[ImmutableEvent] = []
         self._tree.find_overlapping(t, lambda h: results.append(h.data))
         return results

@@ -54,6 +54,9 @@ class SyncManager:
         self._on_change = on_change
         self._on_sync_status = on_sync_status
 
+        # Cached timezone object (avoids repeated pytz.timezone() calls)
+        self._config_tz = pytz.timezone(config.timezone)
+
         # CalDAV runtime state (populated by connect)
         self._sessions: dict[str, DAVSession] = {}          # account_name → session
         self._calendars: dict[str, CalendarInfo] = {}       # source_id → CalendarInfo
@@ -210,11 +213,10 @@ class SyncManager:
                                                      window_start, window_end)
                     debug_log(Level.DEBUG, f"sync: got {len(raw_events)} raw events from {source_id}")
                     events = []
-                    config_tz = pytz.timezone(self._config.timezone)
                     for ical_text, href in raw_events:
                         try:
                             ev = ImmutableEvent.from_ical(
-                                ical_text, source_id, config_tz=config_tz, caldav_href=href)
+                                ical_text, source_id, config_tz=self._config_tz, caldav_href=href)
                             events.append(ev)
                         except Exception as e:
                             debug_log(Level.DEBUG, f"sync:   parse error for {href}: {e}")
@@ -236,10 +238,9 @@ class SyncManager:
                 continue
             texts = ics_parse_events(raw)
             events = []
-            config_tz = pytz.timezone(self._config.timezone)
             for t in texts:
                 try:
-                    events.append(ImmutableEvent.from_ical(t, source_id, config_tz=config_tz))
+                    events.append(ImmutableEvent.from_ical(t, source_id, config_tz=self._config_tz))
                 except Exception as e:
                     debug_log(Level.DEBUG, f"sync: ics_event parse — skipping: {e}")
                     continue
@@ -387,11 +388,10 @@ class SyncManager:
         raw_events = caldav_fetch_events(session, cal_info, window_start, window_end)
         debug_log(Level.DEBUG, f"sync: got {len(raw_events)} raw events")
         events = []
-        config_tz = pytz.timezone(self._config.timezone)
         for ical_text, href in raw_events:
             try:
                 ev = ImmutableEvent.from_ical(
-                    ical_text, source_id, config_tz=config_tz, caldav_href=href)
+                    ical_text, source_id, config_tz=self._config_tz, caldav_href=href)
                 events.append(ev)
             except Exception as e:
                 debug_log(Level.DEBUG, f"sync:   parse error: {e}")
@@ -422,10 +422,9 @@ class SyncManager:
             return False
         texts = ics_parse_events(raw)
         events = []
-        config_tz = pytz.timezone(self._config.timezone)
         for t in texts:
             try:
-                events.append(ImmutableEvent.from_ical(t, source_id, config_tz=config_tz))
+                events.append(ImmutableEvent.from_ical(t, source_id, config_tz=self._config_tz))
             except Exception as e:
                 debug_log(Level.DEBUG, f"sync: ics_event parse — skipping: {e}")
                 continue
