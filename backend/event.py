@@ -248,14 +248,13 @@ class ImmutableEvent:
         default_factory=dict, init=False, repr=False, compare=False, hash=False
     )
 
-    # Fallback timezone for floating times (set by from_ical).
+    # Fallback timezone for floating times.
     _config_tz: Optional[pytz.BaseTzInfo] = field(
-        default=None, init=False, repr=False, compare=False, hash=False
+        default=None, repr=False, compare=False, hash=False
     )
 
     def __post_init__(self):
         object.__setattr__(self, "_cache", _parse_vevent(self.ical_data))
-        # _config_tz is set by from_ical via object.__setattr__ before init
 
     # --- content properties ------------------------------------------------
 
@@ -354,8 +353,8 @@ class ImmutableEvent:
             ical_data=ical_text,
             sync_state=sync_state,
             caldav_href=caldav_href,
+            _config_tz=config_tz,
         )
-        object.__setattr__(ev, "_config_tz", config_tz)
         return ev
 
     @classmethod
@@ -407,8 +406,8 @@ class ImmutableEvent:
             source_id=source_id,
             ical_data=_wrap_as_vcalendar(vevent),
             sync_state="pending_create",
+            _config_tz=config_tz,
         )
-        object.__setattr__(ev, "_config_tz", config_tz)
         return ev
 
     # --- copy-on-write -----------------------------------------------------
@@ -435,8 +434,8 @@ class ImmutableEvent:
             caldav_href=kwargs.get("caldav_href", self.caldav_href),
             _instance_start=kwargs.get("_instance_start", self._instance_start),
             _instance_end=kwargs.get("_instance_end", self._instance_end),
+            _config_tz=self._config_tz,
         )
-        object.__setattr__(new, "_config_tz", self._config_tz)
         return new
 
     def as_instance(self, instance_start: datetime) -> "ImmutableEvent":
@@ -449,8 +448,8 @@ class ImmutableEvent:
             caldav_href=self.caldav_href,
             _instance_start=ensure_tz(instance_start),
             _instance_end=ensure_tz(instance_start) + self.duration,
+            _config_tz=self._config_tz,
         )
-        object.__setattr__(new, "_config_tz", self._config_tz)
         return new
 
     # --- identity ----------------------------------------------------------
@@ -641,8 +640,8 @@ class EventView:
             ical_data=new_ical,
             sync_state=sync_state,
             caldav_href=self._event.caldav_href,
+            _config_tz=self._event._config_tz,
         )
-        object.__setattr__(result, "_config_tz", self._event._config_tz)
         # Reset dirty
         self._dirty = {}
         self._event = result
@@ -657,15 +656,12 @@ class EventView:
             "delete_instance": "pending_delete_instance",
         }
         new_state = state_map.get(op, "clean")
-        object.__setattr__(self._event, "_cache",
-                           dict(self._event._cache))  # force thaw cache reference
-        # Can't modify frozen dataclass — replace via private mechanism
         orig = self._event
         new = ImmutableEvent(
             uid=orig.uid, source_id=orig.source_id, ical_data=orig.ical_data,
             sync_state=new_state, caldav_href=orig.caldav_href,
+            _config_tz=orig._config_tz,
         )
-        object.__setattr__(new, "_config_tz", orig._config_tz)
         self._event = new
 
     # --- dunder ------------------------------------------------------------
