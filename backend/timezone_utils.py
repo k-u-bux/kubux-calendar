@@ -7,11 +7,24 @@ All event times are stored in UTC and converted to local time for display.
 
 from datetime import datetime, timedelta
 import time as _time
+import zoneinfo
 import pytz
+from .log import debug_log, Level
 
 
-# Default timezone - can be overridden by config
-_local_timezone_name: str = "Europe/Amsterdam"
+def _system_timezone_name() -> str:
+    """Detect system timezone via pytz, or 'UTC' as last resort."""
+    result = "UTC"
+    try:
+        result = str(pytz.timezone(_time.tzname[0]))
+    except:
+        debug_log( Level.WARN, "timezone info not found, using UTC")
+    debug_log( Level.INFO, f"local timezone: {result}")
+    return result
+
+
+# Default timezone — detected from system, overridable by config
+_local_timezone_name: str = _system_timezone_name()
 
 
 def set_timezone(timezone_name: str):

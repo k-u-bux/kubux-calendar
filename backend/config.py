@@ -4,13 +4,13 @@ Configuration parser for Kubux Calendar.
 Handles TOML file parsing and secure password retrieval via external programs.
 """
 
-import tomllib
 import subprocess
 import os
-import sys
-from pathlib import Path
+import tomllib
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
+from .timezone_utils import _system_timezone_name
 
 
 @dataclass
@@ -220,7 +220,7 @@ class Config:
     log_level: str = "warn"  # Log threshold: debug, info, warn, error
     refresh_interval: int = 300  # Auto-refresh interval in seconds (0 to disable)
     outdate_threshold: int = 7200  # Seconds since last successful sync before marking events as unconfirmed (default 2 hours)
-    timezone: str = "Europe/Amsterdam"  # v2: explicit timezone for display and floating-event conversion
+    timezone: str = field(default_factory=_system_timezone_name)  # overridden in load()
     layout: LayoutConfig = field(default_factory=LayoutConfig)
     bindings: BindingsConfig = field(default_factory=BindingsConfig)
     localization: LocalizationConfig = field(default_factory=LocalizationConfig)
@@ -260,7 +260,7 @@ class Config:
         log_level = general.get('log_level', 'warn')
         refresh_interval = general.get('refresh_interval', 300)  # Default 5 minutes
         outdate_threshold = general.get('outdate_threshold', 7200)  # Default 2 hours
-        timezone = general.get('timezone', 'Europe/Amsterdam')  # v2 default
+        timezone = general.get('timezone', _system_timezone_name())
 
         state_file_str = general.get('state_file', str(cls.get_default_state_path()))
         state_file = Path(os.path.expanduser(state_file_str))
