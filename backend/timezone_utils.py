@@ -17,7 +17,7 @@ def _system_timezone_name() -> str:
     result = "UTC"
     try:
         result = str(pytz.timezone(_time.tzname[0]))
-    except:
+    except Exception:
         debug_log( Level.WARN, "timezone info not found, using UTC")
     debug_log( Level.INFO, f"local timezone: {result}")
     return result
