@@ -666,9 +666,6 @@ class EventView:
 
     # --- dunder ------------------------------------------------------------
 
-    def __hash__(self):
-        return hash((self._event.uid, self.start))
-
     def __eq__(self, other):
         if isinstance(other, EventView):
             return self._event.uid == other._event.uid and self.start == other.start
