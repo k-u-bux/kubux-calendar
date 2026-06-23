@@ -4,7 +4,6 @@ A procedural, ticket-based execution engine for blocking tasks.
 """
 
 import uuid
-import sys
 from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Callable, Any, Dict, Optional
 from PySide6.QtCore import QObject, Signal, Qt, QTimer, QEventLoop
@@ -16,6 +15,8 @@ from .log import debug_log, Level
 class _DispatcherEngine(QObject):
     # Signal emitted when a task completes with its result
     task_completed = Signal(object, object)  # ticket, result
+    # Signal emitted when a task fails — emits the ticket and error message
+    task_failed = Signal(object, str)        # ticket, error_message
     
     def __init__(self, max_workers: int = 5):
         super().__init__()
@@ -26,8 +27,9 @@ class _DispatcherEngine(QObject):
         self._pending: Dict[str, Future] = {}
         self._callbacks: Dict[str, Callable[[Any], None]] = {}
         
-        # Connect signal to handle task completion
+        # Connect signals
         self.task_completed.connect(self._handle_task_completed)
+        self.task_failed.connect(self._handle_task_failed)
 
     def submit(self, func: Callable, notify: Callable[[Any], None], *args, **kwargs) -> str:
         ticket = str(uuid.uuid4())
@@ -48,10 +50,27 @@ class _DispatcherEngine(QObject):
                 result = func(*args, **kwargs)
                 # Emit signal to notify main thread
                 self.task_completed.emit(ticket, result)
+            except ImportError as e:
+                debug_log(Level.ERROR, f"BUG: Task {ticket} missing dependency: {e}")
+                self.task_failed.emit(ticket, str(e))
+            except (ConnectionError, TimeoutError, OSError) as e:
+                debug_log(Level.ERROR, f"NETWORK: Task {ticket} transient: {type(e).__name__}: {e}")
+                self.task_failed.emit(ticket, str(e))
+            except PermissionError as e:
+                debug_log(Level.ERROR, f"PERMISSION: Task {ticket} can't access file: {e}")
+                self.task_failed.emit(ticket, str(e))
+            except (ValueError, KeyError, IndexError) as e:
+                debug_log(Level.ERROR, f"DATA: Task {ticket} malformed input: {type(e).__name__}: {e}")
+                self.task_failed.emit(ticket, str(e))
+            except TypeError as e:
+                debug_log(Level.ERROR, f"BUG: Task {ticket} type mismatch: {e}")
+                self.task_failed.emit(ticket, str(e))
+            except AttributeError as e:
+                debug_log(Level.ERROR, f"BUG: Task {ticket} missing attribute: {e}")
+                self.task_failed.emit(ticket, str(e))
             except Exception as e:
-                # Fail Hard: Background thread crashes exit the process
-                debug_log(Level.ERROR, f"Task {ticket} crashed: {e}")
-                sys.exit(1)
+                debug_log(Level.ERROR, f"UNKNOWN: Task {ticket} {type(e).__name__}: {e} — investigate")
+                self.task_failed.emit(ticket, str(e))
 
         future = self._executor.submit(_wrapper)
         self._pending[ticket] = future
@@ -68,6 +87,15 @@ class _DispatcherEngine(QObject):
                 callback(result)
             except Exception as e:
                 debug_log(Level.ERROR, f"Callback for task {ticket} failed: {e}")
+
+    def _handle_task_failed(self, ticket: str, error_message: str):
+        """Slot to handle task failure signal — clean up pending ticket."""
+        if ticket in self._callbacks:
+            self._callbacks.pop(ticket)
+        if ticket in self._pending:
+            self._pending.pop(ticket)
+        # No callback invoked — the task failed, the caller gets nothing
+        # (stale cached data will be shown instead)
 
 # Internal singleton (late initialization avoids problems with QT)
 _instance: Optional[_DispatcherEngine] = None
@@ -205,8 +233,8 @@ def tie_n_calls(*funcs: Callable) -> Callable:
                 executor.submit(f, *a) 
                 for f, a in zip(funcs, args_sequence)
             ]
-            # .result() will raise if the underlying call fails, 
-            # triggering the engine's Fail-Hard sys.exit(1)
+            # .result() will raise if the underlying call fails,
+            # which gets caught by _wrapper's categorized handlers
             return [f.result() for f in futures]
             
     return composite_task
@@ -255,7 +283,8 @@ def thunk_and_tie(*tasks: Callable | tuple) -> Callable[[], list[Any]]:
         with ThreadPoolExecutor(max_workers=len(thunks)) as executor:
             # Dispatch all thunks in parallel
             futures = [executor.submit(t) for t in thunks]
-            # Fail-Hard: .result() propagates exceptions to the engine wrapper
+            # .result() will raise if the underlying call fails,
+            # which gets caught by _wrapper's categorized handlers
             return [f.result() for f in futures]
             
     return composite_task
