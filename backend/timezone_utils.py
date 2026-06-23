@@ -8,6 +8,7 @@ All event times are stored in UTC and converted to local time for display.
 from datetime import datetime, timedelta
 import time as _time
 import zoneinfo
+import datetime
 import pytz
 from .log import debug_log, Level
 
@@ -16,6 +17,10 @@ def _system_timezone_name() -> str:
     """Detect system timezone via pytz, or 'UTC' as last resort."""
     result = "UTC"
     try:
+        # now = datetime.datetime.now()
+        # local_now = now.astimezone()
+        # local_tz = local_now.tzinfo
+        # result = local_tz.tzname(local_now)
         result = str(pytz.timezone(_time.tzname[0]))
     except:
         debug_log( Level.WARN, "timezone info not found, using UTC")
