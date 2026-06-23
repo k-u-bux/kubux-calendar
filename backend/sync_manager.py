@@ -155,9 +155,18 @@ class SyncManager:
         dispatch_task(self._on_connect_all_done, self._do_connect_all)
 
     def _do_connect_all(self) -> dict:
-        """Runs in worker thread."""
+        """Runs in worker thread.  Returns results dict — no shared state mutation."""
         now = datetime.now()
-        result: dict = {"caldav": {}, "ics": {}}
+        result: dict = {
+            "caldav": {},
+            "ics": {},
+            "sessions": {},
+            "calendars": {},
+            "sources": {},          # source_id → CalendarSource data dict
+            "source_last_success": {},
+            "source_last_attempt": {},
+            "last_sync_time": now,
+        }
         debug_log(Level.DEBUG, f"sync: _do_connect_all running, accounts={len(self._config.nextcloud_accounts)}, ics_urls={len(self._ics_urls)}")
 
         # --- CalDAV -------------------------------------------------------
@@ -168,7 +177,7 @@ class SyncManager:
                 debug_log(Level.DEBUG, f"sync: got password for {account.name}")
                 session = caldav_connect(account.url, account.username, pw,
                                          account.name)
-                self._sessions[account.name] = session
+                result["sessions"][account.name] = session
                 debug_log(Level.DEBUG, f"sync: connected to {account.name}")
 
                 calendars = caldav_list_calendars(session)
@@ -176,25 +185,20 @@ class SyncManager:
                 for cal_info in calendars:
                     source_id = f"caldav:{account.name}:{cal_info.id}"
                     debug_log(Level.DEBUG, f"sync:   calendar '{cal_info.name}' id={cal_info.id} writable={cal_info.writable}")
-                    self._calendars[source_id] = cal_info
+                    result["calendars"][source_id] = cal_info
 
-                    # Create or update CalendarSource
-                    if source_id not in self._sources:
-                        src = CalendarSource(
-                            id=source_id, name=cal_info.name,
-                            color=cal_info.color,
-                            account_name=account.name,
-                            read_only=not cal_info.writable,
-                            source_type="caldav",
-                        )
-                        self._sources[source_id] = src
-                    else:
-                        src = self._sources[source_id]
-                        src.read_only = not cal_info.writable
-                        src.is_outdated = False
-                        src.color = cal_info.color
+                    # Snapshot of source fields to apply on main thread
+                    result["sources"][source_id] = {
+                        "id": source_id,
+                        "name": cal_info.name,
+                        "color": cal_info.color,
+                        "account_name": account.name,
+                        "read_only": not cal_info.writable,
+                        "source_type": "caldav",
+                        "is_outdated": False,
+                    }
 
-                    # Persist metadata
+                    # Persist metadata (filesystem write is safe from worker)
                     self._fs.save_source_meta(SourceMeta(
                         source_id=source_id, name=cal_info.name,
                         color=cal_info.color,
@@ -202,8 +206,8 @@ class SyncManager:
                         source_type="caldav", account_name=account.name,
                         last_success=now,
                     ))
-                    self._source_last_success[source_id] = now
-                    self._source_last_attempt[source_id] = now
+                    result["source_last_success"][source_id] = now
+                    result["source_last_attempt"][source_id] = now
 
                     # Fetch events
                     window_start = now - timedelta(days=120)
@@ -231,7 +235,7 @@ class SyncManager:
         # --- ICS ----------------------------------------------------------
         for source_id, url in self._ics_urls.items():
             debug_log(Level.DEBUG, f"sync: fetching ICS {source_id}")
-            self._source_last_attempt[source_id] = now
+            result["source_last_attempt"][source_id] = now
             raw = ics_fetch(url)
             if raw is None:
                 debug_log(Level.DEBUG, f"sync:   ICS fetch returned None for {source_id}")
@@ -245,10 +249,10 @@ class SyncManager:
                     debug_log(Level.DEBUG, f"sync: ics_event parse — skipping: {e}")
                     continue
             self._fs.replace_source(source_id, events)
-            self._source_last_success[source_id] = now
+            result["source_last_success"][source_id] = now
             debug_log(Level.DEBUG, f"sync: stored {len(events)} events for ICS {source_id}")
 
-            # Persist metadata
+            # Snapshot source info for main-thread metadata write
             src = self._sources.get(source_id)
             if src:
                 self._fs.save_source_meta(SourceMeta(
@@ -258,11 +262,13 @@ class SyncManager:
                 ))
             result["ics"][source_id] = len(events)
 
-        self._last_sync_time = now
+        # NOTE: self._calendars, self._sessions, self._sources, self._source_last_*,
+        #       self._last_sync_time are NOT written here — they are applied in
+        #       _on_connect_all_done on the main thread.
         return result
 
     def _on_connect_all_done(self, result):
-        """Main-thread callback after connect_all finishes."""
+        """Main-thread callback — applies worker results to shared state."""
         caldav_counts = result.get("caldav", {})
         ics_counts = result.get("ics", {})
         debug_log(Level.DEBUG, f"sync: connect_all done — CalDAV calendars: {list(caldav_counts.keys())}")
@@ -270,6 +276,32 @@ class SyncManager:
             debug_log(Level.DEBUG, f"sync:   {sid}: {count} events")
         for sid, count in ics_counts.items():
             debug_log(Level.DEBUG, f"sync:   {sid}: {count} events")
+
+        # Apply sessions
+        self._sessions.update(result.get("sessions", {}))
+        # Apply calendars
+        self._calendars.update(result.get("calendars", {}))
+        # Apply sources: create new, update existing
+        for sid, src_data in result.get("sources", {}).items():
+            existing = self._sources.get(sid)
+            if existing:
+                existing.read_only = src_data["read_only"]
+                existing.is_outdated = src_data["is_outdated"]
+                existing.color = src_data["color"]
+            else:
+                self._sources[sid] = CalendarSource(
+                    id=src_data["id"],
+                    name=src_data["name"],
+                    color=src_data["color"],
+                    account_name=src_data["account_name"],
+                    read_only=src_data["read_only"],
+                    source_type=src_data["source_type"],
+                )
+        # Apply timing
+        self._source_last_success.update(result.get("source_last_success", {}))
+        self._source_last_attempt.update(result.get("source_last_attempt", {}))
+        self._last_sync_time = result.get("last_sync_time")
+
         self._rebuild_index()
         self._notify_change()
         self._notify_sync_status()
@@ -282,13 +314,23 @@ class SyncManager:
         dispatch_task(self._on_refresh_done,
                       self._do_refresh, source_id)
 
-    def _do_refresh(self, source_id: Optional[str] = None) -> list[str]:
-        """Runs in worker thread.  Returns list of successfully synced source IDs."""
+    def _do_refresh(self, source_id: Optional[str] = None) -> dict:
+        """Runs in worker thread.  Returns result dict — no shared state mutation."""
         now = datetime.now()
-        synced: list[str] = []
+        result: dict = {
+            "synced": [],
+            "sessions": {},
+            "calendars": {},
+            "sources": {},          # source_id → {color, read_only, is_outdated}
+            "source_last_success": {},
+            "source_last_attempt": {},
+            "last_sync_time": None,
+        }
 
         # Try to connect any missing CalDAV sessions
-        self._try_connect_missing()
+        connect_result = self._try_connect_missing()
+        result["sessions"].update(connect_result["sessions"])
+        result["calendars"].update(connect_result["calendars"])
 
         ids = [source_id] if source_id else list(self._sources.keys())
         debug_log(Level.DEBUG, f"sync: _do_refresh sources={ids}")
@@ -308,7 +350,7 @@ class SyncManager:
         # Refresh CalDAV — connect once per account, then fetch per calendar
         for account_name, source_ids in caldav_by_account.items():
             debug_log(Level.DEBUG, f"sync: connecting CalDAV account '{account_name}' for {len(source_ids)} calendars")
-            session = self._sessions.get(account_name)
+            session = result["sessions"].get(account_name)
             if session is None:
                 # Find matching account config and connect
                 for acc in self._config.nextcloud_accounts:
@@ -316,7 +358,7 @@ class SyncManager:
                         try:
                             pw = acc.get_password(self._config.password_program)
                             session = caldav_connect(acc.url, acc.username, pw, acc.name)
-                            self._sessions[account_name] = session
+                            result["sessions"][account_name] = session
                             debug_log(Level.DEBUG, f"sync: connected {account_name}")
                         except Exception as e:
                             debug_log(Level.ERROR, f"sync: connect failed for {account_name}: {e}")
@@ -337,19 +379,22 @@ class SyncManager:
             for cal_info in calendars:
                 cid = f"caldav:{account_name}:{cal_info.id}"
                 cal_info_map[cid] = cal_info
-                self._calendars[cid] = cal_info
+                result["calendars"][cid] = cal_info
 
             # Fetch each source
             for sid in source_ids:
-                self._source_last_attempt[sid] = now
+                result["source_last_attempt"][sid] = now
                 cal_info = cal_info_map.get(sid)
                 if cal_info is None:
                     debug_log(Level.DEBUG, f"sync:   {sid} not found in server calendar list")
                     continue
                 try:
-                    ok = self._fetch_caldav_source(sid, cal_info, now)
-                    if ok:
-                        synced.append(sid)
+                    fetch_result = self._fetch_caldav_source(sid, cal_info, now)
+                    if fetch_result["ok"]:
+                        result["synced"].append(sid)
+                        result["source_last_success"][sid] = fetch_result.get("last_success", now)
+                        if "source_data" in fetch_result:
+                            result["sources"][sid] = fetch_result["source_data"]
                         debug_log(Level.DEBUG, f"sync:   {sid} OK")
                     else:
                         debug_log(Level.DEBUG, f"sync:   {sid} FAILED")
@@ -358,29 +403,31 @@ class SyncManager:
 
         # Refresh ICS — each source is independent
         for sid in ics_ids:
-            self._source_last_attempt[sid] = now
+            result["source_last_attempt"][sid] = now
             try:
-                ok = self._refresh_ics(sid, now)
-                if ok:
-                    synced.append(sid)
+                fetch_result = self._refresh_ics(sid, now)
+                if fetch_result["ok"]:
+                    result["synced"].append(sid)
+                    result["source_last_success"][sid] = fetch_result.get("last_success", now)
                     debug_log(Level.DEBUG, f"sync:   {sid} OK")
                 else:
                     debug_log(Level.DEBUG, f"sync:   {sid} FAILED")
             except Exception as e:
                 debug_log(Level.ERROR, f"sync:   {sid} exception: {e}")
 
-        if synced:
-            self._last_sync_time = now
-        return synced
+        if result["synced"]:
+            result["last_sync_time"] = now
+        return result
 
-    def _fetch_caldav_source(self, source_id: str, cal_info: CalendarInfo, now: datetime) -> bool:
-        """Fetch events for a single CalDAV source (assumes session + cal_info are ready)."""
+    def _fetch_caldav_source(self, source_id: str, cal_info: CalendarInfo, now: datetime) -> dict:
+        """Fetch events for a single CalDAV source. Returns result dict — no shared state mutation."""
+        result: dict = {"ok": False}
         src = self._sources.get(source_id)
         if src is None:
-            return False
+            return result
         session = self._sessions.get(src.account_name)
         if session is None:
-            return False
+            return result
 
         window_start = now - timedelta(days=120)
         window_end = now + timedelta(days=240)
@@ -397,13 +444,21 @@ class SyncManager:
                 debug_log(Level.DEBUG, f"sync:   parse error: {e}")
                 continue
         self._fs.replace_source(source_id, events)
-        self._source_last_success[source_id] = now
         debug_log(Level.DEBUG, f"sync: stored {len(events)} events for {source_id}")
 
-        # Update in-memory source color from server
-        src.color = cal_info.color
+        # Source data to apply on main thread
+        result["source_data"] = {
+            "id": source_id,
+            "name": cal_info.name,
+            "color": cal_info.color,
+            "account_name": src.account_name,
+            "read_only": not cal_info.writable,
+            "source_type": "caldav",
+            "is_outdated": False,
+        }
+        result["last_success"] = now
 
-        # Update metadata
+        # Update metadata (filesystem write is safe from worker)
         self._fs.save_source_meta(SourceMeta(
             source_id=source_id, name=cal_info.name,
             color=cal_info.color,
@@ -411,15 +466,18 @@ class SyncManager:
             source_type="caldav", account_name=src.account_name,
             last_success=now,
         ))
-        return True
+        result["ok"] = True
+        return result
 
-    def _refresh_ics(self, source_id: str, now: datetime) -> bool:
+    def _refresh_ics(self, source_id: str, now: datetime) -> dict:
+        """Fetch events for a single ICS source. Returns result dict — no shared state mutation."""
+        result: dict = {"ok": False}
         url = self._ics_urls.get(source_id)
         if url is None:
-            return False
+            return result
         raw = ics_fetch(url)
         if raw is None:
-            return False
+            return result
         texts = ics_parse_events(raw)
         events = []
         for t in texts:
@@ -429,7 +487,7 @@ class SyncManager:
                 debug_log(Level.DEBUG, f"sync: ics_event parse — skipping: {e}")
                 continue
         self._fs.replace_source(source_id, events)
-        self._source_last_success[source_id] = now
+        result["last_success"] = now
 
         src = self._sources.get(source_id)
         if src:
@@ -437,18 +495,31 @@ class SyncManager:
                 source_id=source_id, name=src.name, color=src.color,
                 read_only=True, source_type="ics", last_success=now,
             ))
-        return True
+        result["ok"] = True
+        return result
 
-    def _on_refresh_done(self, synced_ids: list[str]):
-        """Main-thread callback after refresh finishes."""
-        self._rebuild_index()
-        for sid in synced_ids:
+    def _on_refresh_done(self, result: dict):
+        """Main-thread callback — applies worker results to shared state."""
+        # Apply sessions
+        self._sessions.update(result.get("sessions", {}))
+        # Apply calendars
+        self._calendars.update(result.get("calendars", {}))
+        # Apply timing
+        self._source_last_success.update(result.get("source_last_success", {}))
+        self._source_last_attempt.update(result.get("source_last_attempt", {}))
+        if result.get("last_sync_time"):
+            self._last_sync_time = result["last_sync_time"]
+
+        # Apply source mutations (color, outdated) from fetch results
+        for sid, src_data in result.get("sources", {}).items():
             src = self._sources.get(sid)
             if src:
-                src.last_sync_time = self._source_last_success.get(sid)
-                src.is_outdated = False
-        if synced_ids:
-            self._last_sync_time = datetime.now()
+                src.color = src_data.get("color", src.color)
+                src.read_only = src_data.get("read_only", src.read_only)
+                src.is_outdated = src_data.get("is_outdated", src.is_outdated)
+                src.last_sync_time = result.get("source_last_success", {}).get(sid)
+
+        self._rebuild_index()
         self._notify_change()
         self._notify_sync_status()
 
@@ -488,9 +559,9 @@ class SyncManager:
         dispatch_task(self._on_sync_pending_done, self._do_sync_pending)
 
     def _do_sync_pending(self) -> dict:
-        """Runs in worker thread."""
+        """Runs in worker thread. Returns result dict — no shared state mutation."""
         ops = self._fs.load_pending()
-        result = {"success": 0, "failed": 0, "done_uids": []}
+        result = {"success": 0, "failed": 0, "done_uids": [], "last_sync_time": None}
 
         debug_log(Level.DEBUG, f"sync: {len(ops)} pending ops")
         debug_log(Level.DEBUG, f"sync: _calendars keys: {list(self._calendars.keys())}")
@@ -506,7 +577,7 @@ class SyncManager:
                 result["failed"] += 1
 
         if result["success"] > 0:
-            self._last_sync_time = datetime.now()
+            result["last_sync_time"] = datetime.now()
         return result
 
     def _sync_one(self, op: PendingOp) -> bool:
@@ -551,7 +622,7 @@ class SyncManager:
         return False
 
     def _on_sync_pending_done(self, result: dict):
-        """Main-thread callback."""
+        """Main-thread callback — applies worker results to shared state."""
         ops_before = {o.uid: o for o in self._fs.load_pending()}
 
         for op in ops_before.values():
@@ -563,6 +634,9 @@ class SyncManager:
                 if op.operation == "delete":
                     debug_log(Level.DEBUG, f"sync: deleting .ics for {uid} from disk")
                     self._fs.delete_event(op.source_id, uid)
+
+        if result.get("last_sync_time"):
+            self._last_sync_time = result["last_sync_time"]
 
         self._rebuild_index()
         self._notify_change()
@@ -596,16 +670,19 @@ class SyncManager:
     # Helper — reconnect missing CalDAV clients
     # ------------------------------------------------------------------
 
-    def _try_connect_missing(self) -> None:
+    def _try_connect_missing(self) -> dict:
+        """Runs in worker thread. Returns result dict — no shared state mutation."""
+        result: dict = {"sessions": {}, "calendars": {}}
         for acc in self._config.nextcloud_accounts:
             if acc.name in self._sessions:
                 continue
             try:
                 pw = acc.get_password(self._config.password_program)
                 session = caldav_connect(acc.url, acc.username, pw, acc.name)
-                self._sessions[acc.name] = session
+                result["sessions"][acc.name] = session
                 for cal_info in caldav_list_calendars(session):
                     cid = f"caldav:{acc.name}:{cal_info.id}"
-                    self._calendars[cid] = cal_info
+                    result["calendars"][cid] = cal_info
             except Exception as e:
                 debug_log(Level.WARN, f"sync: _try_connect_missing failed for {acc.name}: {e}")
+        return result
