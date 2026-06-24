@@ -109,9 +109,7 @@ class SyncManager:
                     return acc.refresh_interval
         for sub in self._config.ics_subscriptions:
             sid = f"ics:{sub.name}"
-            # ICS source_ids are built from the url hash in EventStore
-            # so check by iterating
-            if source_id in self._ics_urls:
+            if sid == source_id:
                 if sub.refresh_interval is not None:
                     return sub.refresh_interval
         return self._config.refresh_interval
@@ -122,7 +120,8 @@ class SyncManager:
                 if acc.outdate_threshold is not None:
                     return acc.outdate_threshold
         for sub in self._config.ics_subscriptions:
-            if source_id in self._ics_urls:
+            sid = f"ics:{sub.name}"
+            if sid == source_id:
                 if sub.outdate_threshold is not None:
                     return sub.outdate_threshold
         return self._config.outdate_threshold
