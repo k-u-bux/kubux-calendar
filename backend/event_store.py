@@ -10,7 +10,6 @@ The server is the source of truth. Local cache is disposable.
 
 import json
 import os
-import shutil
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional, Callable
@@ -73,25 +72,6 @@ class EventStore:
         self._on_change_callback: Optional[Callable[[], None]] = None
         self._on_sync_status_callback: Optional[Callable[[int, Optional[datetime]], None]] = None
 
-        # Purge old v1 cache on first v2 launch
-        self._maybe_purge_v1_cache()
-
-    # ------------------------------------------------------------------
-    # Cache cleanup
-    # ------------------------------------------------------------------
-
-    def _maybe_purge_v1_cache(self) -> None:
-        """Delete the old v1 cache directory if its criteria are met."""
-        xdg_data = os.environ.get(
-            "XDG_DATA_HOME", os.path.expanduser("~/.local/share")
-        )
-        v1_storage = Path(xdg_data) / "kubux-calendar"
-        if v1_storage.is_dir():
-            try:
-                shutil.rmtree(v1_storage)
-                debug_log(Level.INFO, f"Purged old v1 cache: {v1_storage}")
-            except Exception as e:
-                debug_log(Level.ERROR, f"Could not purge v1 cache: {e}")
 
     # ------------------------------------------------------------------
     # Callbacks
@@ -183,16 +163,7 @@ class EventStore:
                 src.is_outdated = True
 
     def _source_outdate_threshold(self, source_id: str) -> int:
-        """Per-source outdate threshold (no SyncManager involved)."""
-        for acc in self.config.nextcloud_accounts:
-            if source_id.startswith(f"caldav:{acc.name}:"):
-                if acc.outdate_threshold is not None:
-                    return acc.outdate_threshold
-        for sub in self.config.ics_subscriptions:
-            if source_id.startswith(f"ics:{sub.name}"):
-                if sub.outdate_threshold is not None:
-                    return sub.outdate_threshold
-        return self.config.outdate_threshold
+        return 0  # TEMP TEST: always outdated until sync confirms
 
     def load_events_for_source(self, source_id: str) -> int:
         """
