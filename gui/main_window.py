@@ -1055,7 +1055,7 @@ class MainWindow(QMainWindow):
         event.end = new_end_utc
         
         # Mark as pending BEFORE sync and refresh to show triangle
-        self.event_store._repository.mark_pending(event.uid, "update", event.source.id)
+        self.event_store.mark_pending(event.uid, "update", event.source.id)
         self._refresh_events()
         QApplication.processEvents()  # Force immediate repaint
 

@@ -674,34 +674,11 @@ class EventStore:
                 return True
         return False
 
-    # ------------------------------------------------------------------
-    # CalDAV client access (for compatibility — avoid touching directly)
-    # ------------------------------------------------------------------
-
-    @property
-    def _repository(self):
-        """Compatibility shim for main_window.py accessing
-        ``self.event_store._repository.mark_pending(...)``.
-        We provide a minimal interface.  The new code path uses
-        :meth:`update_event` instead, but the drag-drop handler
-        in main_window.py still uses the old pattern.
-        """
-        return _RepositoryCompat(self)
-
-
-class _RepositoryCompat:
-    """
-    Minimal compatibility shim so that the drag-drop handler in
-    ``main_window.py`` can still call ``_repository.mark_pending()``.
-    """
-
-    def __init__(self, store: EventStore):
-        self._store = store
-
     def mark_pending(self, uid: str, operation: str, source_id: str) -> None:
-        self._store._fs.add_pending(PendingOp(
+        """Record a pending sync operation for an event."""
+        self._fs.add_pending(PendingOp(
             uid=uid, source_id=source_id,
             operation=operation,
         ))
-        self._store._notify_change()
-        self._store._notify_sync_status()
+        self._notify_change()
+        self._notify_sync_status()
