@@ -151,17 +151,20 @@ class IntervalTree(Generic[T]):
         """Finds intervals that fully enclose the range [start, end]."""
         def _search(node):
             if not node: return
-            
+
             if start > node.max_end:
                 return
-                
+
             if node.left:
                 if node.left.max_end >= start:
                     _search(node.left)
-            
-            if node.start <= end and node.end >= start:
+
+            # Containing: node interval must fully enclose [start, end]
+            if node.start <= start and node.end >= end:
                 callback(node)
-            
+
+            # Only search right subtree if node.start <= start
+            # (intervals starting after start cannot contain [start, end])
             if node.start <= start:
                 _search(node.right)
         _search(self.root)

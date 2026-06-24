@@ -192,7 +192,12 @@ def caldav_delete_event(session: DAVSession, calendar: CalendarInfo,
 
 def caldav_add_exdate(session: DAVSession, calendar: CalendarInfo,
                       uid: str, instance_start: datetime) -> bool:
-    """Add an EXDATE to exclude a specific recurring instance."""
+    """Add an EXDATE to exclude a specific recurring instance.
+
+    The EXDATE must be added to the *master* VEVENT (the one without
+    RECURRENCE-ID).  Blindly targeting the first VEVENT could modify an
+    override sub-event instead of the master recurrence rule.
+    """
     cal = calendar._caldav_cal
     if cal is None:
         return False
@@ -201,10 +206,15 @@ def caldav_add_exdate(session: DAVSession, calendar: CalendarInfo,
         if not ev:
             return False
         ical = ICalCalendar.from_ical(ev.data)
+        master = None
         for comp in ical.walk():
-            if comp.name == "VEVENT":
-                comp.add("exdate", instance_start)
+            if comp.name == "VEVENT" and "RECURRENCE-ID" not in comp:
+                master = comp
                 break
+        if master is None:
+            debug_log(Level.WARN, f"caldav: add_exdate - no master VEVENT for uid={uid}")
+            return False
+        master.add("exdate", instance_start)
         ev.data = ical.to_ical().decode("utf-8")
         ev.save()
         return True
