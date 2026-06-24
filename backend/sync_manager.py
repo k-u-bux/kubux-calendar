@@ -647,20 +647,32 @@ class SyncManager:
         ops = self._fs.load_pending()
         if not ops:
             return
-        dispatch_task(self._on_sync_pending_done, self._do_sync_pending)
+        # Snapshot shared dicts on the main thread before dispatching.
+        # The worker thread must not read self._calendars / self._sessions /
+        # self._sources directly — they are mutated by main-thread callbacks.
+        calendars_snapshot = dict(self._calendars)
+        sessions_snapshot = dict(self._sessions)
+        sources_snapshot = dict(self._sources)
+        dispatch_task(self._on_sync_pending_done, self._do_sync_pending,
+                      calendars_snapshot, sessions_snapshot, sources_snapshot)
 
-    def _do_sync_pending(self) -> dict:
+    def _do_sync_pending(
+        self,
+        calendars: dict[str, CalendarInfo],
+        sessions: dict[str, DAVSession],
+        sources: dict[str, CalendarSource],
+    ) -> dict:
         """Runs in worker thread. Returns result dict — no shared state mutation."""
         ops = self._fs.load_pending()
         result = {"success": 0, "failed": 0, "done_uids": [], "last_sync_time": None}
 
         debug_log(Level.DEBUG, f"sync: {len(ops)} pending ops")
-        debug_log(Level.DEBUG, f"sync: _calendars keys: {list(self._calendars.keys())}")
-        debug_log(Level.DEBUG, f"sync: _sessions keys: {list(self._sessions.keys())}")
+        debug_log(Level.DEBUG, f"sync: calendars keys: {list(calendars.keys())}")
+        debug_log(Level.DEBUG, f"sync: sessions keys: {list(sessions.keys())}")
 
         for op in ops:
             debug_log(Level.DEBUG, f"sync: processing op={op.operation} uid={op.uid} source_id={op.source_id}")
-            ok = self._sync_one(op)
+            ok = self._sync_one(op, calendars, sessions, sources)
             if ok:
                 result["success"] += 1
                 result["done_uids"].append(op.uid)
@@ -671,21 +683,27 @@ class SyncManager:
             result["last_sync_time"] = datetime.now()
         return result
 
-    def _sync_one(self, op: PendingOp) -> bool:
+    def _sync_one(
+        self,
+        op: PendingOp,
+        calendars: dict[str, CalendarInfo],
+        sessions: dict[str, DAVSession],
+        sources: dict[str, CalendarSource],
+    ) -> bool:
         """Execute a single pending operation.  Returns success."""
         source_id = op.source_id
-        cal_info = self._calendars.get(source_id)
-        src = self._sources.get(source_id)
+        cal_info = calendars.get(source_id)
+        src = sources.get(source_id)
         debug_log(Level.DEBUG, f"sync: _sync_one op={op.operation} uid={op.uid} source_id={source_id}")
         if cal_info is None:
-            debug_log(Level.DEBUG, f"sync: cal_info for {source_id} NOT FOUND in _calendars (keys={list(self._calendars.keys())})")
+            debug_log(Level.DEBUG, f"sync: cal_info for {source_id} NOT FOUND in calendars (keys={list(calendars.keys())})")
         if src is None:
-            debug_log(Level.DEBUG, f"sync: src for {source_id} NOT FOUND in _sources")
+            debug_log(Level.DEBUG, f"sync: src for {source_id} NOT FOUND in sources")
         if cal_info is None or src is None:
             return False
-        session = self._sessions.get(src.account_name)
+        session = sessions.get(src.account_name)
         if session is None:
-            debug_log(Level.DEBUG, f"sync: session for {src.account_name} NOT FOUND in _sessions (keys={list(self._sessions.keys())})")
+            debug_log(Level.DEBUG, f"sync: session for {src.account_name} NOT FOUND in sessions (keys={list(sessions.keys())})")
             return False
         debug_log(Level.DEBUG, f"sync: session OK for {src.account_name}")
 
