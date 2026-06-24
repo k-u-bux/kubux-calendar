@@ -16,7 +16,7 @@ from typing import Optional, Callable
 import pytz
 from icalendar import Calendar as ICalCalendar
 
-from .event import ImmutableEvent, CalendarSource
+from .event import ImmutableEvent, CalendarSource, SYNC_WINDOW_PAST_DAYS, SYNC_WINDOW_FUTURE_DAYS
 from .event_fs import EventFS, SourceMeta, PendingOp
 from .event_index import EventIndex
 from .network_ops import (
@@ -210,8 +210,8 @@ class SyncManager:
                     result["source_last_attempt"][source_id] = now
 
                     # Fetch events
-                    window_start = now - timedelta(days=120)
-                    window_end = now + timedelta(days=240)
+                    window_start = now - timedelta(days=SYNC_WINDOW_PAST_DAYS)
+                    window_end = now + timedelta(days=SYNC_WINDOW_FUTURE_DAYS)
                     debug_log(Level.DEBUG, f"sync: fetching events for {source_id}...")
                     raw_events = caldav_fetch_events(session, cal_info,
                                                      window_start, window_end)
@@ -429,8 +429,8 @@ class SyncManager:
         if session is None:
             return result
 
-        window_start = now - timedelta(days=120)
-        window_end = now + timedelta(days=240)
+        window_start = now - timedelta(days=SYNC_WINDOW_PAST_DAYS)
+        window_end = now + timedelta(days=SYNC_WINDOW_FUTURE_DAYS)
         debug_log(Level.DEBUG, f"sync: fetching {source_id}...")
         raw_events = caldav_fetch_events(session, cal_info, window_start, window_end)
         debug_log(Level.DEBUG, f"sync: got {len(raw_events)} raw events")

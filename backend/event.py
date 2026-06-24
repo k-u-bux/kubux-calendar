@@ -18,6 +18,12 @@ from .log import debug_log, Level
 from .timezone_utils import ensure_tz
 
 
+# Shared sync window constants (used by EventStore and SyncManager).
+# These define how far back/forward events are fetched from the server.
+SYNC_WINDOW_PAST_DAYS = 120
+SYNC_WINDOW_FUTURE_DAYS = 240
+
+
 # ==================== Recurrence Rule ====================
 
 @dataclass

@@ -19,7 +19,7 @@ from icalendar import Calendar as ICalCalendar
 import recurring_ical_events
 
 from .config import Config
-from .event import ImmutableEvent, CalendarSource, EventView, RecurrenceRule
+from .event import ImmutableEvent, CalendarSource, EventView, RecurrenceRule, SYNC_WINDOW_PAST_DAYS, SYNC_WINDOW_FUTURE_DAYS
 from .event_fs import EventFS, SourceMeta, PendingOp
 from .event_index import EventIndex
 from .sync_manager import SyncManager
@@ -39,8 +39,8 @@ class EventStore:
     layer requires zero changes.
     """
 
-    CACHE_WINDOW_PAST_MONTHS = 4
-    CACHE_WINDOW_FUTURE_MONTHS = 8
+    CACHE_WINDOW_PAST_MONTHS = SYNC_WINDOW_PAST_DAYS // 30
+    CACHE_WINDOW_FUTURE_MONTHS = SYNC_WINDOW_FUTURE_DAYS // 30
     PREFETCH_MARGIN_PAST_MONTHS = 2
     PREFETCH_MARGIN_FUTURE_MONTHS = 4
 
