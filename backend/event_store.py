@@ -162,7 +162,37 @@ class EventStore:
             else:
                 self._sources[sid].color = sub.color
 
+        self._apply_source_state()
         return success
+
+    def _apply_source_state(self) -> None:
+        """Apply color overrides and outdated status to all sources.
+
+        Called after source initialization and after sync cycles.
+        Does not trigger SyncManager creation — uses cached metadata.
+        """
+        for sid, src in self._sources.items():
+            if sid in self._colors:
+                src.color = self._colors[sid]
+            meta = self._fs.load_source_meta(sid)
+            if meta and meta.last_success:
+                threshold = self._source_outdate_threshold(sid)
+                elapsed = (datetime.now() - meta.last_success).total_seconds()
+                src.is_outdated = elapsed > threshold
+            else:
+                src.is_outdated = True
+
+    def _source_outdate_threshold(self, source_id: str) -> int:
+        """Per-source outdate threshold (no SyncManager involved)."""
+        for acc in self.config.nextcloud_accounts:
+            if source_id.startswith(f"caldav:{acc.name}:"):
+                if acc.outdate_threshold is not None:
+                    return acc.outdate_threshold
+        for sub in self.config.ics_subscriptions:
+            if source_id.startswith(f"ics:{sub.name}"):
+                if sub.outdate_threshold is not None:
+                    return sub.outdate_threshold
+        return self.config.outdate_threshold
 
     def load_events_for_source(self, source_id: str) -> int:
         """
@@ -385,7 +415,11 @@ class EventStore:
         ]
         debug_log(Level.DEBUG, f"store: after time-range filter: {len(filtered)} (was {before})")
 
-        # Apply color overrides and outdated status
+        # Build EventView wrappers
+        # NOTE: color override is applied here (harmless dict lookup).
+        # Outdated status is NOT set here — that would trigger lazy
+        # SyncManager creation during a read operation (see _apply_source_state
+        # which runs at lifecycle boundaries instead).
         views: list[EventView] = []
         for ev in filtered:
             src = self._sources.get(ev.source_id)
@@ -394,7 +428,6 @@ class EventStore:
                 continue
             if src.id in self._colors:
                 src.color = self._colors[src.id]
-            src.is_outdated = self.is_source_outdated(src.id)
             views.append(EventView(ev, src))
 
         return views
