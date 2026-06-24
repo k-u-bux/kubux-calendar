@@ -18,7 +18,7 @@ from icalendar import Calendar as ICalCalendar
 import recurring_ical_events
 
 from .config import Config
-from .event import ImmutableEvent, CalendarSource, EventView, RecurrenceRule, SYNC_WINDOW_PAST_DAYS, SYNC_WINDOW_FUTURE_DAYS
+from .event import ImmutableEvent, CalendarSource, EventView, RecurrenceRule
 from .event_fs import EventFS, SourceMeta, PendingOp
 from .event_index import EventIndex
 from .sync_manager import SyncManager
@@ -37,11 +37,6 @@ class EventStore:
     Implements the same public API as the v1 EventStore so the GUI
     layer requires zero changes.
     """
-
-    CACHE_WINDOW_PAST_MONTHS = SYNC_WINDOW_PAST_DAYS // 30
-    CACHE_WINDOW_FUTURE_MONTHS = SYNC_WINDOW_FUTURE_DAYS // 30
-    PREFETCH_MARGIN_PAST_MONTHS = 2
-    PREFETCH_MARGIN_FUTURE_MONTHS = 4
 
     def __init__(self, config: Config):
         self.config = config
@@ -63,10 +58,6 @@ class EventStore:
         self._state_file = config.state_file
         self._visibility: dict[str, bool] = {}
         self._colors: dict[str, str] = {}
-
-        # Cache window tracking
-        self._cache_start: Optional[datetime] = None
-        self._cache_end: Optional[datetime] = None
 
         # Callbacks
         self._on_change_callback: Optional[Callable[[], None]] = None
@@ -176,16 +167,6 @@ class EventStore:
             self._index.add(ev)
         return len(events)
 
-    def set_cache_window_from_storage(self) -> None:
-        """Set cache window based on now (avoids immediate network fetch)."""
-        if self._cache_start is not None and self._cache_end is not None:
-            return
-        if len(self._index) == 0:
-            return
-        now = datetime.now()
-        self._cache_start = now - timedelta(days=self.CACHE_WINDOW_PAST_MONTHS * 30)
-        self._cache_end = now + timedelta(days=self.CACHE_WINDOW_FUTURE_MONTHS * 30)
-
     def get_sources_by_visibility(self) -> tuple[list[str], list[str]]:
         visible: list[str] = []
         invisible: list[str] = []
@@ -265,17 +246,15 @@ class EventStore:
     # ------------------------------------------------------------------
 
     def _is_cache_valid(self, start: datetime, end: datetime) -> bool:
-        if self._cache_start is None or self._cache_end is None:
+        """Check if the SyncManager has a valid sync window covering [start, end]."""
+        sm = self._sync_manager
+        if sm is None:
             return False
-        if start < self._cache_start or end > self._cache_end:
+        w_start = sm.valid_sync_window_start
+        w_end = sm.valid_sync_window_end
+        if w_start is None or w_end is None:
             return False
-        past_margin = timedelta(days=self.PREFETCH_MARGIN_PAST_MONTHS * 30)
-        future_margin = timedelta(days=self.PREFETCH_MARGIN_FUTURE_MONTHS * 30)
-        if start < self._cache_start + past_margin:
-            return False
-        if end > self._cache_end - future_margin:
-            return False
-        return True
+        return start >= w_start and end <= w_end
 
     def _expand_instances(
         self, events: list[ImmutableEvent],
@@ -339,13 +318,7 @@ class EventStore:
         (widened by SYNC_WINDOW_*_DAYS).
         """
         if not self._is_cache_valid(start, end):
-            window_start = start - timedelta(days=self.CACHE_WINDOW_PAST_MONTHS * 30)
-            window_end = end + timedelta(days=self.CACHE_WINDOW_FUTURE_MONTHS * 30)
-            # Widen cache window now so we don't keep re-triggering on
-            # subsequent calls while the background fetch is in flight.
-            self._cache_start = window_start
-            self._cache_end = window_end
-            self._trigger_background_fetch(window_start, window_end)
+            self._trigger_background_fetch(start, end)
 
         return self._build_event_views(start, end, calendar_ids, visible_only)
 

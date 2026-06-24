@@ -627,13 +627,9 @@ class MainWindow(QMainWindow):
             self._sidebar.update_tooltips()
             QApplication.processEvents()  # Show sidebar immediately
             
-            # Set cache window NOW to prevent get_events() from triggering network fetch
-            # during progressive loading
-            self.event_store.set_cache_window_from_storage()
-            
             # Note: Don't restore scroll position here - it's done in _load_events_progressively
             # AFTER events are loaded and displayed
-            
+
             # Phase 2 & 3: Load events progressively via timer (yield to event loop)
             self._pending_sources_to_load = None  # Will be populated by _load_events_progressively
             QTimer.singleShot(0, self._load_events_progressively)
@@ -658,9 +654,6 @@ class MainWindow(QMainWindow):
         if not self._pending_sources_to_load:
             # All sources loaded - finalize
             self._pending_sources_to_load = None
-            # Set cache window so get_events() doesn't trigger network fetch
-            self.event_store.set_cache_window_from_storage()
-            
             # Clear initialization flag - now safe to respond to signals
             self._initializing = False
             
