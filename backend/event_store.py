@@ -362,16 +362,19 @@ class EventStore:
         refresh and returns whatever cached data is available immediately.
         The UI will update when the background refresh completes (via
         the on_change callback).
+
+        The requested time window is forwarded to the background fetch so
+        the sync layer fetches exactly the range the user is viewing
+        (widened by SYNC_WINDOW_*_DAYS).
         """
         if not self._is_cache_valid(start, end):
-            center = start
-            window_start = center - timedelta(days=self.CACHE_WINDOW_PAST_MONTHS * 30)
-            window_end = center + timedelta(days=self.CACHE_WINDOW_FUTURE_MONTHS * 30)
+            window_start = start - timedelta(days=self.CACHE_WINDOW_PAST_MONTHS * 30)
+            window_end = end + timedelta(days=self.CACHE_WINDOW_FUTURE_MONTHS * 30)
             # Widen cache window now so we don't keep re-triggering on
             # subsequent calls while the background fetch is in flight.
             self._cache_start = window_start
             self._cache_end = window_end
-            self._trigger_background_fetch()
+            self._trigger_background_fetch(window_start, window_end)
 
         return self._build_event_views(start, end, calendar_ids, visible_only)
 
@@ -432,12 +435,20 @@ class EventStore:
 
         return views
 
-    def _trigger_background_fetch(self) -> None:
+    def _trigger_background_fetch(
+        self,
+        sync_start: Optional[datetime] = None,
+        sync_end: Optional[datetime] = None,
+    ) -> None:
         """
         Kick off a background refresh of all sources without blocking.
         The on_change callback will fire when data arrives.
+
+        *sync_start* / *sync_end* define the time window to fetch from
+        the server.  When called from :meth:`get_events`, these are the
+        widened viewer window.
         """
-        self.refresh_in_background()
+        self.refresh_all_in_background(sync_start, sync_end)
 
     # ------------------------------------------------------------------
     # Event CRUD
@@ -613,20 +624,37 @@ class EventStore:
     # Sync operations (background)
     # ------------------------------------------------------------------
 
-    def refresh_all_in_background(self) -> None:
-        """Connect servers and refresh all data in background."""
+    def refresh_all_in_background(
+        self,
+        sync_start: Optional[datetime] = None,
+        sync_end: Optional[datetime] = None,
+    ) -> None:
+        """Connect servers and refresh all data in background.
+
+        *sync_start* / *sync_end* define the time window to fetch.
+        If omitted, falls back to ``now ± SYNC_WINDOW_*_DAYS``.
+        """
         self._ensure_sync_manager()
         # Register ICS URLs
         for sid, url in self._ics_urls.items():
             self._sync_manager.register_ics(sid, url)
-        self._sync_manager.connect_all_in_background()
+        self._sync_manager.connect_all_in_background(sync_start, sync_end)
 
-    def refresh_in_background(self, calendar_id: Optional[str] = None) -> None:
-        """Refresh one or all sources in background."""
+    def refresh_in_background(
+        self,
+        calendar_id: Optional[str] = None,
+        sync_start: Optional[datetime] = None,
+        sync_end: Optional[datetime] = None,
+    ) -> None:
+        """Refresh one or all sources in background.
+
+        *sync_start* / *sync_end* define the time window to fetch.
+        If omitted, falls back to ``now ± SYNC_WINDOW_*_DAYS``.
+        """
         sm = self._ensure_sync_manager()
         for sid, url in self._ics_urls.items():
             sm.register_ics(sid, url)
-        sm.refresh_in_background(calendar_id)
+        sm.refresh_in_background(calendar_id, sync_start, sync_end)
 
     def refresh_due_sources_in_background(self) -> None:
         """Refresh sources that are due in background."""
@@ -706,4 +734,3 @@ class _RepositoryCompat:
         ))
         self._store._notify_change()
         self._store._notify_sync_status()
-

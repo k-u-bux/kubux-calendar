@@ -66,6 +66,11 @@ class SyncManager:
         self._source_last_attempt: dict[str, datetime] = {}
         self._source_last_success: dict[str, datetime] = {}
 
+        # Sync window — tracks what time range the network has actually fetched.
+        # None until the first connect/refresh completes.
+        self._valid_sync_window_start: Optional[datetime] = None
+        self._valid_sync_window_end: Optional[datetime] = None
+
         # ICS subscription URLs (source_id → url)
         self._ics_urls: dict[str, str] = {}
 
@@ -76,6 +81,14 @@ class SyncManager:
     @property
     def last_sync_time(self) -> Optional[datetime]:
         return self._last_sync_time
+
+    @property
+    def valid_sync_window_start(self) -> Optional[datetime]:
+        return self._valid_sync_window_start
+
+    @property
+    def valid_sync_window_end(self) -> Optional[datetime]:
+        return self._valid_sync_window_end
 
     def source_last_success(self, source_id: str) -> Optional[datetime]:
         return self._source_last_success.get(source_id)
@@ -149,13 +162,30 @@ class SyncManager:
     # Connect & discover (background)
     # ------------------------------------------------------------------
 
-    def connect_all_in_background(self) -> None:
-        """Connect to every configured CalDAV account + fetch ICS, in background."""
-        dispatch_task(self._on_connect_all_done, self._do_connect_all)
+    def connect_all_in_background(
+        self,
+        sync_start: Optional[datetime] = None,
+        sync_end: Optional[datetime] = None,
+    ) -> None:
+        """Connect to every configured CalDAV account + fetch ICS, in background.
 
-    def _do_connect_all(self) -> dict:
+        *sync_start* / *sync_end* define the time window to fetch.
+        If omitted, falls back to ``now ± SYNC_WINDOW_*_DAYS``.
+        """
+        dispatch_task(self._on_connect_all_done, self._do_connect_all, sync_start, sync_end)
+
+    def _do_connect_all(
+        self,
+        sync_start: Optional[datetime] = None,
+        sync_end: Optional[datetime] = None,
+    ) -> dict:
         """Runs in worker thread.  Returns results dict — no shared state mutation."""
         now = datetime.now()
+        if sync_start is None:
+            sync_start = now - timedelta(days=SYNC_WINDOW_PAST_DAYS)
+        if sync_end is None:
+            sync_end = now + timedelta(days=SYNC_WINDOW_FUTURE_DAYS)
+
         result: dict = {
             "caldav": {},
             "ics": {},
@@ -165,6 +195,8 @@ class SyncManager:
             "source_last_success": {},
             "source_last_attempt": {},
             "last_sync_time": now,
+            "sync_start": sync_start,
+            "sync_end": sync_end,
         }
         debug_log(Level.DEBUG, f"sync: _do_connect_all running, accounts={len(self._config.nextcloud_accounts)}, ics_urls={len(self._ics_urls)}")
 
@@ -209,11 +241,9 @@ class SyncManager:
                     result["source_last_attempt"][source_id] = now
 
                     # Fetch events
-                    window_start = now - timedelta(days=SYNC_WINDOW_PAST_DAYS)
-                    window_end = now + timedelta(days=SYNC_WINDOW_FUTURE_DAYS)
-                    debug_log(Level.DEBUG, f"sync: fetching events for {source_id}...")
+                    debug_log(Level.DEBUG, f"sync: fetching events for {source_id} in window {sync_start}..{sync_end}...")
                     raw_events = caldav_fetch_events(session, cal_info,
-                                                     window_start, window_end)
+                                                     sync_start, sync_end)
                     debug_log(Level.DEBUG, f"sync: got {len(raw_events)} raw events from {source_id}")
                     events = []
                     for ical_text, href in raw_events:
@@ -300,6 +330,9 @@ class SyncManager:
         self._source_last_success.update(result.get("source_last_success", {}))
         self._source_last_attempt.update(result.get("source_last_attempt", {}))
         self._last_sync_time = result.get("last_sync_time")
+        # Apply sync window
+        self._valid_sync_window_start = result.get("sync_start")
+        self._valid_sync_window_end = result.get("sync_end")
 
         self._rebuild_index()
         self._notify_change()
@@ -309,13 +342,28 @@ class SyncManager:
     # Refresh (background)
     # ------------------------------------------------------------------
 
-    def refresh_in_background(self, source_id: Optional[str] = None) -> None:
+    def refresh_in_background(
+        self,
+        source_id: Optional[str] = None,
+        sync_start: Optional[datetime] = None,
+        sync_end: Optional[datetime] = None,
+    ) -> None:
         dispatch_task(self._on_refresh_done,
-                      self._do_refresh, source_id)
+                      self._do_refresh, source_id, sync_start, sync_end)
 
-    def _do_refresh(self, source_id: Optional[str] = None) -> dict:
+    def _do_refresh(
+        self,
+        source_id: Optional[str] = None,
+        sync_start: Optional[datetime] = None,
+        sync_end: Optional[datetime] = None,
+    ) -> dict:
         """Runs in worker thread.  Returns result dict — no shared state mutation."""
         now = datetime.now()
+        if sync_start is None:
+            sync_start = now - timedelta(days=SYNC_WINDOW_PAST_DAYS)
+        if sync_end is None:
+            sync_end = now + timedelta(days=SYNC_WINDOW_FUTURE_DAYS)
+
         result: dict = {
             "synced": [],
             "sessions": {},
@@ -324,6 +372,8 @@ class SyncManager:
             "source_last_success": {},
             "source_last_attempt": {},
             "last_sync_time": None,
+            "sync_start": sync_start,
+            "sync_end": sync_end,
         }
 
         # Try to connect any missing CalDAV sessions
@@ -388,7 +438,7 @@ class SyncManager:
                     debug_log(Level.DEBUG, f"sync:   {sid} not found in server calendar list")
                     continue
                 try:
-                    fetch_result = self._fetch_caldav_source(sid, cal_info, now)
+                    fetch_result = self._fetch_caldav_source(sid, cal_info, now, sync_start, sync_end)
                     if fetch_result["ok"]:
                         result["synced"].append(sid)
                         result["source_last_success"][sid] = fetch_result.get("last_success", now)
@@ -404,7 +454,7 @@ class SyncManager:
         for sid in ics_ids:
             result["source_last_attempt"][sid] = now
             try:
-                fetch_result = self._refresh_ics(sid, now)
+                fetch_result = self._refresh_ics(sid, now, sync_start, sync_end)
                 if fetch_result["ok"]:
                     result["synced"].append(sid)
                     result["source_last_success"][sid] = fetch_result.get("last_success", now)
@@ -418,7 +468,14 @@ class SyncManager:
             result["last_sync_time"] = now
         return result
 
-    def _fetch_caldav_source(self, source_id: str, cal_info: CalendarInfo, now: datetime) -> dict:
+    def _fetch_caldav_source(
+        self,
+        source_id: str,
+        cal_info: CalendarInfo,
+        now: datetime,
+        sync_start: Optional[datetime] = None,
+        sync_end: Optional[datetime] = None,
+    ) -> dict:
         """Fetch events for a single CalDAV source. Returns result dict — no shared state mutation."""
         result: dict = {"ok": False}
         src = self._sources.get(source_id)
@@ -428,10 +485,13 @@ class SyncManager:
         if session is None:
             return result
 
-        window_start = now - timedelta(days=SYNC_WINDOW_PAST_DAYS)
-        window_end = now + timedelta(days=SYNC_WINDOW_FUTURE_DAYS)
-        debug_log(Level.DEBUG, f"sync: fetching {source_id}...")
-        raw_events = caldav_fetch_events(session, cal_info, window_start, window_end)
+        if sync_start is None:
+            sync_start = now - timedelta(days=SYNC_WINDOW_PAST_DAYS)
+        if sync_end is None:
+            sync_end = now + timedelta(days=SYNC_WINDOW_FUTURE_DAYS)
+
+        debug_log(Level.DEBUG, f"sync: fetching {source_id} in window {sync_start}..{sync_end}...")
+        raw_events = caldav_fetch_events(session, cal_info, sync_start, sync_end)
         debug_log(Level.DEBUG, f"sync: got {len(raw_events)} raw events")
         events = []
         for ical_text, href in raw_events:
@@ -468,7 +528,13 @@ class SyncManager:
         result["ok"] = True
         return result
 
-    def _refresh_ics(self, source_id: str, now: datetime) -> dict:
+    def _refresh_ics(
+        self,
+        source_id: str,
+        now: datetime,
+        sync_start: Optional[datetime] = None,
+        sync_end: Optional[datetime] = None,
+    ) -> dict:
         """Fetch events for a single ICS source. Returns result dict — no shared state mutation."""
         result: dict = {"ok": False}
         url = self._ics_urls.get(source_id)
@@ -508,6 +574,14 @@ class SyncManager:
         self._source_last_attempt.update(result.get("source_last_attempt", {}))
         if result.get("last_sync_time"):
             self._last_sync_time = result["last_sync_time"]
+
+        # Apply sync window
+        sync_start = result.get("sync_start")
+        sync_end = result.get("sync_end")
+        if sync_start is not None:
+            self._valid_sync_window_start = sync_start
+        if sync_end is not None:
+            self._valid_sync_window_end = sync_end
 
         # Apply source mutations (color, outdated) from fetch results
         for sid, src_data in result.get("sources", {}).items():
