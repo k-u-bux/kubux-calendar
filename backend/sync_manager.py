@@ -289,6 +289,14 @@ class SyncManager:
                     color=src.color, read_only=True,
                     source_type="ics", last_success=now,
                 ))
+                result["sources"][source_id] = {
+                    "id": source_id,
+                    "name": src.name,
+                    "color": src.color,
+                    "read_only": True,
+                    "source_type": "ics",
+                    "is_outdated": False,
+                }
             result["ics"][source_id] = len(events)
 
         # NOTE: self._calendars, self._sessions, self._sources, self._source_last_*,
@@ -458,6 +466,8 @@ class SyncManager:
                 if fetch_result["ok"]:
                     result["synced"].append(sid)
                     result["source_last_success"][sid] = fetch_result.get("last_success", now)
+                    if "source_data" in fetch_result:
+                        result["sources"][sid] = fetch_result["source_data"]
                     debug_log(Level.DEBUG, f"sync:   {sid} OK")
                 else:
                     debug_log(Level.DEBUG, f"sync:   {sid} FAILED")
@@ -560,6 +570,14 @@ class SyncManager:
                 source_id=source_id, name=src.name, color=src.color,
                 read_only=True, source_type="ics", last_success=now,
             ))
+            result["source_data"] = {
+                "id": source_id,
+                "name": src.name,
+                "color": src.color,
+                "read_only": True,
+                "source_type": "ics",
+                "is_outdated": False,
+            }
         result["ok"] = True
         return result
 

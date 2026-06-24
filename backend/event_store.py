@@ -154,7 +154,10 @@ class EventStore:
                 src.is_outdated = True
 
     def _source_outdate_threshold(self, source_id: str) -> int:
-        return 0  # TEMP TEST: always outdated until sync confirms
+        """Delegates to SyncManager's per-source or global threshold."""
+        if self._sync_manager is not None:
+            return self._sync_manager.source_outdate_threshold(source_id)
+        return self.config.outdate_threshold
 
     def load_events_for_source(self, source_id: str) -> int:
         """

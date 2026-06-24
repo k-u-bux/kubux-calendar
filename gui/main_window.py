@@ -6,7 +6,7 @@ The primary application window with calendar view, sidebar, and navigation.
 
 import json
 from datetime import datetime, date
-from typing import Optional
+from typing import Optional, Callable
 from pathlib import Path
 import pytz
 
@@ -98,8 +98,8 @@ class CalendarSidebarItem(QFrame):
     def __init__(
         self,
         calendar: CalendarSource,
-        on_toggle: callable,
-        on_color_change: callable,
+        on_toggle: Callable[[str, bool], None],
+        on_color_change: Callable[[str, str], None],
         subscription_icon: str = "📡",
         parent=None
     ):
@@ -160,23 +160,6 @@ class CalendarSidebar(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(4)
-        
-        # # Header
-        # self._header = QLabel(self.event_store.config.labels.sidebar_header)
-        # if self._interface_font:
-        #     header_font = QFont(self._interface_font)
-        #     header_font.setBold(True)
-        #     self._header.setFont(header_font)
-        # else:
-        #     font = self._header.font()
-        #     font.setBold(True)
-        #     self._header.setFont(font)
-        # layout.addWidget(self._header)
-        # 
-        # # Separator
-        # sep = QFrame()
-        # sep.setFrameStyle(QFrame.HLine | QFrame.Sunken)
-        # layout.addWidget(sep)
         
         # Calendar list
         self._list_layout = QVBoxLayout()

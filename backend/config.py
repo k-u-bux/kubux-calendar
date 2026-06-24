@@ -189,9 +189,9 @@ class SyncConfig:
 class LocalizationConfig:
     """Configuration for localized day and month names."""
     # Default to English abbreviated day names
-    day_names: list[str] = None  # Mon Tue Wed Thu Fri Sat Sun
+    day_names: Optional[list[str]] = None  # Mon Tue Wed Thu Fri Sat Sun
     # Default to English full month names
-    month_names: list[str] = None  # January February ... December
+    month_names: Optional[list[str]] = None  # January February ... December
 
     def __post_init__(self):
         if self.day_names is None:

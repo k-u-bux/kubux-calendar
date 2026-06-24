@@ -73,7 +73,7 @@ def get_contrasting_text_color(bg_color: str) -> str:
 
 
 def lighten_color(hex_color: str, factor: float = 0.3) -> str:
-    """Lighten a hex color by the given factor."""
+    """Lighten (factor > 0) or darken (factor < 0) a hex color."""
     color = hex_color.lstrip('#')
     if len(color) == 3:
         color = ''.join([c*2 for c in color])
@@ -85,9 +85,9 @@ def lighten_color(hex_color: str, factor: float = 0.3) -> str:
     except (ValueError, IndexError):
         return hex_color
     
-    r = int(min(255, r + (255 - r) * factor))
-    g = int(min(255, g + (255 - g) * factor))
-    b = int(min(255, b + (255 - b) * factor))
+    r = int(max(0, min(255, r + (255 - r) * factor)))
+    g = int(max(0, min(255, g + (255 - g) * factor)))
+    b = int(max(0, min(255, b + (255 - b) * factor)))
     
     return f"#{r:02x}{g:02x}{b:02x}"
 
