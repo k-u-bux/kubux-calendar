@@ -14,7 +14,6 @@ disposable — the server is the source of truth.
 
 import json
 import os
-import re
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -28,8 +27,8 @@ import pytz
 # ==================== Helpers ====================
 
 def _safe_filename(name: str) -> str:
-    """Sanitise *name* for use as a directory or file stem."""
-    return re.sub(r'[^\w\-.]', '_', name)
+    """Encode *name* as a hex string safe for filesystem use."""
+    return name.encode("utf-8").hex()
 
 
 def _atomic_write(path: Path, data: str | bytes, *, binary: bool = False) -> None:
@@ -208,13 +207,6 @@ class EventFS:
                 debug_log(Level.DEBUG, f"event_fs: list_events — skipping unparseable event: {e}")
                 continue
         return events
-
-    def list_uids(self, source_id: str) -> set[str]:
-        """Fast UID enumeration without full parsing."""
-        src_dir = self._source_dir(source_id)
-        if not src_dir.is_dir():
-            return set()
-        return {p.stem.replace("_", ":") for p in src_dir.glob("*.ics")}
 
     def replace_source(self, source_id: str, events: list[ImmutableEvent]) -> None:
         """
