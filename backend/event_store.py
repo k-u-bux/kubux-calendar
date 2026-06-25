@@ -643,13 +643,6 @@ class EventStore:
     def get_cached_event_count(self) -> int:
         return len(self._index)
 
-    def has_pending_sync(self, event_uid: str) -> bool:
-        uid = event_uid.split('_')[0] if '_' in event_uid else event_uid
-        for op in self._fs.load_pending():
-            if op.uid == uid:
-                return True
-        return False
-
     def mark_pending(self, uid: str, operation: str, source_id: str) -> None:
         """Record a pending sync operation for an event."""
         self._fs.add_pending(PendingOp(
