@@ -55,10 +55,11 @@ class EventStore:
         self._sessions: dict[str, DAVSession] = {}
         self._ics_urls: dict[str, str] = {}
 
-        # State persistence (visibility, colors — same as v1)
+        # State persistence (visibility, colors)
         self._state_file = config.state_file
         self._visibility: dict[str, bool] = {}
-        self._colors: dict[str, str] = {}
+        self._user_colors: dict[str, str] = {}  # user-picked, non-negotiable
+        self._auto_colors: dict[str, str] = {}  # auto-assigned, can be re-evaluated on collision
 
         # Callbacks
         self._on_change_callback: Optional[Callable[[], None]] = None
@@ -110,7 +111,7 @@ class EventStore:
             src = CalendarSource(
                 id=meta.source_id,
                 name=meta.name,
-                color=self._colors.get(meta.source_id, meta.color),
+                color=self._user_colors.get(meta.source_id, self._auto_colors.get(meta.source_id, meta.color)),
                 account_name=meta.account_name,
                 read_only=meta.read_only,
                 source_type=meta.source_type,
@@ -139,14 +140,45 @@ class EventStore:
         return success
 
     def _ensure_source_colors(self) -> None:
-        """Assign distinct colors to sources that have no explicit color."""
+        """Assign distinct colors to sources that have no explicit color.
+
+        Persists auto-assigned colors to state so they survive restarts.
+        If an auto-assigned color collides with another source's final color,
+        a new one is picked.
+        """
+        any_changed = False
         for sid, src in self._sources.items():
-            if sid in self._colors:
-                continue  # user-picked in UI
+            if sid in self._user_colors:
+                continue  # user-picked, non-negotiable
             if src.color:
                 continue  # explicitly set in config TOML or server-reported
-            used = [s.color for s in self._sources.values() if s.id != sid and s.color]
-            src.color = get_unused_color(used)
+
+            # Already have a persisted auto-assigned color?
+            existing = self._auto_colors.get(sid)
+
+            # Build set of "taken" colors: user-assigned + config-defined + other auto-assigned
+            taken = set()
+            for s in self._sources.values():
+                if s.id == sid:
+                    continue
+                if s.id in self._user_colors:
+                    taken.add(self._user_colors[s.id])
+                elif s.id in self._auto_colors:
+                    taken.add(self._auto_colors[s.id])
+                elif s.color:
+                    taken.add(s.color)
+
+            if existing and existing not in taken:
+                # Existing auto-color is still distinct — keep it
+                src.color = existing
+            else:
+                # Pick a fresh one
+                src.color = get_unused_color(list(taken))
+                self._auto_colors[sid] = src.color
+                any_changed = True
+
+        if any_changed:
+            self._save_state()
 
     def _apply_source_state(self) -> None:
         """Apply color overrides and outdated status to all sources.
@@ -155,8 +187,10 @@ class EventStore:
         Does not trigger SyncManager creation — uses cached metadata.
         """
         for sid, src in self._sources.items():
-            if sid in self._colors:
-                src.color = self._colors[sid]
+            if sid in self._user_colors:
+                src.color = self._user_colors[sid]
+            elif sid in self._auto_colors:
+                src.color = self._auto_colors[sid]
             meta = self._fs.load_source_meta(sid)
             if meta and meta.last_success:
                 threshold = self._source_outdate_threshold(sid)
@@ -256,7 +290,7 @@ class EventStore:
     def set_calendar_color(self, calendar_id: str, color: str) -> None:
         if calendar_id in self._sources:
             self._sources[calendar_id].color = color
-            self._colors[calendar_id] = color
+            self._user_colors[calendar_id] = color
             self._save_state()
             self._notify_change()
 
@@ -392,8 +426,10 @@ class EventStore:
             if src is None:
                 debug_log(Level.DEBUG, f"store: skipping event {ev.uid} — source {ev.source_id} not found")
                 continue
-            if src.id in self._colors:
-                src.color = self._colors[src.id]
+            if src.id in self._user_colors:
+                src.color = self._user_colors[src.id]
+            elif src.id in self._auto_colors:
+                src.color = self._auto_colors[src.id]
             views.append(EventView(ev, src))
 
         return views
@@ -568,7 +604,8 @@ class EventStore:
                 with open(self._state_file, 'r') as f:
                     state = json.load(f)
                     self._visibility = state.get('visibility', {})
-                    self._colors = state.get('colors', {})
+                    self._user_colors = state.get('user-assigned-colors', {})
+                    self._auto_colors = state.get('auto-assigned-colors', {})
             except Exception as e:
                 debug_log(Level.WARN, f"store: _load_state failed — {e}")
 
@@ -577,7 +614,11 @@ class EventStore:
             self._state_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self._state_file, 'w') as f:
                 json.dump(
-                    {'visibility': self._visibility, 'colors': self._colors},
+                    {
+                        'visibility': self._visibility,
+                        'user-assigned-colors': self._user_colors,
+                        'auto-assigned-colors': self._auto_colors,
+                    },
                     f, indent=2,
                 )
         except Exception as e:
