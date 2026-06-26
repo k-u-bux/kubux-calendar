@@ -302,12 +302,12 @@ class ImmutableEvent:
     @property
     def start(self) -> datetime:
         """Instance start (or master start for non-recurring)."""
-        return self._instance_start if self._instance_start is not None else self._cache["start"]
+        return self._instance_start if self._instance_start is not None else self.master_start
 
     @property
     def end(self) -> datetime:
         """Instance end (or master end for non-recurring)."""
-        return self._instance_end if self._instance_end is not None else self._cache["end"]
+        return self._instance_end if self._instance_end is not None else self.master_end
 
     @property
     def master_start(self) -> datetime:

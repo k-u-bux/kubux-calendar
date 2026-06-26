@@ -83,11 +83,14 @@ def to_utc(dt: datetime) -> datetime:
     """
     Normalize *dt* to a UTC-aware datetime.
 
-    - Naive datetimes are assumed to be in UTC.
+    - Naive datetimes are assumed to be in local time.
     - Aware datetimes are converted to UTC.
     """
     if dt.tzinfo is None:
-        return pytz.UTC.localize(dt)
+        # Assume it's in local timezone
+        local_tz = get_local_timezone()
+        local_dt = local_tz.localize(dt)
+        return local_dt.astimezone(pytz.UTC)
     return dt.astimezone(pytz.UTC)
 
 
@@ -109,25 +112,6 @@ def to_local_datetime(dt: datetime) -> datetime:
         local_tz = get_local_timezone()
         return dt.astimezone(local_tz)
     return dt
-
-
-def to_utc_datetime(dt: datetime) -> datetime:
-    """
-    Convert a local datetime to UTC.
-    
-    Args:
-        dt: A datetime object in local timezone.
-    
-    Returns:
-        A timezone-aware datetime in UTC.
-    """
-    if dt.tzinfo is None:
-        # Assume it's in local timezone
-        local_tz = get_local_timezone()
-        local_dt = local_tz.localize(dt)
-        return local_dt.astimezone(pytz.UTC)
-    else:
-        return dt.astimezone(pytz.UTC)
 
 
 def utc_to_local_naive(dt: datetime) -> datetime:
@@ -165,17 +149,3 @@ def local_naive_to_utc(dt: datetime) -> datetime:
         local_dt = local_tz.localize(dt)
         return local_dt.astimezone(pytz.UTC)
     return dt.astimezone(pytz.UTC)
-
-
-def to_local_hour(dt: datetime) -> float:
-    """
-    Convert datetime to local timezone and return hour as float.
-    
-    Args:
-        dt: A datetime object.
-    
-    Returns:
-        Hour as float (e.g., 14.5 for 14:30).
-    """
-    local_dt = to_local_datetime(dt)
-    return local_dt.hour + local_dt.minute / 60.0

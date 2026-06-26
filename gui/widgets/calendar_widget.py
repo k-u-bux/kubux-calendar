@@ -89,7 +89,7 @@ def get_interface_font() -> tuple[str, int]:
 
 
 # Import timezone utilities from shared module
-from backend.timezone_utils import to_local_datetime, to_local_hour
+from backend.timezone_utils import to_local_datetime
 
 
 from dataclasses import dataclass
