@@ -30,7 +30,7 @@ A simple desktop calendar application for Nextcloud (CalDAV) and ICS subscriptio
 - **Localization**: Customize day and month names for any language
 - **Password Integration**: Secure password retrieval via external programs (e.g., `pass`)
 - **Keyboard Navigation**: Configurable keyboard shortcuts
-- **Event Caching**: Pre-fetches ±2 months of events for fast navigation
+- **Event Caching**: Pre-fetches ±4 months past and ±8 months future for fast navigation
 - **Live Config Reload**: Automatically reloads when the config file changes (no restart needed)
 - **Persistent UI State**: Remembers window size, sidebar width, view, and scroll position
 
@@ -92,10 +92,9 @@ Ensure you have Python 3.12+ with the following dependencies:
 
 - PySide6
 - caldav
-- ics
 - icalendar
 - pytz
-- python-dateutil
+- recurring-ical-events
 - requests
 
 ```bash
@@ -149,22 +148,26 @@ color = "#ff6b6b"
 | `refresh_interval` | 300 | Auto-refresh from server (seconds, 0 to disable) |
 | `outdate_threshold` | 7200 | Seconds since last successful sync before marking events as "unconfirmed" (default 2 hours) |
 | `state_file` | `~/.local/state/kubux-calendar/state.json` | Path to state file |
+| `log_level` | warn | Log threshold: debug, info, warn, error, silent |
+| `timezone` | (system) | IANA timezone name (e.g. `Europe/Berlin`) |
 
 #### Layout Section
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `hour_height` | 60 | Height of one hour in pixels (day/week view) |
+| `interface_font` | Sans | Font family for interface elements |
+| `interface_font_size` | 12 | Font size for interface elements |
 | `text_font` | Sans | Font family for event text |
-| `text_font_size` | 10 | Font size for event text |
+| `text_font_size` | 12 | Font size for event text |
 
 #### Bindings Section
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `next` | None | Key to navigate forward (day/week/month) |
-| `prev` | None | Key to navigate backward |
-| `new_event` | None | Key to create a new event |
+| `next` | Right | Key to navigate forward (day/week/month) |
+| `prev` | Left | Key to navigate backward |
+| `new_event` | (none) | Key to create a new event |
 
 #### Localization Section
 
@@ -225,7 +228,7 @@ Each subscription is defined as `[Subscription.Name]`:
 
 ### List View
 
-The List view displays all events in a chronological scrollable list (±3 months range):
+The List view displays all events in a chronological scrollable list:
 - Shows full event details: date, time, title, location, description, and calendar name
 - **Previous/Next**: Scroll backward/forward by one page
 - **Today**: Scrolls to position the next upcoming event at the top
@@ -244,19 +247,19 @@ The List view displays all events in a chronological scrollable list (±3 months
   - Create/edit/delete operations show this indicator immediately
   - Disappears once the server confirms the change
   - **This is your guarantee**: If you see this triangle, the change is queued and will sync
-- **Top-left square (black)**: **Unconfirmed/Outdated** - This event hasn't been verified with the server recently
+- **Top-right square (black)**: **Unconfirmed/Outdated** - This event hasn't been verified with the server recently
   - Appears when the source hasn't successfully synced within `outdate_threshold` seconds
   - Common when server is unavailable or you're working offline
   - Events still display from persistent cache, but their server state is unverified
 - **Bottom-left triangle**: **Recurring event** - Part of a repeating series
 - **Bottom-right triangle**: **Read-only** - Event from ICS subscription (cannot be edited)
 
-**No indicator = Fully synced.** If an event has no top-left square or top-right triangle, you can be certain it accurately reflects the server state.
+**No indicator = Fully synced.** If an event has no top-right square or top-right triangle, you can be certain it accurately reflects the server state.
 
 ### Sidebar
 
 - Toggle calendar visibility with checkboxes
-- Right-click calendar name to change color
+- Click the color box next to a calendar name to change its color
 - Calendars from Nextcloud are editable; ICS subscriptions are read-only
 
 ## Architecture
@@ -265,19 +268,22 @@ The application follows a modular architecture:
 
 ```
 kubux-calendar/
-├── kubux_calendar.py    # Main entry point
+├── kubux_calendar.py      # Main entry point
 ├── backend/
-│   ├── caldav_client.py   # CalDAV/Nextcloud communication
-│   ├── ics_subscription.py # ICS feed handling
-│   ├── event_store.py     # Unified event cache orchestration
-│   ├── event_repository.py # In-memory event storage with persistence
-│   ├── event_storage.py   # Persistent storage backends (JSON)
-│   ├── event_wrapper.py   # Event and source data models
-│   ├── sync_queue.py      # Offline sync queue with persistence
-│   └── config.py          # Configuration management
+│   ├── config.py          # Configuration management
+│   ├── event.py           # Core event types (ImmutableEvent, EventView, CalendarSource)
+│   ├── event_fs.py        # Filesystem-based event cache
+│   ├── event_index.py     # In-memory interval-tree index
+│   ├── event_store.py     # Unified facade over FS + index + sync
+│   ├── interval_tree.py   # AVL-based interval tree
+│   ├── network_ops.py     # CalDAV and ICS network operations
+│   ├── sync_manager.py    # Background sync orchestration
+│   ├── task_dispatch.py   # Thread-pool task dispatcher
+│   ├── timezone_utils.py  # Timezone conversion utilities
+│   └── log.py             # Level-filtered logging
 └── gui/
-    ├── main_window.py   # Main application window
-    ├── event_dialog.py  # Event create/edit dialog
+    ├── main_window.py     # Main application window
+    ├── event_dialog.py    # Event create/edit dialog
     └── widgets/
         ├── calendar_widget.py # Day/Week/Month/List views
         └── event_widget.py    # Event display widget
@@ -295,14 +301,15 @@ Application state is stored in `~/.local/state/kubux-calendar/state.json`:
 - Last used calendar for new events
 
 ### Event Cache (Offline-First)
-Events are persisted to `~/.local/share/kubux-calendar/storage/`:
-- `events/{source_id}.json` - Cached events per calendar (survive app restarts)
+Events are persisted to `~/.local/state/kubux-calendar/v2/`:
+- `cache/{source_id}/*.ics` - One iCalendar file per event (survive app restarts)
 - `sources/{source_id}.json` - Per-source sync metadata
+- `pending.json` - Queued sync operations
 
 This enables offline operation - when the server is unavailable, events are loaded from the local cache and displayed with an "unconfirmed" indicator.
 
 ### Sync Queue
-Pending changes are stored in `~/.local/state/kubux-calendar/sync_queue.json`:
+Pending changes are stored as `pending.json` inside the event cache directory:
 - Create/update/delete operations queued for server
 - Persists across app restarts
 - Syncs automatically when server becomes available
