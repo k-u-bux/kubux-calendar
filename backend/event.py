@@ -45,7 +45,7 @@ class CalendarSource:
     """
     id: str
     name: str
-    color: str = "#4285f4"
+    color: str = ""
     account_name: str = ""
     read_only: bool = False
     source_type: str = "caldav"   # "caldav" or "ics"

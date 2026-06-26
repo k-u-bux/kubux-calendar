@@ -100,7 +100,7 @@ def caldav_list_calendars(session: DAVSession) -> list[CalendarInfo]:
             debug_log(Level.WARN, f"caldav: failed to get calendar name — {e}")
             name = "Unnamed"
 
-        color = "#4285f4"
+        color = ""
         try:
             props = cal.get_properties([caldav_ical.CalendarColor()])
             for v in (props or {}).values():

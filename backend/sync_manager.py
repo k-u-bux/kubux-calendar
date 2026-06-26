@@ -15,6 +15,7 @@ from typing import Optional, Callable
 
 import pytz
 
+from .color_utils import get_unused_color
 from .event import ImmutableEvent, CalendarSource, SYNC_WINDOW_PAST_DAYS, SYNC_WINDOW_FUTURE_DAYS
 from .event_fs import EventFS, SourceMeta, PendingOp
 from .event_index import EventIndex
@@ -325,10 +326,14 @@ class SyncManager:
                 existing.is_outdated = src_data["is_outdated"]
                 existing.color = src_data["color"]
             else:
+                color = src_data["color"]
+                if not color:
+                    used = [s.color for s in self._sources.values()]
+                    color = get_unused_color(used)
                 self._sources[sid] = CalendarSource(
                     id=src_data["id"],
                     name=src_data["name"],
-                    color=src_data["color"],
+                    color=color,
                     account_name=src_data["account_name"],
                     read_only=src_data["read_only"],
                     source_type=src_data["source_type"],
@@ -604,7 +609,10 @@ class SyncManager:
         for sid, src_data in result.get("sources", {}).items():
             src = self._sources.get(sid)
             if src:
-                src.color = src_data.get("color", src.color)
+                color = src_data.get("color", src.color)
+                if not color:
+                    color = src.color
+                src.color = color
                 src.read_only = src_data.get("read_only", src.read_only)
                 src.is_outdated = src_data.get("is_outdated", src.is_outdated)
                 src.last_sync_time = result.get("source_last_success", {}).get(sid)

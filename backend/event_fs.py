@@ -67,7 +67,7 @@ class SourceMeta:
         self,
         source_id: str,
         name: str = "",
-        color: str = "#4285f4",
+        color: str = "",
         read_only: bool = False,
         source_type: str = "caldav",
         account_name: str = "",
@@ -100,7 +100,7 @@ class SourceMeta:
         return cls(
             source_id=d["source_id"],
             name=d.get("name", ""),
-            color=d.get("color", "#4285f4"),
+            color=d.get("color", ""),
             read_only=d.get("read_only", False),
             source_type=d.get("source_type", "caldav"),
             account_name=d.get("account_name", ""),

@@ -20,7 +20,7 @@ class NextcloudAccount:
     url: str
     username: str
     password_key: str
-    color: str = "#4285f4"  # Default Google Blue
+    color: str = ""
     refresh_interval: Optional[int] = None  # Per-source override (None = use global)
     outdate_threshold: Optional[int] = None  # Per-source override (None = use global)
 
@@ -54,7 +54,7 @@ class ICSSubscription:
     """Configuration for a read-only ICS subscription."""
     name: str
     url: str
-    color: str = "#34a853"  # Default Google Green
+    color: str = ""
     refresh_interval: Optional[int] = None  # Per-source override (None = use global)
     outdate_threshold: Optional[int] = None  # Per-source override (None = use global)
 
@@ -277,7 +277,7 @@ class Config:
                     url=value.get('url', ''),
                     username=value.get('username', ''),
                     password_key=value.get('password_key', ''),
-                    color=value.get('color', '#4285f4'),
+                    color=value.get('color', ''),
                     refresh_interval=value.get('refresh_interval'),
                     outdate_threshold=value.get('outdate_threshold')
                 )
@@ -293,7 +293,7 @@ class Config:
                             url=sub_value.get('url', ''),
                             username=sub_value.get('username', ''),
                             password_key=sub_value.get('password_key', ''),
-                            color=sub_value.get('color', '#4285f4'),
+                            color=sub_value.get('color', ''),
                             refresh_interval=sub_value.get('refresh_interval'),
                             outdate_threshold=sub_value.get('outdate_threshold')
                         )
@@ -309,7 +309,7 @@ class Config:
                 subscription = ICSSubscription(
                     name=value.get('name', sub_id),
                     url=value.get('url', ''),
-                    color=value.get('color', '#34a853'),
+                    color=value.get('color', ''),
                     refresh_interval=value.get('refresh_interval'),
                     outdate_threshold=value.get('outdate_threshold')
                 )
@@ -323,7 +323,7 @@ class Config:
                         subscription = ICSSubscription(
                             name=sub_value.get('name', sub_id),
                             url=sub_value.get('url', ''),
-                            color=sub_value.get('color', '#34a853'),
+                            color=sub_value.get('color', ''),
                             refresh_interval=sub_value.get('refresh_interval'),
                             outdate_threshold=sub_value.get('outdate_threshold')
                         )
@@ -466,25 +466,3 @@ class Config:
         )
 
 
-# Colors palette for auto-assignment to calendars
-CALENDAR_COLORS = [
-    '#4285f4',  # Blue
-    '#34a853',  # Green
-    '#ea4335',  # Red
-    '#fbbc05',  # Yellow
-    '#9c27b0',  # Purple
-    '#00bcd4',  # Cyan
-    '#ff5722',  # Deep Orange
-    '#607d8b',  # Blue Grey
-    '#e91e63',  # Pink
-    '#3f51b5',  # Indigo
-]
-
-
-def get_next_color(used_colors: list[str]) -> str:
-    """Get the next available color from the palette."""
-    for color in CALENDAR_COLORS:
-        if color.lower() not in [c.lower() for c in used_colors]:
-            return color
-    # If all colors are used, cycle back
-    return CALENDAR_COLORS[len(used_colors) % len(CALENDAR_COLORS)]

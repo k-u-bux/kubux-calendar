@@ -28,6 +28,7 @@ from .network_ops import (
 from .task_dispatch import dispatch_task
 from .timezone_utils import ensure_tz
 from .log import debug_log, Level
+from .color_utils import get_unused_color
 
 
 class EventStore:
@@ -134,7 +135,18 @@ class EventStore:
                 self._sources[sid].color = sub.color
 
         self._apply_source_state()
+        self._ensure_source_colors()
         return success
+
+    def _ensure_source_colors(self) -> None:
+        """Assign distinct colors to sources that have no explicit color."""
+        for sid, src in self._sources.items():
+            if sid in self._colors:
+                continue  # user-picked in UI
+            if src.color:
+                continue  # explicitly set in config TOML or server-reported
+            used = [s.color for s in self._sources.values() if s.id != sid and s.color]
+            src.color = get_unused_color(used)
 
     def _apply_source_state(self) -> None:
         """Apply color overrides and outdated status to all sources.
@@ -236,6 +248,10 @@ class EventStore:
             self._sources[calendar_id].visible = visible
             self._save_state()
             self._notify_change()
+
+    def get_used_colors(self) -> list[str]:
+        """Return all colors currently assigned to calendar sources (deduplicated)."""
+        return list({src.color for src in self._sources.values()})
 
     def set_calendar_color(self, calendar_id: str, color: str) -> None:
         if calendar_id in self._sources:
