@@ -313,4 +313,4 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 ## Acknowledgments
 
-This application was vibe coded using Claude Opus 4.
+This application is vibe coded using various models.
