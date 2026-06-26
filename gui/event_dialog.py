@@ -4,7 +4,7 @@ Event Dialog for creating and editing calendar events.
 This is an independent window (not a modal dialog) for editing event details.
 """
 
-from datetime import datetime, timedelta, date, time as dt_time
+from datetime import datetime, timedelta
 from typing import Optional
 import pytz
 
@@ -14,16 +14,16 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLineEdit, QTextEdit, QDateTimeEdit, QCheckBox,
     QComboBox, QPushButton, QLabel, QGroupBox,
-    QSpinBox, QMessageBox, QFrame, QSizePolicy, QScrollArea
+    QSpinBox, QMessageBox, QFrame, QScrollArea
 )
 from PySide6.QtCore import Qt, Signal, QDateTime
 from PySide6.QtGui import QFont, QCloseEvent, QFontMetrics
 
-from backend import EventStore, EventView, CalendarSource, RecurrenceRule
+from backend import EventStore, EventView, RecurrenceRule
 
 # EventView is what get_events() and create_event() return
 EventData = EventView
-from backend.timezone_utils import utc_to_local_naive as utc_to_local, ensure_tz
+from backend.timezone_utils import ensure_tz
 from backend.log import debug_log, Level
 
 

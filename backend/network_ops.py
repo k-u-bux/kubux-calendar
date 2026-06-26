@@ -12,7 +12,6 @@ from datetime import datetime
 from typing import Optional
 import pytz
 import requests
-import lxml.etree as etree
 
 import caldav
 from caldav.elements import ical as caldav_ical

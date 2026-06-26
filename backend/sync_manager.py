@@ -14,7 +14,6 @@ from datetime import datetime, timedelta
 from typing import Optional, Callable
 
 import pytz
-from icalendar import Calendar as ICalCalendar
 
 from .event import ImmutableEvent, CalendarSource, SYNC_WINDOW_PAST_DAYS, SYNC_WINDOW_FUTURE_DAYS
 from .event_fs import EventFS, SourceMeta, PendingOp

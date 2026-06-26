@@ -5,20 +5,19 @@ The primary application window with calendar view, sidebar, and navigation.
 """
 
 import json
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Optional, Callable
-from pathlib import Path
 import pytz
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QToolBar, QPushButton, QLabel, QComboBox,
-    QDockWidget, QScrollArea, QCheckBox, QFrame,
+    QScrollArea, QFrame,
     QSplitter, QStatusBar, QMessageBox, QApplication,
     QColorDialog, QSizePolicy
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QFileSystemWatcher
-from PySide6.QtGui import QAction, QIcon, QCloseEvent, QFont, QFontMetrics, QKeySequence, QShortcut
+from PySide6.QtGui import QCloseEvent, QFont, QFontMetrics, QKeySequence, QShortcut
 
 from backend.config import Config
 from backend.timezone_utils import set_timezone
@@ -27,7 +26,7 @@ from backend import EventStore, EventView, CalendarSource
 # EventView is what get_events() returns (has all properties the GUI needs)
 EventData = EventView
 
-from .widgets.calendar_widget import CalendarWidget, ViewType, set_layout_config, set_localization_config, get_localization_config, set_colors_config, set_labels_config
+from .widgets.calendar_widget import CalendarWidget, ViewType, set_layout_config, set_localization_config, set_colors_config, set_labels_config
 from .event_dialog import EventDialog
 from backend.log import debug_log, Level
 
@@ -1120,6 +1119,3 @@ class MainWindow(QMainWindow):
         
         super().closeEvent(event)
 
-
-# Import timedelta for date calculations
-from datetime import timedelta
