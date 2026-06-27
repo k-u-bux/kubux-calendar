@@ -31,7 +31,7 @@ A simple desktop calendar application for Nextcloud (CalDAV) and ICS subscriptio
 - **Password Integration**: Secure password retrieval via external programs (e.g., `pass`)
 - **Keyboard Navigation**: Configurable keyboard shortcuts
 - **Event Caching**: Pre-fetches ±4 months past and ±8 months future for fast navigation
-- **Live Config Reload**: Automatically reloads when the config file changes (no restart needed)
+- **Live Config Reload**: Automatically reloads when the config file changes (no restart needed). Events and sync state are preserved — no re-fetch from server unless sources are added or removed.
 - **Persistent UI State**: Remembers window size, sidebar width, view, and scroll position
 - **No Dependencies**: Stand alone account management independent of desktop environment
 
@@ -126,6 +126,7 @@ new_event = "+"
 [Localization]
 day_names = "Mo Di Mi Do Fr Sa So"
 month_names = "Januar Februar März April Mai Juni Juli August September Oktober November Dezember"
+first_day_of_week = 0  # 0=Monday, 6=Sunday
 
 [Nextcloud.Primary]
 url = "https://nextcloud.example.com"
@@ -177,6 +178,7 @@ Customize day and month names for your language. If omitted, English defaults ar
 | Option | Default | Description |
 |--------|---------|-------------|
 | `day_names` | "Mon Tue Wed Thu Fri Sat Sun" | Space-separated abbreviated day names (Monday=first) |
+| `first_day_of_week` | 0 | First day of week: 0=Monday through 6=Sunday |
 | `month_names` | "January February ... December" | Space-separated full month names |
 
 Example for German:
@@ -184,6 +186,7 @@ Example for German:
 [Localization]
 day_names = "Mo Di Mi Do Fr Sa So"
 month_names = "Januar Februar März April Mai Juni Juli August September Oktober November Dezember"
+first_day_of_week = 0  # 0=Monday, 6=Sunday
 ```
 
 #### Nextcloud Accounts
