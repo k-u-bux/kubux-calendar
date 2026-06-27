@@ -8,6 +8,7 @@ import subprocess
 import os
 import tomllib
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Optional
 from .timezone_utils import _system_timezone_name
@@ -192,6 +193,8 @@ class LocalizationConfig:
     day_names: Optional[list[str]] = None  # Mon Tue Wed Thu Fri Sat Sun
     # Default to English full month names
     month_names: Optional[list[str]] = None  # January February ... December
+    # First day of week: 0=Monday, 6=Sunday (matches Python's weekday() convention)
+    first_day_of_week: int = 0
 
     def __post_init__(self):
         if self.day_names is None:
@@ -205,6 +208,24 @@ class LocalizationConfig:
     def get_day_name(self, weekday: int) -> str:
         """Get localized day name for weekday (0=Monday, 6=Sunday)."""
         return self.day_names[weekday] if 0 <= weekday < len(self.day_names) else ""
+
+    def get_day_name_for_column(self, col: int) -> str:
+        """Get localized day name for a display column index.
+
+        Column 0 is the first visible column of the week, which may
+        not be Monday when *first_day_of_week* is configured differently.
+        """
+        idx = (self.first_day_of_week + col) % 7
+        return self.day_names[idx] if 0 <= idx < len(self.day_names) else ""
+
+    def get_week_start(self, d: date) -> date:
+        """Return the first day (start) of the week containing *d*.
+
+        Respects the configured *first_day_of_week* (0=Monday … 6=Sunday).
+        """
+        from datetime import timedelta
+        offset = (d.weekday() - self.first_day_of_week) % 7
+        return d - timedelta(days=offset)
 
     def get_month_name(self, month: int) -> str:
         """Get localized month name (1=January, 12=December)."""
@@ -357,10 +378,13 @@ class Config:
         day_names = day_names_str.split() if day_names_str else None
         # Parse space-separated month names (if provided)
         month_names = month_names_str.split() if month_names_str else None
+        # First day of week: 0=Monday, 6=Sunday (default 0)
+        first_day_of_week = localization_data.get('first_day_of_week', 0)
 
         localization = LocalizationConfig(
             day_names=day_names,
-            month_names=month_names
+            month_names=month_names,
+            first_day_of_week=first_day_of_week
         )
 
         # Parse Colors section

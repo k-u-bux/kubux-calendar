@@ -943,7 +943,8 @@ class WeekView(QWidget):
         self._setup_ui()
     
     def _get_week_start(self, d: date) -> date:
-        return d - timedelta(days=d.weekday())
+        localization = get_localization_config()
+        return localization.get_week_start(d)
     
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -1088,7 +1089,7 @@ class WeekView(QWidget):
         font_name, font_size = get_interface_font()
         for i, label in enumerate(self._header_labels):
             d = self._start_date + timedelta(days=i)
-            day_name = localization.get_day_name(i)
+            day_name = localization.get_day_name_for_column(i)
             label.setText(f"{day_name} {d.day}")
             if d == date.today():
                 label.setStyleSheet(f"font-family: '{font_name}'; font-size: {font_size}pt; font-weight: bold; padding: 8px; background: {colors.today_highlight_background}; color: {colors.today_highlight_text};")
@@ -1299,7 +1300,7 @@ class MonthView(QWidget):
         localization = get_localization_config()
         colors = get_colors_config()
         for i in range(7):
-            day_name = localization.get_day_name(i)
+            day_name = localization.get_day_name_for_column(i)
             label = QLabel(day_name)
             label.setAlignment(Qt.AlignCenter)
             label.setStyleSheet(f"font-family: '{font_name}'; font-size: {font_size}pt; font-weight: bold; padding: 8px; background: {colors.header_background};")
@@ -1335,8 +1336,8 @@ class MonthView(QWidget):
     
     def _update_grid(self):
         first_day = date(self._year, self._month, 1)
-        start_offset = first_day.weekday()
-        grid_start = first_day - timedelta(days=start_offset)
+        localization = get_localization_config()
+        grid_start = localization.get_week_start(first_day)
         
         for i, cell in enumerate(self._cells):
             cell_date = grid_start + timedelta(days=i)
@@ -2022,8 +2023,9 @@ class CalendarWidget(QWidget):
         if self._current_view == ViewType.DAY:
             return datetime.combine(self._current_date, dt_time.min)
         elif self._current_view == ViewType.WEEK:
-            # Start of week (Monday)
-            week_start = self._current_date - timedelta(days=self._current_date.weekday())
+            # Start of week (respects first_day_of_week config)
+            localization = get_localization_config()
+            week_start = localization.get_week_start(self._current_date)
             return datetime.combine(week_start, dt_time.min)
         elif self._current_view == ViewType.MONTH:
             # Start of month

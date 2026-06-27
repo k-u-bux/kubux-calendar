@@ -742,7 +742,14 @@ class MainWindow(QMainWindow):
             # Single date: yyyy/mm/dd
             text = current_date.strftime("%Y/%m/%d")
         elif view_type == ViewType.WEEK:
-            week_start = current_date - timedelta(days=current_date.weekday())
+            from backend.config import LocalizationConfig
+            localization = LocalizationConfig()
+            # Use the config's localization if available from event_store
+            try:
+                localization = self.event_store.config.localization
+            except AttributeError:
+                pass
+            week_start = localization.get_week_start(current_date)
             week_end = week_start + timedelta(days=6)
             if week_start.year == week_end.year and week_start.month == week_end.month:
                 # Same month: yyyy/mm/dd-dd
