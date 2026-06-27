@@ -33,6 +33,7 @@ A simple desktop calendar application for Nextcloud (CalDAV) and ICS subscriptio
 - **Event Caching**: Pre-fetches ±4 months past and ±8 months future for fast navigation
 - **Live Config Reload**: Automatically reloads when the config file changes (no restart needed)
 - **Persistent UI State**: Remembers window size, sidebar width, view, and scroll position
+- **No Dependencies**: Stand alone account management independent of desktop environment
 
 ## Sync Status Transparency
 
