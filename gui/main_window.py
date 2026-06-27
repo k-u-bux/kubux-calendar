@@ -263,6 +263,8 @@ class MainWindow(QMainWindow):
         Sets module-level config singletons, rebuilds the UI, (re)creates the
         event store, loads persisted state, and starts data loading.
         """
+        is_reload = hasattr(self, 'event_store') and self.event_store is not None
+
         self.config = config
         self._state_file = config.state_file
 
@@ -277,8 +279,13 @@ class MainWindow(QMainWindow):
         QApplication.instance().setFont(text_font)
         self._interface_font = QFont(config.layout.interface_font, config.layout.interface_font_size)
 
-        # (Re)create event store with new config
-        self.event_store = EventStore(config)
+        # (Re)create event store with new config.
+        # On reload: clone existing store to preserve events + sync state (no re-fetch).
+        # On first init: create fresh.
+        if is_reload:
+            self.event_store = self.event_store.clone(config)
+        else:
+            self.event_store = EventStore(config)
         self.event_store.set_on_change_callback(self._on_data_changed)
         self.event_store.set_on_sync_status_callback(self._on_sync_status_changed)
 
@@ -301,8 +308,16 @@ class MainWindow(QMainWindow):
             )
             self._calendar_widget.set_date(captured_scroll['date'])
 
-        self._initializing = True
-        QTimer.singleShot(0, self._initialize_data)
+        # On reload the EventIndex already has events — skip network init.
+        # On first init, start the full two-phase load.
+        if is_reload:
+            self._initializing = False
+            self._sidebar.refresh()
+            self._sidebar.update_tooltips()
+            self._update_display_from_cache()
+        else:
+            self._initializing = True
+            QTimer.singleShot(0, self._initialize_data)
 
         # Start / restart auto-refresh timer
         self._auto_refresh_timer.start(60 * 1000)

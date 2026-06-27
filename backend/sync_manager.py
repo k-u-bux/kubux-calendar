@@ -75,6 +75,25 @@ class SyncManager:
         self._ics_urls: dict[str, str] = {}
 
     # ------------------------------------------------------------------
+    # State transfer (for EventStore.clone)
+    # ------------------------------------------------------------------
+
+    def copy_state_from(self, other: 'SyncManager') -> None:
+        """Transfer runtime sync state from *other* to this fresh SyncManager.
+
+        Used by :meth:`EventStore.clone` to preserve sync timing and live
+        CalDAV sessions so the cloned store does not trigger a full re-fetch.
+        """
+        self._last_sync_time = other._last_sync_time
+        self._valid_sync_window_start = other._valid_sync_window_start
+        self._valid_sync_window_end = other._valid_sync_window_end
+        self._source_last_attempt = dict(other._source_last_attempt)
+        self._source_last_success = dict(other._source_last_success)
+        self._sessions = dict(other._sessions)       # share live connections
+        self._calendars = dict(other._calendars)      # share calendar metadata
+        self._ics_urls = dict(other._ics_urls)
+
+    # ------------------------------------------------------------------
     # Public properties
     # ------------------------------------------------------------------
 

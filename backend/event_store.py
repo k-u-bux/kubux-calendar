@@ -697,6 +697,61 @@ class EventStore:
         sm = self._ensure_sync_manager()
         return sm.is_source_outdated(source_id)
 
+    # ------------------------------------------------------------------
+    # Config reload support
+    # ------------------------------------------------------------------
+
+    def clone(self, new_config: Config) -> 'EventStore':
+        """Return a new EventStore with *new_config* but the same runtime state.
+
+        Copies the in-memory event index, sources, visibility/color state,
+        sync timing, and live CalDAV sessions from *self*.  The original
+        EventStore is not touched — callers perform an atomic pointer swap
+        (``self.event_store = self.event_store.clone(new_config)``).
+
+        Callbacks are **not** copied — the caller must re-register them.
+        """
+        import copy as _copy
+
+        new = EventStore.__new__(EventStore)
+        new.config = new_config
+        new._config_tz = pytz.timezone(new_config.timezone)
+        new._state_file = new_config.state_file
+
+        # Fresh filesystem layer (same disk paths — reads the same cache)
+        new._fs = EventFS(config_tz=new._config_tz)
+
+        # Copy in-memory data
+        new._index = self._index.copy()
+        new._sources = _copy.copy(self._sources)  # CalendarSource objects are mutable — shallow copy
+        new._visibility = dict(self._visibility)
+        new._user_colors = dict(self._user_colors)
+        new._auto_colors = dict(self._auto_colors)
+
+        # CalDAV runtime state — share live sessions
+        new._accounts = list(self._accounts)
+        new._caldav_calendars = dict(self._caldav_calendars)
+        new._sessions = dict(self._sessions)
+
+        # ICS URLs from new config
+        new._ics_urls = {f"ics:{sub.name}": sub.url for sub in new_config.ics_subscriptions}
+
+        # Callbacks — caller must re-register
+        new._on_change_callback = None
+        new._on_sync_status_callback = None
+
+        # SyncManager — create fresh, transfer timing from old
+        new._sync_manager = SyncManager(
+            fs=new._fs,
+            index=new._index,
+            sources=new._sources,
+            config=new_config,
+        )
+        if self._sync_manager is not None:
+            new._sync_manager.copy_state_from(self._sync_manager)
+
+        return new
+
     def get_cached_event_count(self) -> int:
         return len(self._index)
 

@@ -53,6 +53,14 @@ class EventIndex:
         self._handles.clear()
         self._recurring.clear()
 
+    def copy(self) -> 'EventIndex':
+        """Return a new EventIndex containing the same events (shallow)."""
+        new = EventIndex()
+        for event in self._handles:
+            ev = self._handles[event].data
+            new.add(ev)
+        return new
+
     # === Queries ============================================================
 
     def query_range(self, start: datetime, end: datetime) -> list[ImmutableEvent]:
