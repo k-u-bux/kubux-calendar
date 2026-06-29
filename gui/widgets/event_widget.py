@@ -49,7 +49,7 @@ def get_text_font() -> QFont:
 
 
 # Import timezone utilities from shared module
-from backend.timezone_utils import to_local_datetime
+from library.timezone_utils import to_local_datetime
 
 
 def get_contrasting_text_color(bg_color: str) -> str:

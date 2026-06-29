@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Callable, Any, Dict, Optional
 from PySide6.QtCore import QObject, Signal, Qt, QTimer, QEventLoop
 
-from .log import debug_log, Level
+from library.log import debug_log, Level
 
 # --- Private Implementation ---
 

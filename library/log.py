@@ -3,7 +3,7 @@ Minimal log-level filtered logging for Kubux Calendar.
 
 Usage::
 
-    from backend.log import debug_log, Level
+    from library.log import debug_log, Level
 
     debug_log(Level.DEBUG, "connecting to server ...")
     debug_log(Level.WARN, "retrying ...")

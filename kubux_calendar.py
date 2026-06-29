@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
 
 from backend.config import Config
-from backend.log import set_level, Level
+from library.log import set_level, Level
 from gui.main_window import MainWindow
 
 

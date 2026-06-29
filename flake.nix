@@ -49,6 +49,7 @@
             cp $src/kubux_calendar.py $out/lib/kubux-calendar/
             cp -r $src/backend $out/lib/kubux-calendar/
             cp -r $src/gui $out/lib/kubux-calendar/
+            cp -r $src/library $out/lib/kubux-calendar/
             
             # Use makeWrapper to create a final executable 'kubux-calendar' that calls 
             # the python interpreter from the build environment and sets PYTHONPATH.

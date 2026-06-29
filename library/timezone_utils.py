@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, date
 import time as _time
 import pytz
 from typing import Optional, Union
-from .log import debug_log, Level
+from library.log import debug_log, Level
 
 
 def _system_timezone_name() -> str:

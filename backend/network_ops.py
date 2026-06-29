@@ -18,8 +18,8 @@ from caldav.elements import ical as caldav_ical
 from icalendar import Calendar as ICalCalendar
 import uuid as _uuid
 
-from .log import debug_log, Level
-from .timezone_utils import to_utc
+from library.log import debug_log, Level
+from library.timezone_utils import to_utc
 
 
 # ==================== Data Types ====================

@@ -23,8 +23,8 @@ from backend import EventStore, EventView, RecurrenceRule
 
 # EventView is what get_events() and create_event() return
 EventData = EventView
-from backend.timezone_utils import ensure_tz
-from backend.log import debug_log, Level
+from library.timezone_utils import ensure_tz
+from library.log import debug_log, Level
 
 
 # Common timezones for the selector.  Sorted by offset for convenience.
@@ -512,7 +512,7 @@ class EventDialog(QWidget):
             try:
                 local_tz = pytz.timezone(self.event_store.config.timezone)
             except Exception:
-                from backend.timezone_utils import get_local_timezone
+                from library.timezone_utils import get_local_timezone
                 local_tz = get_local_timezone()
             
             local_tz_str = str(local_tz)

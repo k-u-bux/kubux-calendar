@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Optional
-from .timezone_utils import _system_timezone_name
+from library.timezone_utils import _system_timezone_name
 
 
 @dataclass

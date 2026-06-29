@@ -14,8 +14,8 @@ from typing import Optional
 import pytz
 from icalendar import Calendar as ICalCalendar, Event as ICalEvent
 import uuid as _uuid
-from .log import debug_log, Level
-from .timezone_utils import ensure_tz
+from library.log import debug_log, Level
+from library.timezone_utils import ensure_tz
 
 
 # Shared sync window constants (used by EventStore and SyncManager).

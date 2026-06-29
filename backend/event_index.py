@@ -11,7 +11,7 @@ from typing import Optional
 
 from .interval_tree import IntervalTree, IntervalHandle
 from .event import ImmutableEvent
-from .timezone_utils import to_utc
+from library.timezone_utils import to_utc
 
 
 class EventIndex:

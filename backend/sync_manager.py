@@ -15,7 +15,7 @@ from typing import Optional, Callable
 
 import pytz
 
-from .color_utils import get_unused_color
+from library.color_utils import get_unused_color
 from .event import ImmutableEvent, CalendarSource, SYNC_WINDOW_PAST_DAYS, SYNC_WINDOW_FUTURE_DAYS
 from .event_fs import EventFS, SourceMeta, PendingOp
 from .event_index import EventIndex
@@ -25,8 +25,8 @@ from .network_ops import (
     caldav_save_event, caldav_delete_event, caldav_add_exdate,
     ics_fetch, ics_parse_events,
 )
-from .task_dispatch import dispatch_task
-from .log import debug_log, Level
+from library.task_dispatch import dispatch_task
+from library.log import debug_log, Level
 
 
 class SyncManager:

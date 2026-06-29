@@ -20,7 +20,7 @@ from PySide6.QtCore import Qt, QTimer, Signal, QFileSystemWatcher
 from PySide6.QtGui import QCloseEvent, QFont, QFontMetrics, QKeySequence, QShortcut
 
 from backend.config import Config
-from backend.timezone_utils import set_timezone
+from library.timezone_utils import set_timezone
 from backend import EventStore, EventView, CalendarSource
 
 # EventView is what get_events() returns (has all properties the GUI needs)
@@ -28,7 +28,7 @@ EventData = EventView
 
 from .widgets.calendar_widget import CalendarWidget, ViewType, set_layout_config, set_localization_config, set_colors_config, set_labels_config
 from .event_dialog import EventDialog
-from backend.log import debug_log, Level
+from library.log import debug_log, Level
 
 
 class ClickableColorBox(QFrame):
@@ -1011,7 +1011,7 @@ class MainWindow(QMainWindow):
         import sys
         
         # Skip if times haven't actually changed
-        from backend.timezone_utils import to_local_datetime
+        from library.timezone_utils import to_local_datetime
         old_start = to_local_datetime(event.start)
         old_end = to_local_datetime(event.end)
         
@@ -1042,7 +1042,7 @@ class MainWindow(QMainWindow):
                 return
         
         # Convert local times to UTC for storage (server expects UTC)
-        from backend.timezone_utils import local_naive_to_utc
+        from library.timezone_utils import local_naive_to_utc
         
         new_start_utc = local_naive_to_utc(new_start)
         new_end_utc = local_naive_to_utc(new_end)
@@ -1136,7 +1136,7 @@ class MainWindow(QMainWindow):
         self._save_state()
         
         # v2 uses task_dispatch — nothing to shut down explicitly
-        from backend.task_dispatch import shutdown_tasks
+        from library.task_dispatch import shutdown_tasks
         shutdown_tasks()
         
         super().closeEvent(event)

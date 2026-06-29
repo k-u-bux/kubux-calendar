@@ -25,10 +25,10 @@ from .sync_manager import SyncManager
 from .network_ops import (
     caldav_connect, caldav_list_calendars, DAVSession, CalendarInfo,
 )
-from .task_dispatch import dispatch_task
-from .timezone_utils import ensure_tz
-from .log import debug_log, Level
-from .color_utils import get_unused_color
+from library.task_dispatch import dispatch_task
+from library.timezone_utils import ensure_tz
+from library.log import debug_log, Level
+from library.color_utils import get_unused_color
 
 
 class EventStore:
