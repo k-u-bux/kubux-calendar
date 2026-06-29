@@ -21,6 +21,7 @@
           pyPkgs.pytz                   # Timezone handling
           pyPkgs.python-dateutil        # Date utilities
           pyPkgs.recurring-ical-events  # Recurring event expansion (RRULE/RDATE/EXDATE)
+          pyPkgs.pytest                 # Test framework
         ]);
 
       in {
