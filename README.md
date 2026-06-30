@@ -281,17 +281,61 @@ kubux-calendar/
 │   ├── event_store.py     # Unified facade over FS + index + sync
 │   ├── interval_tree.py   # AVL-based interval tree
 │   ├── network_ops.py     # CalDAV and ICS network operations
-│   ├── sync_manager.py    # Background sync orchestration
+│   └── sync_manager.py    # Background sync orchestration
+├── gui/
+│   ├── main_window.py     # Main application window
+│   ├── event_dialog.py    # Event create/edit dialog
+│   └── widgets/
+│       ├── calendar_widget.py # Day/Week/Month/List views
+│       └── event_widget.py    # Event display widget
+├── library/
+│   ├── color_utils.py     # Color generation utilities
+│   ├── log.py             # Level-filtered logging
 │   ├── task_dispatch.py   # Thread-pool task dispatcher
-│   ├── timezone_utils.py  # Timezone conversion utilities
-│   └── log.py             # Level-filtered logging
-└── gui/
-    ├── main_window.py     # Main application window
-    ├── event_dialog.py    # Event create/edit dialog
-    └── widgets/
-        ├── calendar_widget.py # Day/Week/Month/List views
-        └── event_widget.py    # Event display widget
+│   └── timezone_utils.py  # Timezone conversion utilities
+└── tests/
+    ├── test_interval_tree.py   # AVL tree insert/delete/query/integrity
+    ├── test_event_parsing.py   # iCalendar parsing, ImmutableEvent, EventView
+    ├── test_color_utils.py     # Color generation
+    ├── test_timezone_utils.py  # Timezone conversion
+    ├── test_log.py             # Log level filtering
+    ├── test_event_fs.py        # Filesystem cache (save/load/pending)
+    ├── test_event_index.py     # In-memory index queries
+    ├── test_config.py          # TOML config parsing
+    ├── test_task_dispatch.py   # Background task execution
+    ├── test_network_ops.py     # ICS parsing, HTTP fetch (mocked)
+    ├── test_sync_manager.py    # Sync orchestration logic
+    ├── test_event_store.py     # CRUD, visibility, state persistence
+    └── test_gui_logic.py       # Color math, event portions, overlap detection
 ```
+
+## Testing
+
+Run the test suite with pytest (requires the Nix development shell):
+
+```bash
+nix develop --command python -m pytest tests/ -v
+```
+
+197 tests across 13 test files:
+
+| File | Tests | What it covers |
+|---|---|---|
+| `test_interval_tree.py` | 16 | AVL tree insert/delete, all 4 query types, integrity verification |
+| `test_event_parsing.py` | 22 | iCalendar parsing, ImmutableEvent, EventView, _rebuild_ical |
+| `test_color_utils.py` | 6 | Color-to-hue conversion, unused color selection |
+| `test_timezone_utils.py` | 11 | Timezone-aware conversion, naive→aware, UTC→local |
+| `test_log.py` | 5 | Log level filtering, stderr output |
+| `test_event_fs.py` | 15 | Filesystem cache CRUD, source metadata, pending ops |
+| `test_event_index.py` | 12 | In-memory index add/remove/query, recurring inclusion |
+| `test_config.py` | 17 | TOML parsing, all sections, both config formats |
+| `test_task_dispatch.py` | 12 | Background task execution, wait/cancel, thunk/tie |
+| `test_network_ops.py` | 9 | ICS event parsing, HTTP fetch with mocks |
+| `test_sync_manager.py` | 21 | Refresh intervals, outdated detection, index rebuild, callbacks |
+| `test_event_store.py` | 24 | CRUD operations, visibility/color, state persistence, clone |
+| `test_gui_logic.py` | 27 | Color math, event portion splitting, overlap detection, pixel→time |
+
+All tests write to temporary directories — no data is written to the real cache at `~/.local/state/kubux-calendar/`.
 
 ## Data Storage
 
