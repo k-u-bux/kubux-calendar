@@ -184,12 +184,12 @@ def wait_for_tasks(timeout_ms: Optional[int] = None) -> bool:
             loop.quit()
             
     check_timer.timeout.connect(_check)
-    loop.finished.connect(check_timer.deleteLater)
     check_timer.start(50)
     if timeout_ms:
         QTimer.singleShot(timeout_ms, loop.quit)
     loop.exec()
     check_timer.stop()
+    check_timer.deleteLater()
 
     return not tasks_are_pending()
 
