@@ -70,6 +70,11 @@ Kubux Calendar eliminates this uncertainty. The application is designed on the p
 
 The application features a clean, modern interface with a sidebar for calendar selection and a main area for event display.
 
+![Kubux Calendar screenshot](screenshot/kubux-calendar-blurred.png)
+
+*(Calendar names and event details are blurred in this screenshot for privacy.)*
+
+
 ## Installation
 
 ### NixOS / Nix
