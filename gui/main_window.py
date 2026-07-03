@@ -809,12 +809,12 @@ class MainWindow(QMainWindow):
     
     def _on_view_changed(self, view_type: ViewType):
         """Handle view change from calendar widget.
-        
-        Note: Does NOT call _refresh_events() - events are already loaded
-        via CalendarWidget.set_view()'s lazy loading mechanism from cached_events.
-        Calling _refresh_events() here would cause double loading and race conditions.
+
+        Query the local index for the new view's date range — no network fetch.
         """
         self._update_date_label()
+        if not getattr(self, '_initializing', False):
+            self._update_display_from_cache()
     
     def _on_date_changed(self, d: date):
         """Handle date change."""

@@ -1979,24 +1979,12 @@ class CalendarWidget(QWidget):
         if view_type == ViewType.DAY:
             self._stack.setCurrentWidget(self._day_view)
             self._day_view.set_date(self._current_date)
-            # Lazy load: refresh if stale
-            if self._day_view_stale and self._cached_events:
-                self._day_view.set_events(self._cached_events)
-                self._day_view_stale = False
         elif view_type == ViewType.WEEK:
             self._stack.setCurrentWidget(self._week_view)
             self._week_view.set_date(self._current_date)
-            # Lazy load: refresh if stale
-            if self._week_view_stale and self._cached_events:
-                self._week_view.set_events(self._cached_events)
-                self._week_view_stale = False
         elif view_type == ViewType.MONTH:
             self._stack.setCurrentWidget(self._month_view)
             self._month_view.set_date(self._current_date)
-            # Lazy load: refresh if stale
-            if self._month_view_stale and self._cached_events:
-                self._month_view.set_events(self._cached_events)
-                self._month_view_stale = False
         else:  # LIST
             self._stack.setCurrentWidget(self._list_view)
             self._list_view.set_date(self._current_date)
@@ -2004,10 +1992,6 @@ class CalendarWidget(QWidget):
             # It will be applied after events are loaded in _refresh_display()
             if old_view != ViewType.LIST and ref_datetime:
                 self._list_view._pending_scroll_datetime = ref_datetime
-            # Lazy load: refresh if stale
-            if self._list_view_stale and self._cached_events:
-                self._list_view.set_events(self._cached_events)
-                self._list_view_stale = False
         
         self.view_changed.emit(view_type)
     
