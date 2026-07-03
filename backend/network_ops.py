@@ -126,31 +126,31 @@ def caldav_list_calendars(session: DAVSession) -> list[CalendarInfo]:
 # ==================== CalDAV — events ==================================
 
 def caldav_fetch_events(session: DAVSession, calendar: CalendarInfo,
-                        start: datetime, end: datetime) -> list[tuple[str, Optional[str]]]:
+                        start: datetime, end: datetime) -> Optional[list[tuple[str, Optional[str]]]]:
     """
     Fetch events from a CalDAV calendar.
 
-    Returns a list of ``(raw_vcalendar_text, href)`` tuples.
+    Returns a list of ``(raw_vcalendar_text, href)`` tuples on success
+    (may be empty if the calendar has no events), or *None* if the
+    network request itself failed.
+
     *href* is the CalDAV resource URL needed for PUT/DELETE.
     """
     cal = calendar._caldav_cal
     if cal is None:
-        return []
+        return None
 
     start = to_utc(start)
     end = to_utc(end)
 
     results: list[tuple[str, Optional[str]]] = []
-    try:
-        for ev in cal.date_search(start=start, end=end, expand=False):
-            try:
-                href = str(ev.url) if ev.url else None
-                results.append((ev.data, href))
-            except Exception as e:
-                debug_log(Level.DEBUG, f"caldav: skip unparseable event — {e}")
-                continue
-    except Exception as e:
-        debug_log(Level.ERROR, f"caldav: fetch_events failed — {e}")
+    for ev in cal.date_search(start=start, end=end, expand=False):
+        try:
+            href = str(ev.url) if ev.url else None
+            results.append((ev.data, href))
+        except Exception as e:
+            debug_log(Level.DEBUG, f"caldav: skip unparseable event — {e}")
+            continue
     return results
 
 

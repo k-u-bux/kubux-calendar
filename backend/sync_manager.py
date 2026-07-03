@@ -263,6 +263,9 @@ class SyncManager:
                     debug_log(Level.DEBUG, f"sync: fetching events for {source_id} in window {sync_start}..{sync_end}...")
                     raw_events = caldav_fetch_events(session, cal_info,
                                                      sync_start, sync_end)
+                    if raw_events is None:
+                        debug_log(Level.DEBUG, f"sync: fetch failed for {source_id} — keeping cached events")
+                        continue
                     debug_log(Level.DEBUG, f"sync: got {len(raw_events)} raw events from {source_id}")
                     events = []
                     for ical_text, href in raw_events:
@@ -525,6 +528,9 @@ class SyncManager:
 
         debug_log(Level.DEBUG, f"sync: fetching {source_id} in window {sync_start}..{sync_end}...")
         raw_events = caldav_fetch_events(session, cal_info, sync_start, sync_end)
+        if raw_events is None:
+            debug_log(Level.DEBUG, f"sync: fetch failed for {source_id} — keeping cached events")
+            return result
         debug_log(Level.DEBUG, f"sync: got {len(raw_events)} raw events")
         events = []
         for ical_text, href in raw_events:
