@@ -145,13 +145,22 @@ def caldav_fetch_events(calendar: CalendarInfo,
 
     try:
         results: list[tuple[str, Optional[str]]] = []
-        for ev in cal.date_search(start=start, end=end, expand=False):
+        for ev in cal.search(start=start, end=end, event=True, expand=False, split_expanded=False):
             try:
                 href = str(ev.url) if ev.url else None
                 results.append((ev.data, href))
             except Exception as e:
                 debug_log(Level.DEBUG, f"caldav: skip unparseable event — {e}")
                 continue
+        if not results:
+            # Verify calendar is reachable before trusting empty result.
+            # A transient server hiccup can cause search() to return []
+            # without throwing, which would wipe the local cache.
+            try:
+                cal.get_properties([])
+            except Exception:
+                debug_log(Level.WARN, f"caldav: fetch_events — empty result but PROPFIND failed, keeping cache")
+                return None
         return results
     except Exception as e:
         debug_log(Level.ERROR, f"caldav: fetch_events failed — {e}")
