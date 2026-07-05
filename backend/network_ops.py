@@ -125,7 +125,7 @@ def caldav_list_calendars(session: DAVSession) -> list[CalendarInfo]:
 
 # ==================== CalDAV — events ==================================
 
-def caldav_fetch_events(session: DAVSession, calendar: CalendarInfo,
+def caldav_fetch_events(calendar: CalendarInfo,
                         start: datetime, end: datetime) -> Optional[list[tuple[str, Optional[str]]]]:
     """
     Fetch events from a CalDAV calendar.
@@ -143,18 +143,22 @@ def caldav_fetch_events(session: DAVSession, calendar: CalendarInfo,
     start = to_utc(start)
     end = to_utc(end)
 
-    results: list[tuple[str, Optional[str]]] = []
-    for ev in cal.date_search(start=start, end=end, expand=False):
-        try:
-            href = str(ev.url) if ev.url else None
-            results.append((ev.data, href))
-        except Exception as e:
-            debug_log(Level.DEBUG, f"caldav: skip unparseable event — {e}")
-            continue
-    return results
+    try:
+        results: list[tuple[str, Optional[str]]] = []
+        for ev in cal.date_search(start=start, end=end, expand=False):
+            try:
+                href = str(ev.url) if ev.url else None
+                results.append((ev.data, href))
+            except Exception as e:
+                debug_log(Level.DEBUG, f"caldav: skip unparseable event — {e}")
+                continue
+        return results
+    except Exception as e:
+        debug_log(Level.ERROR, f"caldav: fetch_events failed — {e}")
+        return None
 
 
-def caldav_save_event(session: DAVSession, calendar: CalendarInfo,
+def caldav_save_event(calendar: CalendarInfo,
                       ical_text: str) -> bool:
     """Create or update an event on the server.  Returns success."""
     cal = calendar._caldav_cal
@@ -167,7 +171,7 @@ def caldav_save_event(session: DAVSession, calendar: CalendarInfo,
         debug_log(Level.ERROR, f"caldav: save_event failed — {e}")
         return False
 
-def caldav_delete_event(session: DAVSession, calendar: CalendarInfo,
+def caldav_delete_event(calendar: CalendarInfo,
                         uid: str) -> bool:
     """Delete an event by UID.  Returns success."""
     cal = calendar._caldav_cal
@@ -189,7 +193,7 @@ def caldav_delete_event(session: DAVSession, calendar: CalendarInfo,
     return False
 
 
-def caldav_add_exdate(session: DAVSession, calendar: CalendarInfo,
+def caldav_add_exdate(calendar: CalendarInfo,
                       uid: str, instance_start: datetime) -> bool:
     """Add an EXDATE to exclude a specific recurring instance.
 

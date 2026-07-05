@@ -261,7 +261,7 @@ class SyncManager:
 
                     # Fetch events
                     debug_log(Level.DEBUG, f"sync: fetching events for {source_id} in window {sync_start}..{sync_end}...")
-                    raw_events = caldav_fetch_events(session, cal_info,
+                    raw_events = caldav_fetch_events(cal_info,
                                                      sync_start, sync_end)
                     if raw_events is None:
                         debug_log(Level.DEBUG, f"sync: fetch failed for {source_id} — keeping cached events")
@@ -527,7 +527,7 @@ class SyncManager:
             sync_end = now + timedelta(days=SYNC_WINDOW_FUTURE_DAYS)
 
         debug_log(Level.DEBUG, f"sync: fetching {source_id} in window {sync_start}..{sync_end}...")
-        raw_events = caldav_fetch_events(session, cal_info, sync_start, sync_end)
+        raw_events = caldav_fetch_events(cal_info, sync_start, sync_end)
         if raw_events is None:
             debug_log(Level.DEBUG, f"sync: fetch failed for {source_id} — keeping cached events")
             return result
@@ -743,21 +743,21 @@ class SyncManager:
             ev = self._fs.load_event(source_id, op.uid)
             if ev is None:
                 return False
-            return caldav_save_event(session, cal_info, ev.ical_data)
+            return caldav_save_event(cal_info, ev.ical_data)
 
         elif op.operation == "update":
             ev = self._fs.load_event(source_id, op.uid)
             if ev is None:
                 return False
-            return caldav_save_event(session, cal_info, ev.ical_data)
+            return caldav_save_event(cal_info, ev.ical_data)
 
         elif op.operation == "delete":
-            return caldav_delete_event(session, cal_info, op.uid)
+            return caldav_delete_event(cal_info, op.uid)
 
         elif op.operation == "delete_instance":
             if op.instance_start is None:
                 return False
-            return caldav_add_exdate(session, cal_info, op.uid,
+            return caldav_add_exdate(cal_info, op.uid,
                                      op.instance_start)
 
         return False
