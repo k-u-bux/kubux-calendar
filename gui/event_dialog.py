@@ -256,8 +256,8 @@ class EventDialog(QWidget):
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.setMinimumSize(400, 500)
         
-        # State file for persistence (from event_store's config)
-        self._state_file = self.event_store.config.state_file
+        # Dedicated state file (separate from EventStore's state.json)
+        self._state_file = self.event_store.config.state_file.with_name("dialog_state.json")
         self._dialog_state = self._load_dialog_state()
         
         # Restore window geometry from JSON state
@@ -269,33 +269,21 @@ class EventDialog(QWidget):
             self.resize(500, 600)
     
     def _load_dialog_state(self) -> dict:
-        """Load dialog state from the JSON state file."""
+        """Load dialog state from the dedicated state file."""
         if self._state_file.exists():
             try:
                 with open(self._state_file, 'r') as f:
-                    state = json.load(f)
-                    return state.get('event_dialog', {})
+                    return json.load(f)
             except Exception:
                 pass
         return {}
     
     def _save_dialog_state(self):
-        """Save dialog state to the JSON state file."""
+        """Save dialog state to the dedicated state file."""
         try:
-            # Load existing state to preserve other data
-            existing_state = {}
-            if self._state_file.exists():
-                with open(self._state_file, 'r') as f:
-                    existing_state = json.load(f)
-            
-            # Update dialog state
-            existing_state['event_dialog'] = self._dialog_state
-            
-            # Ensure directory exists
             self._state_file.parent.mkdir(parents=True, exist_ok=True)
-            
             with open(self._state_file, 'w') as f:
-                json.dump(existing_state, f, indent=2)
+                json.dump(self._dialog_state, f, indent=2)
         except Exception as e:
             debug_log(Level.ERROR, f"Error saving dialog state: {e}")
     
