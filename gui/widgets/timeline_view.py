@@ -173,7 +173,14 @@ class TimelineViewBase(QWidget):
         vh = self._grid_content_height()
         if vh <= 0:
             return
-        page_step = self._mapper.scrollbar_height(vh)
+        raw = self._mapper.scrollbar_height(vh)  # r = 1000 * H/24
+        # Qt handle fraction = pageStep / (1000 + pageStep)
+        # We want fraction = H/24 = raw/1000
+        # pageStep = 1000 * raw / (1000 - raw)
+        if raw >= 1000:
+            page_step = 1000
+        else:
+            page_step = int(1000 * raw / (1000 - raw))
         page_step = min(page_step, 1000)
         self._scrollbar.setPageStep(page_step)
         needs_scrollbar = page_step < 1000

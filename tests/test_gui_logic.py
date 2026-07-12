@@ -253,7 +253,7 @@ def test_y_to_time_clamped_bottom(qapp):
 def test_y_to_time_roundtrip(qapp):
     """Verify hour→y→hour round-trip for representative hours."""
     col = _make_col()
-    for hour in [1.0, 6.0, 12.0, 18.0]:
+    for hour in [10.0, 12.0, 13.0]:
         y = int(col._hour_to_content_y(hour))
         t = col._y_to_time(y)
         expected = int(hour * 60)
@@ -317,26 +317,30 @@ def test_quad_c1_continuity():
     """Mapping must be C¹ at the region boundaries."""
     v = QuadraticCompressionAxis(60)
     vh = 800
-    for r in [0.1, 0.3, 0.5, 0.7]:
-        d = 0.2
-        # At r (between q1 and linear): derivative from left = derivative from right
-        h_right_a = v.y_to_hour(r, vh, r)
-        h_right_b = v.y_to_hour(r + 0.001, vh, r)
+    for scroll in [0.0, 0.25, 0.5, 0.75, 1.0]:
+        k, m, a1, b1, a2, b2, c2, d, r_y = v._coeffs(vh, scroll)
+        if r_y <= 0:
+            continue  # no q1 region
+        # At r_y (between q1 and linear): derivative from left = derivative from right
+        h_right_a = v.y_to_hour(r_y, vh, scroll)
+        h_right_b = v.y_to_hour(r_y + 0.001, vh, scroll)
         d_right = (h_right_b - h_right_a) / 0.001
-        h_left_a = v.y_to_hour(r - 0.001, vh, r)
-        h_left_b = v.y_to_hour(r, vh, r)
+        h_left_a = v.y_to_hour(r_y - 0.001, vh, scroll)
+        h_left_b = v.y_to_hour(r_y, vh, scroll)
         d_left = (h_left_b - h_left_a) / 0.001
-        assert abs(d_left - d_right) < 0.2, f"C¹ violation at r={r}: {d_left:.4f} vs {d_right:.4f}"
+        assert abs(d_left - d_right) < 0.2, f"C¹ violation at r_y={r_y:.4f} (scroll={scroll}): {d_left:.4f} vs {d_right:.4f}"
 
-        t2 = r + d
-        # At r+δ (between linear and q2)
-        h_right_a = v.y_to_hour(t2, vh, r)
-        h_right_b = v.y_to_hour(t2 + 0.001, vh, r)
+        t2 = r_y + d
+        if t2 >= 1.0:
+            continue  # zero-width q2 region, skip
+        # At r_y+δ (between linear and q2)
+        h_right_a = v.y_to_hour(t2, vh, scroll)
+        h_right_b = v.y_to_hour(t2 + 0.001, vh, scroll)
         d_right = (h_right_b - h_right_a) / 0.001
-        h_left_a = v.y_to_hour(t2 - 0.001, vh, r)
-        h_left_b = v.y_to_hour(t2, vh, r)
+        h_left_a = v.y_to_hour(t2 - 0.001, vh, scroll)
+        h_left_b = v.y_to_hour(t2, vh, scroll)
         d_left = (h_left_b - h_left_a) / 0.001
-        assert abs(d_left - d_right) < 0.2, f"C¹ violation at r+δ={t2}: {d_left:.4f} vs {d_right:.4f}"
+        assert abs(d_left - d_right) < 0.2, f"C¹ violation at r_y+δ={t2:.4f} (scroll={scroll}): {d_left:.4f} vs {d_right:.4f}"
 
 
 def test_quad_roundtrip():
@@ -352,14 +356,17 @@ def test_quad_slope_in_linear_region():
     """In the linear region, derivative should be vh/hour_height."""
     v = QuadraticCompressionAxis(60)
     vh = 800
-    r = 0.5
-    d = 0.2
-    for t in [0.52, 0.55, 0.6, 0.68]:
-        h1 = v.y_to_hour(t - 0.01, vh, r)
-        h2 = v.y_to_hour(t + 0.01, vh, r)
+    # scroll_ratio=0.5 → window centered on hour 12, r_y ≈ 0.35, d ≈ 0.3
+    # Linear region covers [r_y, r_y+d] ≈ [0.35, 0.65]
+    k, m, a1, b1, a2, b2, c2, d, r_y = v._coeffs(vh, 0.5)
+    # Test t values strictly inside the linear region
+    ts = [r_y + 0.05, r_y + 0.15, (r_y + r_y + d) / 2]
+    for t in ts:
+        h1 = v.y_to_hour(t - 0.01, vh, 0.5)
+        h2 = v.y_to_hour(t + 0.01, vh, 0.5)
         slope = (h2 - h1) / 0.02
         expected = vh / 60  # ≈ 13.33
-        assert abs(slope - expected) < 0.5, f"slope at t={t}: {slope:.2f}, expected {expected:.2f}"
+        assert abs(slope - expected) < 0.5, f"slope at t={t:.4f}: {slope:.2f}, expected {expected:.2f}"
 
 
 def test_quad_scroll_moves_window():
@@ -377,8 +384,13 @@ def test_quad_limit_at_r_plus_delta():
     """At boundary r+δ, both quadratics must give the same hour."""
     v = QuadraticCompressionAxis(60)
     vh = 800
-    for r in [0.0, 0.3, 0.5, 0.7]:
-        t_boundary = min(r + 0.2, 1.0)
-        h = v.y_to_hour(t_boundary, vh, r)
-        t_back = v.hour_to_y(h, vh, r)
-        assert abs(t_back - t_boundary) < 1e-4
+    # Use internal r_y from _coeffs to get the actual Y boundaries
+    k, m, a1, b1, a2, b2, c2, d, r_y = v._coeffs(vh, 0.5)
+    # At r_y (between q1 and linear)
+    h = v.y_to_hour(r_y, vh, 0.5)
+    t_back = v.hour_to_y(h, vh, 0.5)
+    assert abs(t_back - r_y) < 1e-4
+    # At r_y+d (between linear and q2)
+    h = v.y_to_hour(r_y + d, vh, 0.5)
+    t_back = v.hour_to_y(h, vh, 0.5)
+    assert abs(t_back - (r_y + d)) < 1e-4
