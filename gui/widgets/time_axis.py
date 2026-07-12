@@ -338,6 +338,5 @@ class QuadraticCompressionAxis(TimeAxisMapper):
             return a2 * t * t + b2 * t + c2
 
     def scrollbar_height(self, viewport_height: int) -> int:
-        """Page-step proportional to undistorted_hours / 24."""
         ratio = self._undistorted_hours * self._hh / viewport_height
         return max(1, min(1000, int(1000 * ratio)))
