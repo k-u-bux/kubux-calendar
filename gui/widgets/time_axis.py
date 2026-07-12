@@ -7,6 +7,7 @@ the normalised ratio [0.0, 1.0] into whatever offset semantics it needs.
 """
 
 from abc import ABC, abstractmethod
+import math
 
 
 class TimeAxisMapper(ABC):
@@ -103,27 +104,16 @@ class VariableTimeAxis(TimeAxisMapper):
         self._lens_width = max(0.0, lens_width)
         self._margin = margin
 
-    # ------------------------------------------------------------------
-    # Focus position
-    # ------------------------------------------------------------------
-
     def _focus_hour(self, scroll_ratio: float) -> float:
-        """Map scroll_ratio [0, 1] → focus hour."""
         rng = 24.0 - 2.0 * self._margin
         return self._margin + scroll_ratio * rng
 
-    # ------------------------------------------------------------------
-    # Magnification envelope
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _smoothstep(t: float) -> float:
-        """Hermite smoothstep: 1 at t=0, 0 at t=1, C²."""
         t = max(0.0, min(1.0, t))
         return 2.0 * t * t * t - 3.0 * t * t + 1.0
 
     def _magnification(self, hour: float, focus: float) -> float:
-        """Derivative of the warped mapping at *hour*."""
         w = self._lens_width
         if w <= 0.0 or self._stretch <= 1.0:
             return 1.0
@@ -132,53 +122,34 @@ class VariableTimeAxis(TimeAxisMapper):
             return 1.0
         return 1.0 + (self._stretch - 1.0) * self._smoothstep(d / w)
 
-    # ------------------------------------------------------------------
-    # Antiderivative helper  (signed)
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _smoothstep_integral(u: float, w: float) -> float:
-        """∫₀ᵘ smoothstep(|x|/w) dx   (closed form, signed)."""
         if w <= 0.0:
             return float(u)
         t = min(abs(u) / w, 1.0)
-        # ∫₀ᵗ (2x³ - 3x² + 1) dx  =  t⁴/2 - t³ + t
         val = w * t * (0.5 * t * t * t - t * t + 1.0)
         return val if u >= 0.0 else -val
 
-    # ------------------------------------------------------------------
-    # Warped distance  ∫ magnification
-    # ------------------------------------------------------------------
-
     def _warped(self, a: float, b: float, focus: float) -> float:
-        """∫ₐᵇ magnification(x) dx."""
         if b <= a:
             return 0.0
         w = self._lens_width
         if w <= 0.0 or self._stretch <= 1.0:
             return b - a
-
-        # Linear (flat) part
         flat = b - a
-
-        # Lens-affected interval  [focus−w, focus+w]  intersected with [a, b]
         la = max(a, focus - w)
         lb = min(b, focus + w)
         if lb <= la:
             return flat
-
-        # Signed smoothstep integrals (centred on focus)
         si_a = self._smoothstep_integral(la - focus, w)
         si_b = self._smoothstep_integral(lb - focus, w)
         extra = (self._stretch - 1.0) * (si_b - si_a)
         return flat + extra
 
     def _total_warped(self, focus: float) -> float:
-        """∫₀²⁴ magnification(x) dx  — always positive."""
         return 24.0 + (self._stretch - 1.0) * self._lens_correction(focus)
 
     def _lens_correction(self, focus: float) -> float:
-        """Extra warped area contributed by the lens (non-flat part)."""
         w = self._lens_width
         if w <= 0.0 or self._stretch <= 1.0:
             return 0.0
@@ -187,10 +158,6 @@ class VariableTimeAxis(TimeAxisMapper):
         if b <= a:
             return 0.0
         return self._smoothstep_integral(b - focus, w) - self._smoothstep_integral(a - focus, w)
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
 
     def hour_to_y(self, hour: float, viewport_height: int, scroll_ratio: float) -> float:
         focus = self._focus_hour(scroll_ratio)
@@ -205,9 +172,8 @@ class VariableTimeAxis(TimeAxisMapper):
         total = self._total_warped(focus)
         if total <= 0.0:
             return y_norm * 24.0
-
         target = y_norm * total
-        h = y_norm * 24.0  # initial linear guess
+        h = y_norm * 24.0
         for _ in range(6):
             cur = self._warped(0.0, h, focus)
             d = self._magnification(h, focus)
@@ -221,7 +187,6 @@ class VariableTimeAxis(TimeAxisMapper):
         return h
 
     def scrollbar_height(self, viewport_height: int) -> int:
-        """Page-step proportional to visible hours / focus range."""
         vh = max(1, viewport_height)
         focus_range = 24.0 - 2.0 * self._margin
         if focus_range <= 0.0:
@@ -229,3 +194,150 @@ class VariableTimeAxis(TimeAxisMapper):
         avg_mag = 1.0 + (self._stretch - 1.0) * min(self._lens_width / 12.0, 1.0)
         visible_hours = vh / max(1.0, self._hh * avg_mag)
         return max(1, min(1000, int(1000 * visible_hours / focus_range)))
+
+
+class QuadraticCompressionAxis(TimeAxisMapper):
+    """Piecewise quadratic compression with an undistorted linear window.
+
+    The viewport-normalized Y axis [0, 1] is split into three regions:
+
+        [0, r]         — quadratic (compressed)
+        [r, r + δ]     — linear  (undistorted)
+        [r + δ, 1]     — quadratic (compressed)
+
+    The scrollbar maps linearly to the *start hour* of the undistorted
+    window: scroll_ratio 0 → window at hours [0, H], scroll_ratio 1 →
+    window at hours [24−H, 24].  The scrollbar handle size is
+    proportional to H/24.
+
+    Parameters
+    ----------
+    hour_height : int
+        Pixels per hour in the undistorted window.
+    undistorted_hours : float
+        Width of the undistorted window in hours (default 4.0).
+    """
+
+    def __init__(self, hour_height: int, undistorted_hours: float = 4.0):
+        self._hh = hour_height
+        self._undistorted_hours = max(0.5, undistorted_hours)
+
+    def _delta(self, vh: int) -> float:
+        """δ = Y-span of the linear window for the given viewport height."""
+        raw = self._undistorted_hours * self._hh / max(1, vh)
+        return min(raw, 1.0)
+
+    def _scroll_to_r(self, scroll_ratio: float, vh: int) -> float:
+        """Convert scroll_ratio (hour-linear) → r (Y-position of window start).
+
+        scroll_ratio 0 → start_hour = 0 → r = 0
+        scroll_ratio 1 → start_hour = 24 − H → r = 1 − δ
+        """
+        k = vh / self._hh
+        d = self._delta(vh)
+        if (1.0 - d) <= 0:
+            return 0.0
+        # start_hour = k·r + m = r·(k + (24−k)/(1−d))
+        factor = k + (24.0 - k) / (1.0 - d)
+        max_start = 24.0 - self._undistorted_hours
+        start_hour = scroll_ratio * max_start
+        r = start_hour / factor if factor > 0 else 0.0
+        return max(0.0, min(1.0 - d, r))
+
+    def _coeffs(self, vh: int, scroll_ratio: float) -> tuple:
+        """
+        Compute all coefficients.
+
+        Returns (k, m, a1, b1, a2, b2, c2, d, r) where:
+          d = δ (Y-span of linear region)
+          r = Y-position of linear window start (from scroll_ratio)
+          k = slope in linear region (hours per unit Y) = vh / hh
+          m = intercept of linear region
+          q1(t) = a1·t² + b1·t          on [0, r]
+          l(t)  = k·t + m                on [r, r+d]
+          q2(t) = a2·t² + b2·t + c2     on [r+d, 1]
+        """
+        vh = max(1, vh)
+        k = vh / self._hh
+        d = self._delta(vh)
+        r = self._scroll_to_r(scroll_ratio, vh)
+
+        m = r * (24.0 - k) / (1.0 - d) if (1.0 - d) > 0 else 0.0
+
+        if r > 0:
+            a1 = -m / (r * r)
+            b1 = k + 2.0 * m / r
+        else:
+            a1 = 0.0
+            b1 = k
+
+        s = 1.0 - r - d  # width of q2 region
+        if s > 0:
+            a2 = (24.0 - k - m) / (s * s)
+            b2 = k - 2.0 * a2 * (r + d)
+            c2 = m + a2 * (r + d) * (r + d)
+        else:
+            a2 = 0.0
+            b2 = k
+            c2 = m
+
+        return (k, m, a1, b1, a2, b2, c2, d, r)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def hour_to_y(self, hour: float, viewport_height: int, scroll_ratio: float) -> float:
+        """Inverse of y_to_hour — solve h(t) = hour for t ∈ [0, 1]."""
+        vh = max(1, viewport_height)
+        k, m, a1, b1, a2, b2, c2, d, r = self._coeffs(vh, scroll_ratio)
+
+        hour = max(0.0, min(24.0, hour))
+
+        h_lin_start = k * r + m
+        h_lin_end = k * (r + d) + m
+
+        if hour <= h_lin_start:
+            if abs(a1) < 1e-12:
+                t = hour / b1 if abs(b1) > 1e-12 else 0.0
+            else:
+                disc = b1 * b1 + 4.0 * a1 * hour
+                if disc < 0:
+                    t = 0.0
+                else:
+                    t = (-b1 + math.sqrt(disc)) / (2.0 * a1)
+            return max(0.0, min(r, t))
+
+        elif hour >= h_lin_end:
+            if abs(a2) < 1e-12:
+                t = (hour - c2) / b2 if abs(b2) > 1e-12 else 1.0
+            else:
+                disc = b2 * b2 - 4.0 * a2 * (c2 - hour)
+                if disc < 0:
+                    t = 1.0
+                else:
+                    t = (-b2 + math.sqrt(disc)) / (2.0 * a2)
+            return max(r + d, min(1.0, t))
+
+        else:
+            t = (hour - m) / k if abs(k) > 1e-12 else r
+            return max(r, min(r + d, t))
+
+    def y_to_hour(self, y_norm: float, viewport_height: int, scroll_ratio: float) -> float:
+        """Forward mapping: normalized Y → hour."""
+        vh = max(1, viewport_height)
+        k, m, a1, b1, a2, b2, c2, d, r = self._coeffs(vh, scroll_ratio)
+
+        t = max(0.0, min(1.0, y_norm))
+
+        if t <= r:
+            return a1 * t * t + b1 * t
+        elif t <= r + d:
+            return k * t + m
+        else:
+            return a2 * t * t + b2 * t + c2
+
+    def scrollbar_height(self, viewport_height: int) -> int:
+        """Page-step proportional to undistorted_hours / 24."""
+        ratio = self._undistorted_hours / 24.0
+        return max(1, min(1000, int(1000 * ratio)))

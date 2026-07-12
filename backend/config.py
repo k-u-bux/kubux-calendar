@@ -69,6 +69,7 @@ class LayoutConfig:
     text_font_size: int = 12
     hour_height: int = 60  # Height of an hour slot in day/week view in pixels
     drag_snap_minutes: int = 5  # Snap interval when dragging events (minutes)
+    undistorted_hours: float = 4.0  # Hours of undistorted linear region
 
 
 @dataclass
@@ -358,7 +359,8 @@ class Config:
             text_font=layout_data.get('text_font', 'Sans'),
             text_font_size=layout_data.get('text_font_size', 12),
             hour_height=layout_data.get('hour_height', 60),
-            drag_snap_minutes=layout_data.get('drag_snap_minutes', 5)
+            drag_snap_minutes=layout_data.get('drag_snap_minutes', 5),
+            undistorted_hours=layout_data.get('undistorted_hours', 4.0),
         )
 
         # Parse Bindings section

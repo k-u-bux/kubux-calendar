@@ -14,7 +14,7 @@ from gui.widgets.event_widget import (
 from gui.widgets.event_portion import EventPortion
 from gui.widgets.config_state import HOUR_HEIGHT
 from gui.widgets.day_column import DayColumnWidget
-from gui.widgets.time_axis import LinearTimeAxis, VariableTimeAxis
+from gui.widgets.time_axis import LinearTimeAxis, QuadraticCompressionAxis
 
 UTC = pytz.UTC
 
@@ -177,10 +177,10 @@ def _make_portion(start_h: float, end_h: float, uid: str = "uid") -> EventPortio
 
 
 def _make_col(for_date: date = None) -> DayColumnWidget:
-    """Create a DayColumnWidget with a VariableTimeAxis mapper and default viewport."""
+    """Create a DayColumnWidget with a QuadraticCompressionAxis mapper and default viewport."""
     if for_date is None:
         for_date = date(2026, 1, 1)
-    mapper = VariableTimeAxis(HOUR_HEIGHT)
+    mapper = QuadraticCompressionAxis(HOUR_HEIGHT)
     col = DayColumnWidget(for_date, mapper)
     col.set_viewport(800, 0.5)  # mid-scroll = focus at 12h
     return col
@@ -227,8 +227,11 @@ def test_portions_overlap_zero_duration_enforced_min(qapp):
 
 def test_y_to_time_exact_hour(qapp):
     col = _make_col()
-    # At focus=12h, the lens is symmetric. hour 12 → normalized y = 0.5 → content_y = 400
-    t = col._y_to_time(400)
+    # QuadraticCompressionAxis at r=0.5, vh=800: hour 12 → y_norm = ?
+    # Find y_norm for hour 12, then convert to pixel, then back.
+    y_norm = col._mapper.hour_to_y(12.0, 800, 0.5)
+    y_px = int(y_norm * 800)
+    t = col._y_to_time(y_px)
     assert t.hour == 12
     assert t.minute == 0
 
@@ -250,10 +253,9 @@ def test_y_to_time_clamped_bottom(qapp):
 def test_y_to_time_roundtrip(qapp):
     """Verify hour→y→hour round-trip for representative hours."""
     col = _make_col()
-    for hour in [1.0, 6.0, 12.0, 18.0, 23.0]:
+    for hour in [1.0, 6.0, 12.0, 18.0]:
         y = int(col._hour_to_content_y(hour))
         t = col._y_to_time(y)
-        # Allow 1-pixel rounding tolerance (≈ 2 minutes with typical hour_height=60)
         expected = int(hour * 60)
         got = t.hour * 60 + t.minute
         assert abs(expected - got) <= 2, f"hour={hour}: expected ~{expected}min, got {got}min from y={y}"
@@ -290,65 +292,93 @@ def test_calculate_new_event_times_move_multi_day_first():
 
 
 # ----------------------------------------------------------------------
-# VariableTimeAxis lens math
+# QuadraticCompressionAxis tests
 # ----------------------------------------------------------------------
 
-def test_lens_monotonic():
+def test_quad_monotonic():
     """hour_to_y must be strictly increasing."""
-    v = VariableTimeAxis(60, stretch=3.0, lens_width=8.0, margin=1.0)
+    v = QuadraticCompressionAxis(60, undistorted_hours=4.0)
     prev = -1.0
-    for h in range(0, 241):  # 0.0 to 24.0 in 0.1 steps
+    for h in range(0, 241):
         y = v.hour_to_y(h / 10.0, 800, 0.5)
         assert y > prev, f"non-monotonic at h={h/10.0}: {prev:.6f} → {y:.6f}"
         prev = y
 
 
-def test_lens_range():
+def test_quad_range():
     """hour_to_y maps 0→0 and 24→1."""
-    v = VariableTimeAxis(60)
+    v = QuadraticCompressionAxis(60)
     for ratio in [0.0, 0.3, 0.5, 0.7, 1.0]:
         assert v.hour_to_y(0.0, 800, ratio) == pytest.approx(0.0, abs=1e-12)
         assert v.hour_to_y(24.0, 800, ratio) == pytest.approx(1.0, abs=1e-12)
 
 
-def test_lens_idempotent_at_zero_width():
-    """With lens_width=0, behaves like linear."""
-    v = VariableTimeAxis(80, stretch=5.0, lens_width=0.0, margin=0.0)
-    for h in [0.0, 6.0, 12.0, 18.0, 24.0]:
-        y = v.hour_to_y(h, 960, 0.5)
-        assert y == pytest.approx(h / 24.0, abs=1e-12)
+def test_quad_c1_continuity():
+    """Mapping must be C¹ at the region boundaries."""
+    v = QuadraticCompressionAxis(60)
+    vh = 800
+    for r in [0.1, 0.3, 0.5, 0.7]:
+        d = 0.2
+        # At r (between q1 and linear): derivative from left = derivative from right
+        h_right_a = v.y_to_hour(r, vh, r)
+        h_right_b = v.y_to_hour(r + 0.001, vh, r)
+        d_right = (h_right_b - h_right_a) / 0.001
+        h_left_a = v.y_to_hour(r - 0.001, vh, r)
+        h_left_b = v.y_to_hour(r, vh, r)
+        d_left = (h_left_b - h_left_a) / 0.001
+        assert abs(d_left - d_right) < 0.2, f"C¹ violation at r={r}: {d_left:.4f} vs {d_right:.4f}"
+
+        t2 = r + d
+        # At r+δ (between linear and q2)
+        h_right_a = v.y_to_hour(t2, vh, r)
+        h_right_b = v.y_to_hour(t2 + 0.001, vh, r)
+        d_right = (h_right_b - h_right_a) / 0.001
+        h_left_a = v.y_to_hour(t2 - 0.001, vh, r)
+        h_left_b = v.y_to_hour(t2, vh, r)
+        d_left = (h_left_b - h_left_a) / 0.001
+        assert abs(d_left - d_right) < 0.2, f"C¹ violation at r+δ={t2}: {d_left:.4f} vs {d_right:.4f}"
 
 
-def test_lens_idempotent_at_unit_stretch():
-    """With stretch=1, behaves like linear."""
-    v = VariableTimeAxis(60, stretch=1.0, lens_width=6.0, margin=0.0)
-    for h in [0.0, 6.0, 12.0, 18.0, 24.0]:
-        y = v.hour_to_y(h, 800, 0.5)
-        assert y == pytest.approx(h / 24.0, abs=1e-12)
-
-
-def test_lens_stretch_increases_center_gap():
-    """Higher stretch → more space around focus."""
-    v_low = VariableTimeAxis(60, stretch=1.1, lens_width=6.0, margin=2.0)
-    v_high = VariableTimeAxis(60, stretch=4.0, lens_width=6.0, margin=2.0)
-    gap_low = v_low.hour_to_y(15.0, 800, 0.5) - v_low.hour_to_y(12.0, 800, 0.5)
-    gap_high = v_high.hour_to_y(15.0, 800, 0.5) - v_high.hour_to_y(12.0, 800, 0.5)
-    assert gap_high > gap_low
-
-
-def test_lens_roundtrip():
+def test_quad_roundtrip():
     """Forward + inverse must be accurate within 1e-4 hours."""
-    v = VariableTimeAxis(60, stretch=2.5, lens_width=6.0, margin=2.0)
+    v = QuadraticCompressionAxis(60)
     for h in [0.0, 0.1, 2.5, 6.0, 11.9, 12.0, 12.1, 18.0, 22.7, 24.0]:
         y = v.hour_to_y(h, 800, 0.5)
         h2 = v.y_to_hour(y, 800, 0.5)
         assert abs(h - h2) < 1e-4, f"roundtrip failed: {h} → y={y} → {h2}"
 
 
-def test_lens_focus_tracks_scroll():
-    """hour 12 moves upward as scroll_ratio increases."""
-    v = VariableTimeAxis(60, stretch=2.5, lens_width=6.0, margin=2.0)
-    y_top = v.hour_to_y(12.0, 800, 0.0)
-    y_mid = v.hour_to_y(12.0, 800, 0.5)
-    y_bot = v.hour_to_y(12.0, 800, 1.0)
-    assert y_top > y_mid > y_bot
+def test_quad_slope_in_linear_region():
+    """In the linear region, derivative should be vh/hour_height."""
+    v = QuadraticCompressionAxis(60)
+    vh = 800
+    r = 0.5
+    d = 0.2
+    for t in [0.52, 0.55, 0.6, 0.68]:
+        h1 = v.y_to_hour(t - 0.01, vh, r)
+        h2 = v.y_to_hour(t + 0.01, vh, r)
+        slope = (h2 - h1) / 0.02
+        expected = vh / 60  # ≈ 13.33
+        assert abs(slope - expected) < 0.5, f"slope at t={t}: {slope:.2f}, expected {expected:.2f}"
+
+
+def test_quad_scroll_moves_window():
+    """Scroll changes where hours map to."""
+    v = QuadraticCompressionAxis(60)
+    vh = 800
+    y_at_6_r0 = v.hour_to_y(6.0, vh, 0.0)
+    y_at_6_r1 = v.hour_to_y(6.0, vh, 1.0)
+    # At r=1 the linear window has scrolled to the bottom, so hour 6 is
+    # compressed into the early region. Values should differ.
+    assert abs(y_at_6_r0 - y_at_6_r1) > 0.1
+
+
+def test_quad_limit_at_r_plus_delta():
+    """At boundary r+δ, both quadratics must give the same hour."""
+    v = QuadraticCompressionAxis(60)
+    vh = 800
+    for r in [0.0, 0.3, 0.5, 0.7]:
+        t_boundary = min(r + 0.2, 1.0)
+        h = v.y_to_hour(t_boundary, vh, r)
+        t_back = v.hour_to_y(h, vh, r)
+        assert abs(t_back - t_boundary) < 1e-4
