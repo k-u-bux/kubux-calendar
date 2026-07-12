@@ -28,6 +28,7 @@ from .config_state import (
 from .event_portion import EventPortion, is_all_day_event
 from .all_day_events import AllDayEventsRow
 from .day_column import DayColumnWidget
+from .time_axis import TimeAxisMapper, LinearTimeAxis
 from library.timezone_utils import to_local_datetime
 
 
@@ -59,6 +60,7 @@ class TimelineViewBase(QWidget):
         super().__init__(parent)
         self._events: list[EventData] = []
         self._day_columns: list[DayColumnWidget] = []
+        self._mapper = LinearTimeAxis(get_hour_height())
         self._setup_ui()
 
     # ------------------------------------------------------------------
@@ -170,25 +172,39 @@ class TimelineViewBase(QWidget):
         self._scroll = scroll
         main_layout.addWidget(scroll, 1)
 
-        # Sync all-day/header spacers with scrollbar visibility
+        # Sync all-day/header spacers with scrollbar visibility.
+        # Also push viewport dimensions to day columns on scroll/resize.
         def _on_scrollbar_range_changed(min_val, max_val):
             needs_scrollbar = max_val > 0
             self._all_day_scrollbar_spacer.setVisible(needs_scrollbar)
             self._on_scrollbar_visibility_changed(needs_scrollbar)
+            self._push_viewport_to_columns()
 
         scroll.verticalScrollBar().rangeChanged.connect(_on_scrollbar_range_changed)
+        scroll.verticalScrollBar().valueChanged.connect(lambda _: self._push_viewport_to_columns())
         QTimer.singleShot(0, lambda: _on_scrollbar_range_changed(
             scroll.verticalScrollBar().minimum(),
             scroll.verticalScrollBar().maximum()))
 
+    def _push_viewport_to_columns(self):
+        """Push current viewport height and scroll offset to all day columns."""
+        viewport = self._scroll.viewport()
+        if not viewport:
+            return
+        vh = viewport.height()
+        so = self._scroll.verticalScrollBar().value()
+        for col in self._day_columns:
+            col.set_viewport(vh, so)
+
     def _create_time_labels(self, time_col_width: int) -> QWidget:
         """Create the time labels column (shared by Day and Week views)."""
-        hour_height = get_hour_height()
         colors = get_colors_config()
+        hour_height = get_hour_height()
+        content_h = 24 * hour_height
 
         time_widget = QWidget()
         time_widget.setFixedWidth(time_col_width)
-        time_widget.setFixedHeight(24 * hour_height)
+        time_widget.setFixedHeight(content_h)
         time_widget.setStyleSheet(f" background: {colors.header_background};")
         time_layout = QVBoxLayout(time_widget)
         time_layout.setContentsMargins(0, 0, 0, 0)
@@ -223,6 +239,7 @@ class TimelineViewBase(QWidget):
     def set_scroll_position(self, position: int):
         """Set vertical scroll position."""
         self._scroll.verticalScrollBar().setValue(position)
+        self._push_viewport_to_columns()
 
     # ------------------------------------------------------------------
     # Event handling (shared template)

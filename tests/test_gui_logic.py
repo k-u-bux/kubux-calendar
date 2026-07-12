@@ -14,6 +14,7 @@ from gui.widgets.event_widget import (
 from gui.widgets.event_portion import EventPortion
 from gui.widgets.config_state import HOUR_HEIGHT
 from gui.widgets.day_column import DayColumnWidget
+from gui.widgets.time_axis import LinearTimeAxis
 
 UTC = pytz.UTC
 
@@ -181,38 +182,49 @@ def _make_portion(start_h: float, end_h: float, uid: str = "uid") -> EventPortio
     return EventPortion(ev, date(2026, 1, 1), start_h, end_h)
 
 
+def _make_col(for_date: date = None) -> DayColumnWidget:
+    """Create a DayColumnWidget with a LinearTimeAxis mapper and default viewport."""
+    if for_date is None:
+        for_date = date(2026, 1, 1)
+    mapper = LinearTimeAxis(HOUR_HEIGHT)
+    col = DayColumnWidget(for_date, mapper)
+    # Set a default viewport: 800px tall, no scroll
+    col.set_viewport(800, 0)
+    return col
+
+
 def test_portions_overlap_true(qapp):
     p1 = _make_portion(10.0, 12.0)
     p2 = _make_portion(11.0, 13.0)
-    col = DayColumnWidget(date(2026, 1, 1))
+    col = _make_col()
     assert col._portions_overlap(p1, p2) is True
 
 
 def test_portions_overlap_false_adjacent(qapp):
     p1 = _make_portion(10.0, 12.0)
     p2 = _make_portion(12.0, 14.0)
-    col = DayColumnWidget(date(2026, 1, 1))
+    col = _make_col()
     assert col._portions_overlap(p1, p2) is False
 
 
 def test_portions_overlap_false_separate(qapp):
     p1 = _make_portion(10.0, 12.0)
     p2 = _make_portion(14.0, 16.0)
-    col = DayColumnWidget(date(2026, 1, 1))
+    col = _make_col()
     assert col._portions_overlap(p1, p2) is False
 
 
 def test_portions_overlap_contained(qapp):
     p1 = _make_portion(10.0, 16.0)
     p2 = _make_portion(12.0, 14.0)
-    col = DayColumnWidget(date(2026, 1, 1))
+    col = _make_col()
     assert col._portions_overlap(p1, p2) is True
 
 
 def test_portions_overlap_zero_duration_enforced_min(qapp):
     p1 = _make_portion(10.0, 10.0)
     p2 = _make_portion(10.1, 12.0)
-    col = DayColumnWidget(date(2026, 1, 1))
+    col = _make_col()
     assert col._portions_overlap(p1, p2) is True
 
 
@@ -221,31 +233,31 @@ def test_portions_overlap_zero_duration_enforced_min(qapp):
 # ----------------------------------------------------------------------
 
 def test_y_to_time_exact_hour(qapp):
-    col = DayColumnWidget(date(2026, 1, 1))
+    col = _make_col()
     t = col._y_to_time(10 * HOUR_HEIGHT)
     assert t.hour == 10
     assert t.minute == 0
 
 
 def test_y_to_time_half_hour(qapp):
-    col = DayColumnWidget(date(2026, 1, 1))
+    col = _make_col()
     t = col._y_to_time(int(10.5 * HOUR_HEIGHT))
     assert t.hour == 10
     assert t.minute == 30
 
 
 def test_y_to_time_clamped_top(qapp):
-    col = DayColumnWidget(date(2026, 1, 1))
+    col = _make_col()
     t = col._y_to_time(-100)
     assert t.hour == 0
     assert t.minute == 0
 
 
 def test_y_to_time_clamped_bottom(qapp):
-    col = DayColumnWidget(date(2026, 1, 1))
+    col = _make_col()
     t = col._y_to_time(25 * HOUR_HEIGHT)
     assert t.hour == 23
-    assert t.minute == 59  # 24*60-1 = 1439, clamped to 23:59 with 5-min snap
+    assert t.minute == 59  # 24*60-1 = 1439, snapped to 23:59 with 5-min snap
 
 
 # ----------------------------------------------------------------------

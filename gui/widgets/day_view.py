@@ -31,7 +31,7 @@ class DayView(TimelineViewBase):
         return [self._date]
 
     def _create_day_columns(self) -> list[DayColumnWidget]:
-        return [DayColumnWidget(self._date)]
+        return [DayColumnWidget(self._date, self._mapper)]
 
     # No header for day view (uses default None from base)
 

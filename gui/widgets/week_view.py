@@ -37,7 +37,7 @@ class WeekView(TimelineViewBase):
         return [self._start_date + timedelta(days=i) for i in range(7)]
 
     def _create_day_columns(self) -> list[DayColumnWidget]:
-        return [DayColumnWidget(self._start_date + timedelta(days=i)) for i in range(7)]
+        return [DayColumnWidget(self._start_date + timedelta(days=i), self._mapper) for i in range(7)]
 
     def _create_header(self, time_col_width: int, scrollbar_width: int) -> QWidget:
         """Create the day-name header with scrollbar-aligned spacer."""

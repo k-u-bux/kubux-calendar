@@ -19,6 +19,7 @@ from .config_state import (
 )
 from .event_portion import EventPortion
 from .event_widget import EventWidget, DraggableEventWidget, DragMode
+from .time_axis import TimeAxisMapper
 from library.timezone_utils import to_local_datetime
 
 
@@ -36,9 +37,12 @@ class DayColumnWidget(QWidget):
     event_double_clicked = Signal(EventData)
     event_time_changed = Signal(EventData, datetime, datetime)  # event, new_start, new_end
 
-    def __init__(self, for_date: date, parent=None):
+    def __init__(self, for_date: date, time_mapper: TimeAxisMapper, parent=None):
         super().__init__(parent)
         self._date = for_date
+        self._mapper = time_mapper
+        self._viewport_height = 0
+        self._scroll_offset = 0
         self._portions: list[EventPortion] = []
         self._event_widgets: list[DraggableEventWidget] = []
         self._event_layout: list[tuple[EventPortion, int, int]] = []  # (portion, column, total_columns)
@@ -59,12 +63,33 @@ class DayColumnWidget(QWidget):
         # Enable mouse tracking for drag handling
         self.setMouseTracking(True)
 
+    def set_viewport(self, viewport_height: int, scroll_offset: int):
+        """Update viewport dimensions (called by parent on resize/scroll)."""
+        self._viewport_height = viewport_height
+        self._scroll_offset = scroll_offset
+
+    # ------------------------------------------------------------------
+    # Content-space helpers (bridge between viewport-normalized mapper
+    # and content-pixel coordinates used by QScrollArea)
+    # ------------------------------------------------------------------
+
+    def _hour_to_content_y(self, hour: float) -> float:
+        """hour → content pixel Y."""
+        y_norm = self._mapper.hour_to_y(hour, self._viewport_height, self._scroll_offset)
+        return y_norm * self._viewport_height + self._scroll_offset
+
+    def _content_y_to_hour(self, content_y: float) -> float:
+        """content pixel Y → hour."""
+        y_norm = (content_y - self._scroll_offset) / max(1, self._viewport_height)
+        return self._mapper.y_to_hour(y_norm, self._viewport_height, self._scroll_offset)
+
     def _setup_ui(self):
         colors = get_colors_config()
         hour_height = get_hour_height()
+        content_h = 24 * hour_height
         # Fixed height for 24 hours
-        self.setMinimumHeight(24 * hour_height)
-        self.setMaximumHeight(24 * hour_height)
+        self.setMinimumHeight(content_h)
+        self.setMaximumHeight(content_h)
         self.setStyleSheet(f"background-color: {colors.day_column_background}; border: 1px solid {colors.cell_border};")
         self.setCursor(Qt.PointingHandCursor)
 
@@ -73,7 +98,8 @@ class DayColumnWidget(QWidget):
             line = QFrame(self)
             line.setFrameStyle(QFrame.HLine | QFrame.Plain)
             line.setStyleSheet(f"background-color: {colors.hour_line};")
-            line.setGeometry(0, hour * hour_height, 2000, 1)
+            y = int(self._hour_to_content_y(float(hour)))
+            line.setGeometry(0, y, 2000, 1)
 
     def _setup_time_indicator(self):
         """Set up the current time indicator line."""
@@ -103,8 +129,7 @@ class DayColumnWidget(QWidget):
         self._time_indicator.show()
         now = datetime.now()
         current_hour = now.hour + now.minute / 60.0
-        hour_height = get_hour_height()
-        y_pos = int(current_hour * hour_height)
+        y_pos = int(self._hour_to_content_y(current_hour))
         self._time_indicator.setGeometry(0, y_pos, self.width(), 2)
         self._time_indicator.raise_()  # Keep on top
 
@@ -238,13 +263,12 @@ class DayColumnWidget(QWidget):
         self._time_indicator.raise_()
 
     def _y_to_time(self, y: int) -> dt_time:
-        """Convert Y position to time, snapped to configured interval."""
+        """Convert content-absolute Y position to time, snapped to configured interval."""
         layout_config = get_layout_config()
-        hour_height = get_hour_height()
         snap_minutes = layout_config.drag_snap_minutes
-        # Convert Y to hours (float)
-        hours = y / hour_height
-        hours = max(0, min(24, hours))
+
+        hours = self._content_y_to_hour(float(y))
+        hours = max(0.0, min(24.0, hours))
 
         # Convert to minutes
         total_minutes = int(hours * 60)
@@ -437,20 +461,20 @@ class DayColumnWidget(QWidget):
 
     def _position_event_widgets(self):
         """Position all event widgets based on their layout."""
-        hour_height = get_hour_height()
         available_width = self.width() - 4  # Leave 2px margin on each side
 
         for widget, (portion, col, total_cols) in zip(self._event_widgets, self._event_layout):
             # Use portion's visible hours for this specific day
             start_hour = portion.visible_start_hour
             end_hour = portion.visible_end_hour
-            start_hour = max(0, min(24, start_hour))
-            end_hour = max(0, min(24, end_hour))
+            start_hour = max(0.0, min(24.0, start_hour))
+            end_hour = max(0.0, min(24.0, end_hour))
             if end_hour <= start_hour:
                 end_hour = start_hour + 0.5
 
-            y = int(start_hour * hour_height)
-            height = max(int((end_hour - start_hour) * hour_height), 20)
+            y = int(self._hour_to_content_y(start_hour))
+            y_end = int(self._hour_to_content_y(end_hour))
+            height = max(y_end - y, 20)
 
             # Calculate width and x position based on column
             col_width = available_width // total_cols
@@ -475,18 +499,16 @@ class DayColumnWidget(QWidget):
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
-            hour_height = get_hour_height()
-            hour = int(event.position().y() / hour_height)
-            hour = max(0, min(23, hour))
-            dt = datetime.combine(self._date, dt_time(hour=hour))
+            y = event.position().y()
+            dt_hour = self._y_to_time(y)
+            dt = datetime.combine(self._date, dt_hour)
             self.slot_clicked.emit(dt)
         super().mousePressEvent(event)
 
     def mouseDoubleClickEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
-            hour_height = get_hour_height()
-            hour = int(event.position().y() / hour_height)
-            hour = max(0, min(23, hour))
-            dt = datetime.combine(self._date, dt_time(hour=hour))
+            y = event.position().y()
+            dt_hour = self._y_to_time(y)
+            dt = datetime.combine(self._date, dt_hour)
             self.slot_double_clicked.emit(dt)
         super().mouseDoubleClickEvent(event)
