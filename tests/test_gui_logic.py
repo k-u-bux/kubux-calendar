@@ -69,10 +69,9 @@ def test_lighten_color_positive():
 
 
 def test_lighten_color_negative_darkens_non_white():
-    """Negative factor darkens colors that aren't pure white."""
     result = lighten_color("#808080", -0.5)
     r = int(result[1:3], 16)
-    assert r < 0x80  # darker than original
+    assert r < 0x80
 
 
 def test_lighten_color_short_hex():
@@ -92,10 +91,6 @@ def test_lighten_color_clips():
 CET = pytz.timezone("Europe/Amsterdam")
 
 def _make_event_mock(start: datetime, end: datetime, all_day=False, read_only=False):
-    """Create a minimal EventData-like mock.
-    
-    Times should be timezone-aware to match real EventData behavior.
-    """
     ev = MagicMock()
     ev.start = start
     ev.end = end
@@ -106,7 +101,6 @@ def _make_event_mock(start: datetime, end: datetime, all_day=False, read_only=Fa
 
 
 def test_portion_single_day_event():
-    # UTC times — create_for_day calls to_local_datetime which converts to CET (+1 in Jan)
     start = datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC)
     end = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
     ev = _make_event_mock(start, end)
@@ -188,8 +182,8 @@ def _make_col(for_date: date = None) -> DayColumnWidget:
         for_date = date(2026, 1, 1)
     mapper = LinearTimeAxis(HOUR_HEIGHT)
     col = DayColumnWidget(for_date, mapper)
-    # Set a default viewport: 800px tall, no scroll
-    col.set_viewport(800, 0)
+    # Set a default viewport: 800px tall, ratio 0 (top)
+    col.set_viewport(800, 0.0)
     return col
 
 
@@ -257,7 +251,7 @@ def test_y_to_time_clamped_bottom(qapp):
     col = _make_col()
     t = col._y_to_time(25 * HOUR_HEIGHT)
     assert t.hour == 23
-    assert t.minute == 59  # 24*60-1 = 1439, snapped to 23:59 with 5-min snap
+    assert t.minute == 59
 
 
 # ----------------------------------------------------------------------
@@ -272,9 +266,6 @@ def test_calculate_new_event_times_move():
     portion = EventPortion(ev, date(2026, 1, 1), 10.0, 12.0)
     new_start, new_end = portion.calculate_new_event_times(14.0, 16.0)
 
-    # calculate_new_event_times uses to_local_datetime which converts UTC→CET (+1)
-    # The event starts at 10 UTC = 11 CET. Move portion from 10→14 = +4h delta.
-    # New start = 11 CET + 4h = 15 CET
     assert new_start.hour == 15
     assert new_end.hour == 17
     assert (new_end - new_start) == timedelta(hours=2)
@@ -288,9 +279,6 @@ def test_calculate_new_event_times_move_multi_day_first():
     portion = EventPortion(ev, date(2026, 1, 1), 22.0, 24.0)
     new_start, new_end = portion.calculate_new_event_times(20.0, 22.0)
 
-    # 22 UTC → 23 CET start. Move portion from 22→20 = -2h delta.
-    # New start = 23 CET - 2h = 21 CET (Jan 1)
-    # Duration 6h → new_end = 21+6 = 27 = 03:00 Jan 2
     assert new_start.hour == 21
     assert new_end.hour == 3  # next day
     assert new_end.day == 2

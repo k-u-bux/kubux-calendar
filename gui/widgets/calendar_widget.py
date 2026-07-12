@@ -110,12 +110,15 @@ class CalendarWidget(QWidget):
         if view_type == ViewType.DAY:
             self._stack.setCurrentWidget(self._day_view)
             self._day_view.set_date(self._current_date)
+            self._day_view.setFocus()
         elif view_type == ViewType.WEEK:
             self._stack.setCurrentWidget(self._week_view)
             self._week_view.set_date(self._current_date)
+            self._week_view.setFocus()
         elif view_type == ViewType.MONTH:
             self._stack.setCurrentWidget(self._month_view)
             self._month_view.set_date(self._current_date)
+            self._month_view.setFocus()
         else:  # LIST
             self._stack.setCurrentWidget(self._list_view)
             self._list_view.set_date(self._current_date)

@@ -1,10 +1,9 @@
-"""
-TimelineViewBase: shared base for Day and Week views.
+"""TimelineViewBase: shared base for Day and Week views.
 
 Extracts the common infrastructure that both views duplicate:
   - Time labels column (hour markers)
   - All-day events row with scrollbar-aligned spacers
-  - Standalone scrollbar (not a QScrollArea — the mapper handles all positioning)
+  - Standalone scrollbar (range [0, 1000]; mapper controls handle size)
   - get/set scroll position
   - refresh_events template (all-day vs timed separation)
 
@@ -18,7 +17,7 @@ from PySide6.QtWidgets import (
     QApplication, QStyle,
 )
 from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QFontMetrics
+from PySide6.QtGui import QFontMetrics, QWheelEvent, QKeyEvent
 
 from backend import EventView as EventData
 from .config_state import (
@@ -39,6 +38,9 @@ def _get_time_column_width() -> int:
     return metrics.horizontalAdvance("00:00") + 15
 
 
+_WHEEL_MULTIPLIER = 4
+
+
 class TimelineViewBase(QWidget):
     """
     Base class for timeline-based calendar views (Day, Week).
@@ -57,6 +59,7 @@ class TimelineViewBase(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setFocusPolicy(Qt.StrongFocus)
         self._events: list[EventData] = []
         self._day_columns: list[DayColumnWidget] = []
         self._mapper = LinearTimeAxis(get_hour_height())
@@ -129,6 +132,7 @@ class TimelineViewBase(QWidget):
 
         # Main area: time labels + day columns + scrollbar
         grid_row = QWidget()
+        self._grid_row = grid_row
         grid_layout = QHBoxLayout(grid_row)
         grid_layout.setContentsMargins(0, 0, 0, 0)
         grid_layout.setSpacing(0)
@@ -147,28 +151,31 @@ class TimelineViewBase(QWidget):
             col.event_time_changed.connect(self.event_time_changed.emit)
             grid_layout.addWidget(col, 1)
 
-        # Standalone scrollbar
+        # Standalone scrollbar — range always [0, 1000]
         self._scrollbar = QScrollBar(Qt.Vertical)
+        self._scrollbar.setRange(0, 1000)
+        self._scrollbar.setSingleStep(1)
         self._scrollbar.valueChanged.connect(self._on_scrollbar_value_changed)
         grid_layout.addWidget(self._scrollbar)
 
         main_layout.addWidget(grid_row, 1)
 
         # Initial viewport push + scrollbar range setup
-        QTimer.singleShot(0, self._sync_scrollbar_range)
+        QTimer.singleShot(0, self._sync_scrollbar_appearance)
 
     def _on_scrollbar_value_changed(self, value: int):
-        """Scrollbar moved — push new scroll offset to day columns."""
+        """Scrollbar moved — push new scroll ratio to day columns."""
         self._push_viewport_to_columns()
 
-    def _sync_scrollbar_range(self):
-        """Update scrollbar range from mapper and push viewport."""
+    def _sync_scrollbar_appearance(self):
+        """Update scrollbar handle size and push viewport."""
         vh = self._grid_content_height()
         if vh <= 0:
             return
-        max_val = self._mapper.scrollbar_maximum(vh)
-        needs_scrollbar = max_val > 0
-        self._scrollbar.setRange(0, max_val)
+        page_step = self._mapper.scrollbar_height(vh)
+        page_step = min(page_step, 1000)
+        self._scrollbar.setPageStep(page_step)
+        needs_scrollbar = page_step < 1000
         self._scrollbar.setVisible(needs_scrollbar)
         self._all_day_scrollbar_spacer.setVisible(needs_scrollbar)
         self._on_scrollbar_visibility_changed(needs_scrollbar)
@@ -176,18 +183,16 @@ class TimelineViewBase(QWidget):
 
     def _grid_content_height(self) -> int:
         """Height of the grid row (the area shared by time labels + day columns)."""
-        # The grid row fills available space; use the time labels widget height
-        # as reference (it's a fixed-width strip that stretches).
-        return self._time_labels_widget.height()
+        return self._grid_row.height()
 
     def _push_viewport_to_columns(self):
-        """Push current viewport height and scroll offset to all day columns."""
+        """Push current viewport height and scroll ratio to all day columns."""
         vh = self._grid_content_height()
         if vh <= 0:
             return
-        so = self._scrollbar.value()
+        ratio = self._scrollbar.value() / 1000.0
         for col in self._day_columns:
-            col.set_viewport(vh, so)
+            col.set_viewport(vh, ratio)
         self._position_time_labels()
 
     # ------------------------------------------------------------------
@@ -195,7 +200,6 @@ class TimelineViewBase(QWidget):
     # ------------------------------------------------------------------
 
     def _create_time_labels(self, time_col_width: int) -> QWidget:
-        """Create the time labels container."""
         colors = get_colors_config()
         hour_height = get_hour_height()
 
@@ -214,16 +218,13 @@ class TimelineViewBase(QWidget):
         return container
 
     def _position_time_labels(self):
-        """Reposition time labels according to current viewport + scroll."""
         vh = self._grid_content_height()
         if vh <= 0:
             return
-        so = self._scrollbar.value()
+        ratio = self._scrollbar.value() / 1000.0
 
         for hour, lbl in enumerate(self._time_label_widgets):
-            y = self._mapper.hour_to_y(float(hour), vh, so) * vh
-            # Labels are positioned centered on the hour line:
-            # hour line at y, label height = hour_height
+            y = self._mapper.hour_to_y(float(hour), vh, ratio) * vh
             hour_height = get_hour_height()
             label_y = y - hour_height / 2
             if -hour_height < label_y < vh:
@@ -292,9 +293,51 @@ class TimelineViewBase(QWidget):
         self._update_headers()
 
     # ------------------------------------------------------------------
-    # Resize — re-sync scrollbar range + push viewport
+    # Resize — re-sync scrollbar appearance + push viewport
     # ------------------------------------------------------------------
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._sync_scrollbar_range()
+        self._sync_scrollbar_appearance()
+
+    # ------------------------------------------------------------------
+    # Input events handled directly (standalone scrollbar has no focus)
+    # ------------------------------------------------------------------
+
+    def wheelEvent(self, event: QWheelEvent):
+        scaled_delta = event.angleDelta() * _WHEEL_MULTIPLIER
+        scaled_event = QWheelEvent(
+            event.position(), event.globalPosition(),
+            event.pixelDelta(), scaled_delta,
+            event.buttons(), event.modifiers(),
+            event.phase(), event.inverted(), event.source(),
+        )
+        self._scrollbar.wheelEvent(scaled_event)
+
+    def keyPressEvent(self, event: QKeyEvent):
+        """Navigation keys manipulate the scrollbar value directly.
+
+        Arrow keys = 30 min (1/48 of 24h range).
+        Page keys = ~1/8 viewport.
+        Home/End = bounds.
+        """
+        sb = self._scrollbar
+        page = sb.pageStep() or 50
+        small = 1000 // 48  # 30 minutes
+        page_small = max(page // 8, 1)
+
+        key = event.key()
+        if key == Qt.Key_Up:
+            sb.setValue(sb.value() - small)
+        elif key == Qt.Key_Down:
+            sb.setValue(sb.value() + small)
+        elif key == Qt.Key_PageUp:
+            sb.setValue(sb.value() - page_small)
+        elif key == Qt.Key_PageDown:
+            sb.setValue(sb.value() + page_small)
+        elif key == Qt.Key_Home:
+            sb.setValue(0)
+        elif key == Qt.Key_End:
+            sb.setValue(1000)
+        else:
+            super().keyPressEvent(event)

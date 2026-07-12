@@ -41,7 +41,7 @@ class DayColumnWidget(QWidget):
         self._date = for_date
         self._mapper = time_mapper
         self._viewport_height = 0
-        self._scroll_offset = 0
+        self._scroll_ratio = 0.0
         self._portions: list[EventPortion] = []
         self._event_widgets: list[DraggableEventWidget] = []
         self._event_layout: list[tuple[EventPortion, int, int]] = []
@@ -59,14 +59,14 @@ class DayColumnWidget(QWidget):
         self._setup_time_indicator()
         self.setMouseTracking(True)
 
-    def set_viewport(self, viewport_height: int, scroll_offset: int):
+    def set_viewport(self, viewport_height: int, scroll_ratio: float):
         """Update viewport dimensions (called by parent on resize/scroll).
 
         Resizes the widget and repositions all children to reflect
         the new scroll state.
         """
         self._viewport_height = viewport_height
-        self._scroll_offset = scroll_offset
+        self._scroll_ratio = scroll_ratio
         self.setMinimumHeight(viewport_height)
         self.setMaximumHeight(viewport_height)
         self._position_hour_lines()
@@ -78,12 +78,12 @@ class DayColumnWidget(QWidget):
     # ------------------------------------------------------------------
 
     def _hour_to_content_y(self, hour: float) -> float:
-        return self._mapper.hour_to_y(hour, self._viewport_height, self._scroll_offset) * self._viewport_height
+        return self._mapper.hour_to_y(hour, self._viewport_height, self._scroll_ratio) * self._viewport_height
 
     def _content_y_to_hour(self, content_y: float) -> float:
         vh = max(1, self._viewport_height)
         y_norm = content_y / vh
-        return self._mapper.y_to_hour(y_norm, self._viewport_height, self._scroll_offset)
+        return self._mapper.y_to_hour(y_norm, self._viewport_height, self._scroll_ratio)
 
     def _setup_ui(self):
         colors = get_colors_config()
@@ -403,6 +403,9 @@ class DayColumnWidget(QWidget):
             width = col_width - 1
 
             widget.setGeometry(x, y + 1, width, height - 2)
+
+        # Repaint background to clear artifacts from old widget positions
+        self.update()
 
     def clear_portions(self):
         for widget in self._event_widgets:
