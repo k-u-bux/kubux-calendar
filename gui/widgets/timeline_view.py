@@ -4,7 +4,7 @@ TimelineViewBase: shared base for Day and Week views.
 Extracts the common infrastructure that both views duplicate:
   - Time labels column (hour markers)
   - All-day events row with scrollbar-aligned spacers
-  - Scroll area with scrollbar-visibility sync
+  - Standalone scrollbar (not a QScrollArea — the mapper handles all positioning)
   - get/set scroll position
   - refresh_events template (all-day vs timed separation)
 
@@ -14,7 +14,7 @@ Subclasses provide day columns and optional header via hooks.
 from datetime import datetime, date, time as dt_time, timedelta
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QLabel,
+    QWidget, QVBoxLayout, QHBoxLayout, QScrollBar, QLabel,
     QApplication, QStyle,
 )
 from PySide6.QtCore import Qt, Signal, QTimer
@@ -36,7 +36,6 @@ def _get_time_column_width() -> int:
     """Calculate time column width based on actual font metrics."""
     sample_label = QLabel("00:00")
     metrics = QFontMetrics(sample_label.font())
-    # Measure the text plus padding for right margin
     return metrics.horizontalAdvance("00:00") + 15
 
 
@@ -44,17 +43,17 @@ class TimelineViewBase(QWidget):
     """
     Base class for timeline-based calendar views (Day, Week).
 
-    Provides the shared scroll area, time labels, all-day events row,
-    and event-refresh logic.  Subclasses implement hooks to supply
-    day columns, optional headers, and date arithmetic.
+    Provides a standalone scrollbar, time labels, all-day events row,
+    and event-refresh logic.  Day columns fill the viewport; the mapper
+    translates scrollbar position into visible-hour geometry.
     """
 
-    # Signals (re-emitted from child widgets)
+    # Signals
     slot_clicked = Signal(datetime)
     slot_double_clicked = Signal(datetime)
     event_clicked = Signal(EventData)
     event_double_clicked = Signal(EventData)
-    event_time_changed = Signal(EventData, datetime, datetime)  # For drag-and-drop
+    event_time_changed = Signal(EventData, datetime, datetime)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -68,33 +67,21 @@ class TimelineViewBase(QWidget):
     # ------------------------------------------------------------------
 
     def _get_num_days(self) -> int:
-        """Return the number of day columns in this view."""
         raise NotImplementedError
 
     def _get_day_dates(self) -> list[date]:
-        """Return the list of dates for each day column."""
         raise NotImplementedError
 
     def _create_day_columns(self) -> list[DayColumnWidget]:
-        """Create and return the list of day column widgets."""
         raise NotImplementedError
 
     def _create_header(self, time_col_width: int, scrollbar_width: int) -> QWidget | None:
-        """Create an optional header widget above the all-day row.
-
-        Returns None if the view has no header (default).
-        """
         return None
 
     def _on_scrollbar_visibility_changed(self, needs_scrollbar: bool) -> None:
-        """Hook called when the main scrollbar visibility changes.
-
-        Subclasses with a header can use this to show/hide header spacers.
-        """
         pass
 
     def _update_headers(self) -> None:
-        """Update header labels (e.g. day names).  Default: do nothing."""
         pass
 
     # ------------------------------------------------------------------
@@ -109,7 +96,7 @@ class TimelineViewBase(QWidget):
         time_col_width = _get_time_column_width()
         scrollbar_width = QApplication.style().pixelMetric(QStyle.PM_ScrollBarExtent)
 
-        # Optional header (subclasses may override)
+        # Optional header
         header = self._create_header(time_col_width, scrollbar_width)
         if header is not None:
             main_layout.addWidget(header)
@@ -120,22 +107,19 @@ class TimelineViewBase(QWidget):
         all_day_layout.setContentsMargins(0, 0, 0, 0)
         all_day_layout.setSpacing(0)
 
-        # Spacer to align with time column
         colors = get_colors_config()
         all_day_spacer = QWidget()
         all_day_spacer.setStyleSheet(f"background: {colors.header_background};")
         all_day_spacer.setFixedWidth(time_col_width)
         all_day_layout.addWidget(all_day_spacer)
 
-        # All-day events row
         num_days = self._get_num_days()
         self._all_day_row = AllDayEventsRow(num_days=num_days)
         self._all_day_row.event_clicked.connect(self.event_clicked.emit)
         self._all_day_row.event_double_clicked.connect(self.event_double_clicked.emit)
-        self._all_day_row.hide()  # Hidden initially
+        self._all_day_row.hide()
         all_day_layout.addWidget(self._all_day_row, 1)
 
-        # Dynamic scrollbar-width spacer
         self._all_day_scrollbar_spacer = QWidget()
         self._all_day_scrollbar_spacer.setFixedWidth(scrollbar_width)
         self._all_day_scrollbar_spacer.hide()
@@ -143,20 +127,15 @@ class TimelineViewBase(QWidget):
 
         main_layout.addWidget(all_day_container)
 
-        # Scroll area for time grid
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # Main area: time labels + day columns + scrollbar
+        grid_row = QWidget()
+        grid_layout = QHBoxLayout(grid_row)
+        grid_layout.setContentsMargins(0, 0, 0, 0)
+        grid_layout.setSpacing(0)
 
-        # Content: time labels + day columns (inline, scroll together)
-        content = QWidget()
-        content_layout = QHBoxLayout(content)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(0)
-
-        # Time labels
-        time_widget = self._create_time_labels(time_col_width)
-        content_layout.addWidget(time_widget)
+        # Time labels (overlaid in a fixed-width strip, repositioned on scroll)
+        self._time_labels_widget = self._create_time_labels(time_col_width)
+        grid_layout.addWidget(self._time_labels_widget)
 
         # Day columns (created by subclass)
         self._day_columns = self._create_day_columns()
@@ -166,79 +145,102 @@ class TimelineViewBase(QWidget):
             col.event_clicked.connect(self.event_clicked.emit)
             col.event_double_clicked.connect(self.event_double_clicked.emit)
             col.event_time_changed.connect(self.event_time_changed.emit)
-            content_layout.addWidget(col, 1)
+            grid_layout.addWidget(col, 1)
 
-        scroll.setWidget(content)
-        self._scroll = scroll
-        main_layout.addWidget(scroll, 1)
+        # Standalone scrollbar
+        self._scrollbar = QScrollBar(Qt.Vertical)
+        self._scrollbar.valueChanged.connect(self._on_scrollbar_value_changed)
+        grid_layout.addWidget(self._scrollbar)
 
-        # Sync all-day/header spacers with scrollbar visibility.
-        # Also push viewport dimensions to day columns on scroll/resize.
-        def _on_scrollbar_range_changed(min_val, max_val):
-            needs_scrollbar = max_val > 0
-            self._all_day_scrollbar_spacer.setVisible(needs_scrollbar)
-            self._on_scrollbar_visibility_changed(needs_scrollbar)
-            self._push_viewport_to_columns()
+        main_layout.addWidget(grid_row, 1)
 
-        scroll.verticalScrollBar().rangeChanged.connect(_on_scrollbar_range_changed)
-        scroll.verticalScrollBar().valueChanged.connect(lambda _: self._push_viewport_to_columns())
-        QTimer.singleShot(0, lambda: _on_scrollbar_range_changed(
-            scroll.verticalScrollBar().minimum(),
-            scroll.verticalScrollBar().maximum()))
+        # Initial viewport push + scrollbar range setup
+        QTimer.singleShot(0, self._sync_scrollbar_range)
+
+    def _on_scrollbar_value_changed(self, value: int):
+        """Scrollbar moved — push new scroll offset to day columns."""
+        self._push_viewport_to_columns()
+
+    def _sync_scrollbar_range(self):
+        """Update scrollbar range from mapper and push viewport."""
+        vh = self._grid_content_height()
+        if vh <= 0:
+            return
+        max_val = self._mapper.scrollbar_maximum(vh)
+        needs_scrollbar = max_val > 0
+        self._scrollbar.setRange(0, max_val)
+        self._scrollbar.setVisible(needs_scrollbar)
+        self._all_day_scrollbar_spacer.setVisible(needs_scrollbar)
+        self._on_scrollbar_visibility_changed(needs_scrollbar)
+        self._push_viewport_to_columns()
+
+    def _grid_content_height(self) -> int:
+        """Height of the grid row (the area shared by time labels + day columns)."""
+        # The grid row fills available space; use the time labels widget height
+        # as reference (it's a fixed-width strip that stretches).
+        return self._time_labels_widget.height()
 
     def _push_viewport_to_columns(self):
         """Push current viewport height and scroll offset to all day columns."""
-        viewport = self._scroll.viewport()
-        if not viewport:
+        vh = self._grid_content_height()
+        if vh <= 0:
             return
-        vh = viewport.height()
-        so = self._scroll.verticalScrollBar().value()
+        so = self._scrollbar.value()
         for col in self._day_columns:
             col.set_viewport(vh, so)
+        self._position_time_labels()
+
+    # ------------------------------------------------------------------
+    # Time labels (absolute-positioned inside a fixed-width container)
+    # ------------------------------------------------------------------
 
     def _create_time_labels(self, time_col_width: int) -> QWidget:
-        """Create the time labels column (shared by Day and Week views)."""
+        """Create the time labels container."""
         colors = get_colors_config()
         hour_height = get_hour_height()
-        content_h = 24 * hour_height
 
-        time_widget = QWidget()
-        time_widget.setFixedWidth(time_col_width)
-        time_widget.setFixedHeight(content_h)
-        time_widget.setStyleSheet(f" background: {colors.header_background};")
-        time_layout = QVBoxLayout(time_widget)
-        time_layout.setContentsMargins(0, 0, 0, 0)
-        time_layout.setSpacing(0)
+        container = QWidget()
+        container.setFixedWidth(time_col_width)
+        container.setStyleSheet(f"background: {colors.header_background};")
 
-        # Spacer to align labels with hour lines
-        top_spacer = QWidget()
-        top_spacer.setFixedHeight(int(0.5 * hour_height))
-        time_layout.addWidget(top_spacer)
-
-        # Labels 01:00 - 23:00
-        for hour in range(1, 24):
-            lbl = QLabel(f"{hour:02d}:00")
+        self._time_label_widgets: list[QLabel] = []
+        for hour in range(24):
+            lbl = QLabel(f"{hour:02d}:00", container)
             lbl.setFixedHeight(hour_height)
             lbl.setAlignment(Qt.AlignCenter)
-            time_layout.addWidget(lbl)
+            lbl.hide()
+            self._time_label_widgets.append(lbl)
 
-        bot_spacer = QWidget()
-        bot_spacer.setFixedHeight(int(0.5 * hour_height))
-        time_layout.addWidget(bot_spacer)
+        return container
 
-        return time_widget
+    def _position_time_labels(self):
+        """Reposition time labels according to current viewport + scroll."""
+        vh = self._grid_content_height()
+        if vh <= 0:
+            return
+        so = self._scrollbar.value()
+
+        for hour, lbl in enumerate(self._time_label_widgets):
+            y = self._mapper.hour_to_y(float(hour), vh, so) * vh
+            # Labels are positioned centered on the hour line:
+            # hour line at y, label height = hour_height
+            hour_height = get_hour_height()
+            label_y = y - hour_height / 2
+            if -hour_height < label_y < vh:
+                lbl.setGeometry(0, int(label_y), lbl.parent().width(), hour_height)
+                lbl.show()
+            else:
+                lbl.hide()
 
     # ------------------------------------------------------------------
     # Scroll position (shared)
     # ------------------------------------------------------------------
 
     def get_scroll_position(self) -> int:
-        """Get current vertical scroll position."""
-        return self._scroll.verticalScrollBar().value()
+        return self._scrollbar.value()
 
     def set_scroll_position(self, position: int):
-        """Set vertical scroll position."""
-        self._scroll.verticalScrollBar().setValue(position)
+        self._scrollbar.setValue(position)
         self._push_viewport_to_columns()
 
     # ------------------------------------------------------------------
@@ -250,7 +252,6 @@ class TimelineViewBase(QWidget):
         self.refresh_events()
 
     def refresh_events(self):
-        """Refresh events — shared logic for all-day vs timed separation."""
         for col in self._day_columns:
             col.clear_portions()
         self._all_day_row.clear_all()
@@ -258,7 +259,6 @@ class TimelineViewBase(QWidget):
         num_days = self._get_num_days()
         day_dates = self._get_day_dates()
 
-        # Group all-day events by day
         all_day_by_day: list[list[EventData]] = [[] for _ in range(num_days)]
 
         for event in self._events:
@@ -266,10 +266,8 @@ class TimelineViewBase(QWidget):
             local_end = to_local_datetime(event.end)
 
             if is_all_day_event(event):
-                # Multi-day all-day events appear on each day they span
                 start_date = local_start.date()
                 end_date = local_end.date()
-                # All-day events typically have end at midnight of next day
                 if end_date > start_date:
                     end_date = end_date - timedelta(days=1)
 
@@ -277,23 +275,26 @@ class TimelineViewBase(QWidget):
                     if start_date <= day_dates[day_idx] <= end_date:
                         all_day_by_day[day_idx].append(event)
             else:
-                # Timed event — create portions for each day it spans
                 for day_idx in range(num_days):
                     portion = EventPortion.create_for_day(event, day_dates[day_idx])
                     if portion:
                         self._day_columns[day_idx].add_portion(portion)
 
-        # Add all-day events to their respective day cells
         for day_idx, events in enumerate(all_day_by_day):
             self._all_day_row.set_events_for_day(day_idx, events)
 
-        # Finalize event layouts for all day columns
         for col in self._day_columns:
             col.finalize_portions()
 
-        # Update the all-day row height
         self._all_day_row.update_height()
 
     def refresh_styles(self):
-        """Refresh header styles after config change.  Default: update headers."""
         self._update_headers()
+
+    # ------------------------------------------------------------------
+    # Resize — re-sync scrollbar range + push viewport
+    # ------------------------------------------------------------------
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._sync_scrollbar_range()
