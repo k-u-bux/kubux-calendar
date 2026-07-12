@@ -27,7 +27,7 @@ from .config_state import (
 from .event_portion import EventPortion, is_all_day_event
 from .all_day_events import AllDayEventsRow
 from .day_column import DayColumnWidget
-from .time_axis import TimeAxisMapper, LinearTimeAxis
+from .time_axis import TimeAxisMapper, LinearTimeAxis, VariableTimeAxis
 from library.timezone_utils import to_local_datetime
 
 
@@ -62,7 +62,7 @@ class TimelineViewBase(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
         self._events: list[EventData] = []
         self._day_columns: list[DayColumnWidget] = []
-        self._mapper = LinearTimeAxis(get_hour_height())
+        self._mapper = VariableTimeAxis(get_hour_height())
         self._setup_ui()
 
     # ------------------------------------------------------------------
@@ -201,16 +201,14 @@ class TimelineViewBase(QWidget):
 
     def _create_time_labels(self, time_col_width: int) -> QWidget:
         colors = get_colors_config()
-        hour_height = get_hour_height()
 
         container = QWidget()
         container.setFixedWidth(time_col_width)
         container.setStyleSheet(f"background: {colors.header_background};")
 
         self._time_label_widgets: list[QLabel] = []
-        for hour in range(24):
+        for hour in range(1,24):
             lbl = QLabel(f"{hour:02d}:00", container)
-            lbl.setFixedHeight(hour_height)
             lbl.setAlignment(Qt.AlignCenter)
             lbl.hide()
             self._time_label_widgets.append(lbl)
@@ -223,15 +221,42 @@ class TimelineViewBase(QWidget):
             return
         ratio = self._scrollbar.value() / 1000.0
 
-        for hour, lbl in enumerate(self._time_label_widgets):
-            y = self._mapper.hour_to_y(float(hour), vh, ratio) * vh
-            hour_height = get_hour_height()
-            label_y = y - hour_height / 2
-            if -hour_height < label_y < vh:
-                lbl.setGeometry(0, int(label_y), lbl.parent().width(), hour_height)
-                lbl.show()
-            else:
+        # Use actual QLabel text height, not hour_height from config
+        label_h = max(lbl.sizeHint().height() for lbl in self._time_label_widgets)
+        min_gap = int(label_h * 1.2)  # labels must be at least 1.2× their height apart
+        label_w = self._time_labels_widget.width()
+
+        # Collect pixel Y positions for all 24 hours
+        positions: list[tuple[int, int, float]] = []  # (hour, pixel_y, norm_y)
+        for idx, lbl in enumerate(self._time_label_widgets):
+            hour = idx + 1
+            y_norm = self._mapper.hour_to_y(float(hour), vh, ratio)
+            y_px = int(y_norm * vh)
+            positions.append((hour, y_px, y_norm))
+
+        for hour, y_px, y_norm in positions:
+            lbl = self._time_label_widgets[hour-1]
+
+            # Check if this label is within the viewport
+            if not (0 < y_px < vh):
                 lbl.hide()
+                continue
+
+            # Hide label if too close to the next visible one (overlap check)
+            # too_close = False
+            # for h2 in range(hour + 1, 24):
+            #     next_y = positions[h2][1]
+            #     gap = next_y - y_px
+            #    if gap > 0:
+            #        too_close = gap < min_gap
+            #        break
+            # if too_close:
+            #     lbl.hide()
+            #     continue
+
+            label_y = y_px - label_h // 2
+            lbl.setGeometry(0, label_y, label_w, label_h)
+            lbl.show()
 
     # ------------------------------------------------------------------
     # Scroll position (shared)
