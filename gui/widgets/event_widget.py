@@ -16,7 +16,12 @@ from PySide6.QtCore import Qt, Signal, QSize, QPointF, QPoint
 from PySide6.QtGui import QColor, QPalette, QFont, QMouseEvent, QPainter, QPolygonF, QBrush, QPen, QFontMetrics
 
 from backend import EventView as EventData
-from backend.config import LayoutConfig, ColorsConfig
+from .config_state import (
+    get_layout_config,
+    get_colors_config,
+    get_labels_config,
+    get_text_font,
+)
 
 
 class DragMode(Enum):
@@ -25,27 +30,6 @@ class DragMode(Enum):
     MOVE = "move"           # Moving the entire event
     RESIZE_TOP = "resize_top"      # Resizing by dragging top edge
     RESIZE_BOTTOM = "resize_bottom"  # Resizing by dragging bottom edge
-
-# Module-level configs (set by MainWindow at startup via calendar_widget)
-_layout_config: LayoutConfig = LayoutConfig()
-_colors_config: ColorsConfig = ColorsConfig()
-
-
-def set_event_layout_config(config: LayoutConfig):
-    """Set the layout configuration for event widgets."""
-    global _layout_config
-    _layout_config = config
-
-
-def set_event_colors_config(config: ColorsConfig):
-    """Set the colors configuration for event widgets."""
-    global _colors_config
-    _colors_config = config
-
-
-def get_text_font() -> QFont:
-    """Get the configured text font for events."""
-    return QFont(_layout_config.text_font, _layout_config.text_font_size)
 
 
 # Import timezone utilities from shared module
@@ -159,8 +143,6 @@ class EventWidget(QFrame):
     
     def _setup_tooltip(self) -> None:
         """Set up the tooltip with full event information."""
-        from .calendar_widget import get_labels_config
-        
         lines = []
         
         # Title
@@ -250,7 +232,6 @@ class EventWidget(QFrame):
             time_label.setFont(text_font)
             header_layout.addWidget(time_label)
         elif self.event_data.all_day:
-            from .calendar_widget import get_labels_config
             all_day_label = QLabel(get_labels_config().allday_label)
             all_day_label.setFont(text_font)
             header_layout.addWidget(all_day_label)

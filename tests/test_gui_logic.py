@@ -11,11 +11,9 @@ from gui.widgets.event_widget import (
     get_contrasting_text_color,
     lighten_color,
 )
-from gui.widgets.calendar_widget import (
-    EventPortion,
-    HOUR_HEIGHT,
-    DayColumnWidget,
-)
+from gui.widgets.event_portion import EventPortion
+from gui.widgets.config_state import HOUR_HEIGHT
+from gui.widgets.day_column import DayColumnWidget
 
 UTC = pytz.UTC
 
