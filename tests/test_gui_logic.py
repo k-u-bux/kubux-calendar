@@ -14,7 +14,7 @@ from gui.widgets.event_widget import (
 from gui.widgets.event_portion import EventPortion
 from gui.widgets.config_state import HOUR_HEIGHT
 from gui.widgets.day_column import DayColumnWidget
-from gui.widgets.time_axis import LinearTimeAxis, QuadraticCompressionAxis
+from gui.widgets.time_axis import LinearTimeAxis, QuadraticCompressionAxis, MixedTimeAxis
 
 UTC = pytz.UTC
 
@@ -177,10 +177,10 @@ def _make_portion(start_h: float, end_h: float, uid: str = "uid") -> EventPortio
 
 
 def _make_col(for_date: date = None) -> DayColumnWidget:
-    """Create a DayColumnWidget with a QuadraticCompressionAxis mapper and default viewport."""
+    """Create a DayColumnWidget with a MixedTimeAxis mapper and default viewport."""
     if for_date is None:
         for_date = date(2026, 1, 1)
-    mapper = QuadraticCompressionAxis(HOUR_HEIGHT)
+    mapper = MixedTimeAxis(HOUR_HEIGHT)
     col = DayColumnWidget(for_date, mapper)
     col.set_viewport(800, 0.5)  # mid-scroll = focus at 12h
     return col
@@ -394,3 +394,84 @@ def test_quad_limit_at_r_plus_delta():
     h = v.y_to_hour(r_y + d, vh, 0.5)
     t_back = v.hour_to_y(h, vh, 0.5)
     assert abs(t_back - (r_y + d)) < 1e-4
+
+
+# ----------------------------------------------------------------------
+# MixedTimeAxis tests
+# ----------------------------------------------------------------------
+
+def test_mixed_linear_regime():
+    """When viewport is small enough, MixedTimeAxis delegates to LinearTimeAxis."""
+    v = MixedTimeAxis(60, undistorted_hours=4.0)
+    # ratio = H*hh/vh = 4*60/200 = 1.2 >= 0.95 → linear
+    vh = 200
+    for h in [0.0, 6.0, 12.0, 18.0]:
+        y = v.hour_to_y(h, vh, 0.5)
+        expected = LinearTimeAxis(60).hour_to_y(h, vh, 0.5)
+        assert y == pytest.approx(expected, abs=1e-12)
+
+
+def test_mixed_quadratic_regime():
+    """When viewport is large, MixedTimeAxis delegates to QuadraticCompressionAxis."""
+    v = MixedTimeAxis(60, undistorted_hours=4.0)
+    # ratio = H*hh/vh = 4*60/800 = 0.3 < 0.95 → quadratic
+    vh = 800
+    for h in [0.0, 6.0, 12.0, 18.0, 24.0]:
+        y = v.hour_to_y(h, vh, 0.5)
+        expected = QuadraticCompressionAxis(60, 4.0).hour_to_y(h, vh, 0.5)
+        assert y == pytest.approx(expected, abs=1e-12)
+
+
+def test_mixed_monotonic():
+    """hour_to_y must be strictly increasing in both regimes."""
+    v = MixedTimeAxis(60)
+    for vh in [200, 800]:
+        prev = -999.0
+        for h in range(0, 241):
+            y = v.hour_to_y(h / 10.0, vh, 0.5)
+            assert y > prev, f"non-monotonic at vh={vh}, h={h/10.0}: {prev:.6f} → {y:.6f}"
+            prev = y
+
+
+def test_mixed_range():
+    """hour_to_y maps 0→0 and 24→1 in quadratic regime (the common case)."""
+    v = MixedTimeAxis(60)
+    for ratio in [0.0, 0.3, 0.5, 0.7, 1.0]:
+        assert v.hour_to_y(0.0, 800, ratio) == pytest.approx(0.0, abs=1e-12)
+        assert v.hour_to_y(24.0, 800, ratio) == pytest.approx(1.0, abs=1e-12)
+
+
+def test_mixed_roundtrip():
+    """Forward + inverse must be accurate within 1e-4 hours in both regimes."""
+    v = MixedTimeAxis(60)
+    for vh in [200, 800]:
+        for h in [0.0, 0.1, 2.5, 6.0, 11.9, 12.0, 12.1, 18.0, 22.7, 24.0]:
+            y = v.hour_to_y(h, vh, 0.5)
+            h2 = v.y_to_hour(y, vh, 0.5)
+            assert abs(h - h2) < 1e-4, f"roundtrip failed at vh={vh}: {h} → y={y} → {h2}"
+
+
+def test_mixed_scrollbar_height_linear():
+    """In linear regime, scrollbar_height matches LinearTimeAxis."""
+    v = MixedTimeAxis(60)
+    vh = 200  # linear regime
+    assert v.scrollbar_height(vh) == LinearTimeAxis(60).scrollbar_height(vh)
+
+
+def test_mixed_scrollbar_height_quadratic():
+    """In quadratic regime, scrollbar_height matches QuadraticCompressionAxis."""
+    v = MixedTimeAxis(60)
+    vh = 800  # quadratic regime
+    assert v.scrollbar_height(vh) == QuadraticCompressionAxis(60).scrollbar_height(vh)
+
+
+def test_mixed_delegation_boundary():
+    """At the boundary ratio ≈ 0.95, both delegates give similar results."""
+    v = MixedTimeAxis(60, undistorted_hours=4.0)
+    # boundary: H*hh/vh = 0.95 → vh = 4*60/0.95 ≈ 252.6
+    vh = 253
+    y_mixed = v.hour_to_y(12.0, vh, 0.5)
+    y_quad = QuadraticCompressionAxis(60, 4.0).hour_to_y(12.0, vh, 0.5)
+    y_lin = LinearTimeAxis(60).hour_to_y(12.0, vh, 0.5)
+    # Mixed should pick one; both are close at this boundary
+    assert abs(y_mixed - y_quad) < 0.05 or abs(y_mixed - y_lin) < 0.05

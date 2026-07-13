@@ -183,7 +183,7 @@ class TimelineViewBase(QWidget):
             page_step = int(1000 * raw / (1000 - raw))
         page_step = min(page_step, 1000)
         self._scrollbar.setPageStep(page_step)
-        needs_scrollbar = page_step < 1000
+        needs_scrollbar = raw < 1000
         self._scrollbar.setVisible(needs_scrollbar)
         self._all_day_scrollbar_spacer.setVisible(needs_scrollbar)
         self._on_scrollbar_visibility_changed(needs_scrollbar)
