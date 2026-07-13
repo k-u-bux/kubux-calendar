@@ -22,9 +22,9 @@ from .day_column import DayColumnWidget
 class WeekView(TimelineViewBase):
     """Week view showing 7 days side by side with all-day events section."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, mapper=None, scroll_state=None):
         self._start_date = self._get_week_start(date.today())
-        super().__init__(parent)
+        super().__init__(parent, mapper=mapper, scroll_state=scroll_state)
 
     # ------------------------------------------------------------------
     # Hooks

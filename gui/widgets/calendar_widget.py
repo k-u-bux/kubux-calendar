@@ -21,7 +21,10 @@ from .config_state import (
     set_labels_config,
     get_localization_config,
     get_hour_height,
+    get_layout_config,
 )
+from .time_axis import MixedTimeAxis
+from .shared_scrollbar import _ScrollBarState
 from .day_view import DayView
 from .week_view import WeekView
 from .month_view import MonthView
@@ -63,10 +66,14 @@ class CalendarWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
+        # Shared time-axis mapper and scrollbar state for Day/Week views
+        self._shared_mapper = MixedTimeAxis(get_hour_height(), get_layout_config().undistorted_hours)
+        self._shared_scroll_state = _ScrollBarState()
+
         self._stack = QStackedWidget()
 
-        self._day_view = DayView()
-        self._week_view = WeekView()
+        self._day_view = DayView(mapper=self._shared_mapper, scroll_state=self._shared_scroll_state)
+        self._week_view = WeekView(mapper=self._shared_mapper, scroll_state=self._shared_scroll_state)
         self._month_view = MonthView()
         self._list_view = ListView()
 

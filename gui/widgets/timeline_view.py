@@ -29,6 +29,7 @@ from .event_portion import EventPortion, is_all_day_event
 from .all_day_events import AllDayEventsRow
 from .day_column import DayColumnWidget
 from .time_axis import TimeAxisMapper, LinearTimeAxis, QuadraticCompressionAxis, MixedTimeAxis
+from .shared_scrollbar import SharedScrollBar, _ScrollBarState
 from library.timezone_utils import to_local_datetime
 
 
@@ -58,12 +59,18 @@ class TimelineViewBase(QWidget):
     event_double_clicked = Signal(EventData)
     event_time_changed = Signal(EventData, datetime, datetime)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, mapper: TimeAxisMapper = None, scroll_state: _ScrollBarState = None):
         super().__init__(parent)
         self.setFocusPolicy(Qt.StrongFocus)
         self._events: list[EventData] = []
         self._day_columns: list[DayColumnWidget] = []
-        self._mapper = MixedTimeAxis(get_hour_height(), get_layout_config().undistorted_hours)
+
+        if mapper is not None:
+            self._mapper = mapper
+        else:
+            self._mapper = MixedTimeAxis(get_hour_height(), get_layout_config().undistorted_hours)
+
+        self._scroll_state = scroll_state
         self._setup_ui()
 
     # ------------------------------------------------------------------
@@ -153,9 +160,12 @@ class TimelineViewBase(QWidget):
             grid_layout.addWidget(col, 1)
 
         # Standalone scrollbar — range always [0, 1000]
-        self._scrollbar = QScrollBar(Qt.Vertical)
-        self._scrollbar.setRange(0, 1000)
-        self._scrollbar.setSingleStep(1)
+        if self._scroll_state is not None:
+            self._scrollbar = SharedScrollBar(self._scroll_state, self)
+        else:
+            self._scrollbar = QScrollBar(Qt.Vertical)
+            self._scrollbar.setRange(0, 1000)
+            self._scrollbar.setSingleStep(1)
         self._scrollbar.valueChanged.connect(self._on_scrollbar_value_changed)
         grid_layout.addWidget(self._scrollbar)
 
