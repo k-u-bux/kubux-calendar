@@ -28,7 +28,7 @@ from .config_state import (
 from .event_portion import EventPortion, is_all_day_event
 from .all_day_events import AllDayEventsRow
 from .day_column import DayColumnWidget
-from .time_axis import TimeAxisMapper, LinearTimeAxis, QuadraticCompressionAxis
+from .time_axis import TimeAxisMapper, LinearTimeAxis, QuadraticCompressionAxis, MixedTimeAxis
 from library.timezone_utils import to_local_datetime
 
 
@@ -63,7 +63,7 @@ class TimelineViewBase(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
         self._events: list[EventData] = []
         self._day_columns: list[DayColumnWidget] = []
-        self._mapper = QuadraticCompressionAxis(get_hour_height(), get_layout_config().undistorted_hours)
+        self._mapper = MixedTimeAxis(get_hour_height(), get_layout_config().undistorted_hours)
         self._setup_ui()
 
     # ------------------------------------------------------------------

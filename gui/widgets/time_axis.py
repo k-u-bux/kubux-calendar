@@ -340,3 +340,34 @@ class QuadraticCompressionAxis(TimeAxisMapper):
     def scrollbar_height(self, viewport_height: int) -> int:
         ratio = self._undistorted_hours * self._hh / viewport_height
         return max(1, min(1000, int(1000 * ratio)))
+
+
+class MixedTimeAxis(TimeAxisMapper):
+
+    def __init__(self, hour_height: int, undistorted_hours: float = 4.0):
+        self._linear = LinearTimeAxis( hour_height )
+        self._quadratic = QuadraticCompressionAxis( hour_height, undistorted_hours )
+
+    def _is_quadratic ( self, viewport_height ):
+        if viewport_height <= 0:
+            return False
+        ratio = self._quadratic._undistorted_hours * self._quadratic._hh / viewport_height
+        return ratio < 0.95
+
+    def hour_to_y(self, hour: float, viewport_height: int, scroll_ratio: float) -> float:
+        if self._is_quadratic( viewport_height ):
+            return self._quadratic.hour_to_y( hour, viewport_height, scroll_ratio )
+        else:
+            return self._linear.hour_to_y( hour, viewport_height, scroll_ratio )
+
+    def y_to_hour(self, y_norm: float, viewport_height: int, scroll_ratio: float) -> float:
+        if self._is_quadratic( viewport_height ):
+            return self._quadratic.y_to_hour( y_norm, viewport_height, scroll_ratio )
+        else:
+            return self._linear.y_to_hour( y_norm, viewport_height, scroll_ratio )
+
+    def scrollbar_height(self, viewport_height: int) -> int:
+        if self._is_quadratic( viewport_height ):
+            return self._quadratic.scrollbar_height( viewport_height )
+        else:
+            return self._linear.scrollbar_height( viewport_height )
