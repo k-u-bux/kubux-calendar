@@ -64,6 +64,7 @@ class TimelineViewBase(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
         self._events: list[EventData] = []
         self._day_columns: list[DayColumnWidget] = []
+        self._needs_scrollbar_sync = False
 
         if mapper is not None:
             self._mapper = mapper
@@ -331,6 +332,7 @@ class TimelineViewBase(QWidget):
             col.finalize_portions()
 
         self._all_day_row.update_height()
+        QTimer.singleShot(0, self._sync_scrollbar_appearance)
 
     def refresh_styles(self):
         self._update_headers()
