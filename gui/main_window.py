@@ -116,6 +116,11 @@ class MainWindow(QMainWindow):
         self._setup_shortcuts()
         self._setup_statusbar()
 
+        # Mark initializing before restoring state, so _save_state() calls
+        # triggered indirectly (e.g. via view_changed signal) don't fire
+        # with incomplete window geometry.
+        self._initializing = True
+
         # Restore persisted state
         self._load_ui_state()
         self._load_state()
@@ -132,7 +137,7 @@ class MainWindow(QMainWindow):
         # On reload the EventIndex already has events — skip network init.
         # On first init, start the full two-phase load.
         if is_reload:
-            self._initializing = False
+            self._initializing = False  # reload: init done after state restore
             self._sidebar.refresh()
             self._sidebar.update_tooltips()
             self._update_display_from_cache()
@@ -212,6 +217,13 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self._calendar_widget)
         self._splitter.addWidget(main_widget)
         
+        # Save state immediately when the user drags the splitter handle
+        self._splitter.splitterMoved.connect(self._save_state)
+
+        # Sidebar doesn't stretch — main widget absorbs all extra space on window resize
+        self._splitter.setStretchFactor(0, 0)
+        self._splitter.setStretchFactor(1, 1)
+
         # Set default splitter sizes (will be overridden by saved state if available)
         self._splitter.setSizes([200, 1000])
         
@@ -636,6 +648,7 @@ class MainWindow(QMainWindow):
         self._update_date_label()
         if not getattr(self, '_initializing', False):
             self._update_display_from_cache()
+            self._save_state()
     
     def _on_date_changed(self, d: date):
         """Handle date change."""
@@ -643,6 +656,7 @@ class MainWindow(QMainWindow):
         # Skip refresh during initialization (data not loaded yet)
         if not getattr(self, '_initializing', False):
             self._refresh_events()
+            self._save_state()
     
     def _on_data_changed(self):
         """Handle data change from event store.
@@ -784,7 +798,6 @@ class MainWindow(QMainWindow):
         """Apply new configuration by rebuilding the UI in place."""
         debug_log(Level.DEBUG, "Applying new config...")
         try:
-            self._save_state()
             self._auto_refresh_timer.stop()
             self._clear_ui()
             self._init_from_config(new_config, captured_scroll)
