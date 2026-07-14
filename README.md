@@ -288,11 +288,24 @@ kubux-calendar/
 │   ├── network_ops.py     # CalDAV and ICS network operations
 │   └── sync_manager.py    # Background sync orchestration
 ├── gui/
-│   ├── main_window.py     # Main application window
-│   ├── event_dialog.py    # Event create/edit dialog
+│   ├── main_window.py      # Main application window
+│   ├── event_dialog.py     # Event create/edit dialog
+│   ├── sidebar.py          # Calendar sidebar
 │   └── widgets/
-│       ├── calendar_widget.py # Day/Week/Month/List views
-│       └── event_widget.py    # Event display widget
+│       ├── calendar_widget.py  # View container and navigation
+│       ├── day_view.py         # Day view layout
+│       ├── week_view.py        # Week view layout
+│       ├── month_view.py       # Month view layout
+│       ├── list_view.py        # List/agenda view
+│       ├── timeline_view.py    # Timeline view with mixed scrollbar
+│       ├── day_column.py       # Single day column widget
+│       ├── time_axis.py        # Hour labels on the left
+│       ├── shared_scrollbar.py # Unified scrollbar for day/week views
+│       ├── all_day_events.py   # All-day event strip
+│       ├── event_widget.py     # Event display widget
+│       ├── event_portion.py    # Event portion splitting logic
+│       ├── recurrence_widget.py# Recurrence rule editor
+│       └── config_state.py     # Per-widget config state tracking
 ├── library/
 │   ├── color_utils.py     # Color generation utilities
 │   ├── log.py             # Level-filtered logging
@@ -322,23 +335,23 @@ Run the test suite with pytest (requires the Nix development shell):
 nix develop --command python -m pytest tests/ -v
 ```
 
-197 tests across 13 test files:
+212 tests across 13 test files:
 
 | File | Tests | What it covers |
 |---|---|---|
-| `test_interval_tree.py` | 16 | AVL tree insert/delete, all 4 query types, integrity verification |
+| `test_gui_logic.py` | 42 | Color math, event portions, overlap detection, scrollbar math, pixel→time |
+| `test_event_store.py` | 24 | CRUD operations, visibility/color, state persistence, clone |
 | `test_event_parsing.py` | 22 | iCalendar parsing, ImmutableEvent, EventView, _rebuild_ical |
-| `test_color_utils.py` | 6 | Color-to-hue conversion, unused color selection |
-| `test_timezone_utils.py` | 11 | Timezone-aware conversion, naive→aware, UTC→local |
-| `test_log.py` | 5 | Log level filtering, stderr output |
+| `test_sync_manager.py` | 21 | Refresh intervals, outdated detection, index rebuild, callbacks |
+| `test_config.py` | 17 | TOML parsing, all sections, both config formats |
+| `test_interval_tree.py` | 16 | AVL tree insert/delete, all 4 query types, integrity verification |
 | `test_event_fs.py` | 15 | Filesystem cache CRUD, source metadata, pending ops |
 | `test_event_index.py` | 12 | In-memory index add/remove/query, recurring inclusion |
-| `test_config.py` | 17 | TOML parsing, all sections, both config formats |
 | `test_task_dispatch.py` | 12 | Background task execution, wait/cancel, thunk/tie |
+| `test_timezone_utils.py` | 11 | Timezone-aware conversion, naive→aware, UTC→local |
 | `test_network_ops.py` | 9 | ICS event parsing, HTTP fetch with mocks |
-| `test_sync_manager.py` | 21 | Refresh intervals, outdated detection, index rebuild, callbacks |
-| `test_event_store.py` | 24 | CRUD operations, visibility/color, state persistence, clone |
-| `test_gui_logic.py` | 27 | Color math, event portion splitting, overlap detection, pixel→time |
+| `test_color_utils.py` | 6 | Color-to-hue conversion, unused color selection |
+| `test_log.py` | 5 | Log level filtering, stderr output |
 
 All tests write to temporary directories — no data is written to the real cache at `~/.local/state/kubux-calendar/`.
 
