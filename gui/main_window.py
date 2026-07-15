@@ -64,8 +64,10 @@ class MainWindow(QMainWindow):
         # Sync timer for pending changes (uses exponential backoff)
         self._sync_timer = QTimer(self)
         self._sync_timer.timeout.connect(self._on_sync_timer)
-        self._current_sync_interval = config.sync.initial_interval  # Start with initial interval
-        self._sync_timer.start(self._current_sync_interval * 1000)  # Convert to milliseconds
+        self._current_sync_interval = config.sync.initial_interval
+        # Don't start the timer yet — wait until connect_all completes.
+        # Starting it now would race with CalDAV session setup.
+        self._sync_timer_started = False
 
         # Config file watcher
         self._config_watcher = QFileSystemWatcher(self)
@@ -667,6 +669,12 @@ class MainWindow(QMainWindow):
         
         Preserves list view scroll position across the update.
         """
+        # Start sync timer on first connect_all completion (CalDAV sessions are ready)
+        if not self._sync_timer_started:
+            self._sync_timer_started = True
+            self._sync_timer.start(self._current_sync_interval * 1000)
+            debug_log(Level.DEBUG, f"Sync timer started ({self._current_sync_interval}s interval)")
+
         # Capture current list view position BEFORE updating
         current_list_dt = None
         if self._calendar_widget.get_current_view() == ViewType.LIST:
@@ -685,6 +693,10 @@ class MainWindow(QMainWindow):
     
     def _on_sync_status_changed(self, pending_count: int, last_sync_time):
         """Handle sync status change from event store (sync queue callback)."""
+        if pending_count > 0 and self._current_sync_interval != self.config.sync.initial_interval:
+            self._current_sync_interval = self.config.sync.initial_interval
+            self._sync_timer.start(self._current_sync_interval * 1000)
+            debug_log(Level.DEBUG, f"Sync timer reset to {self._current_sync_interval}s (new pending)")
         self._update_sync_status()
     
     def _on_auto_refresh(self):
@@ -696,13 +708,35 @@ class MainWindow(QMainWindow):
         self._sidebar.update_tooltips()
     
     def _on_sync_timer(self):
-        """Handle sync timer tick - attempt to sync pending changes (non-blocking)."""
+        """Handle sync timer tick - attempt to sync pending changes (non-blocking).
+
+        Uses exponential backoff: interval doubles on each attempt while
+        pending changes remain, capped at config.sync.max_interval.
+        Resets to initial_interval when pending count drops to zero or
+        new pending changes appear.
+        """
         pending_count = self.event_store.get_pending_sync_count()
         if pending_count > 0:
             debug_log(Level.DEBUG, f"Sync timer - {pending_count} pending changes (interval: {self._current_sync_interval}s)")
             # Use background sync - UI remains responsive
             self.event_store.sync_pending_in_background()
-        
+
+            # Exponential backoff: double interval, cap at max
+            new_interval = min(
+                self._current_sync_interval * self.config.sync.backoff_multiplier,
+                self.config.sync.max_interval,
+            )
+            if new_interval != self._current_sync_interval:
+                self._current_sync_interval = int(new_interval)
+                self._sync_timer.start(self._current_sync_interval * 1000)
+                debug_log(Level.DEBUG, f"Sync timer backoff to {self._current_sync_interval}s")
+        else:
+            # No pending — reset to initial interval
+            if self._current_sync_interval != self.config.sync.initial_interval:
+                self._current_sync_interval = self.config.sync.initial_interval
+                self._sync_timer.start(self._current_sync_interval * 1000)
+                debug_log(Level.DEBUG, f"Sync timer reset to {self._current_sync_interval}s (no pending)")
+
         # Update status bar
         self._update_sync_status()
     
