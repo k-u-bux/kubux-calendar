@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QToolBar, QPushButton, QLabel, QComboBox,
     QScrollArea, QFrame,
     QSplitter, QStatusBar, QMessageBox, QApplication,
-    QColorDialog, QSizePolicy
+    QCalendarWidget, QColorDialog, QDialog, QSizePolicy
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QFileSystemWatcher
 from PySide6.QtGui import QCloseEvent, QFont, QFontMetrics, QKeySequence, QShortcut
@@ -243,14 +243,18 @@ class MainWindow(QMainWindow):
             toolbar.layout().setContentsMargins( 8, 12, 8, 8 )
         
         # === LEFT BLOCK ===
-        # Date label (info first)
-        self._date_label = QLabel()
+        # Date label (info first) - clickable to open calendar popup
+        self._date_label = QPushButton()
+        self._date_label.setFlat(True)
+        self._date_label.setStyleSheet("QPushButton { padding: 0; border: none; text-align: left; }")
         date_font = QFont(self._interface_font)
         date_font.setBold(True)
         self._date_label.setFont(date_font)
         fm = QFontMetrics(date_font)
         min_width = fm.horizontalAdvance("8888/88/88 - 8888/88/88XX")
         self._date_label.setMinimumWidth(min_width)
+        self._date_label.setCursor(Qt.PointingHandCursor)
+        self._date_label.clicked.connect(self._show_date_picker_popup)
         toolbar.addWidget(self._date_label)
         
         toolbar.addSeparator()
@@ -628,6 +632,44 @@ class MainWindow(QMainWindow):
             text = f"{current_date.strftime('%Y/%m')}/01-{last_day:02d}"
         
         self._date_label.setText(text)
+    
+    def _show_date_picker_popup(self):
+        """Show a calendar popup for fast date navigation."""
+        dialog = QDialog(self)
+        dialog.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+        
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        
+        calendar = QCalendarWidget()
+        calendar.setGridVisible(True)
+        calendar.setSelectedDate(self._calendar_widget.get_current_date())
+        layout.addWidget(calendar)
+        
+        today_btn = QPushButton("Today")
+        today_btn.setFont(self._interface_font)
+        layout.addWidget(today_btn)
+        
+        def on_date_selected(qdate):
+            selected = qdate.toPython()
+            dialog.close()
+            dialog.deleteLater()
+            self._calendar_widget.set_date(selected)
+        
+        def on_today():
+            dialog.close()
+            dialog.deleteLater()
+            self._calendar_widget.set_date(date.today())
+        
+        calendar.clicked.connect(on_date_selected)
+        today_btn.clicked.connect(on_today)
+        
+        # Position below the button
+        btn_pos = self._date_label.mapToGlobal(self._date_label.rect().bottomLeft())
+        dialog.move(btn_pos)
+        
+        dialog.show()
     
     def _on_list_visible_range_changed(self, start: datetime, end: datetime):
         """Handle visible range change in list view - update date label."""
