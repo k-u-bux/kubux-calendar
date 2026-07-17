@@ -68,6 +68,7 @@ class MainWindow(QMainWindow):
         # Don't start the timer yet — wait until connect_all completes.
         # Starting it now would race with CalDAV session setup.
         self._sync_timer_started = False
+        self._last_pending_count = 0
 
         # Config file watcher
         self._config_watcher = QFileSystemWatcher(self)
@@ -735,10 +736,12 @@ class MainWindow(QMainWindow):
     
     def _on_sync_status_changed(self, pending_count: int, last_sync_time):
         """Handle sync status change from event store (sync queue callback)."""
-        if pending_count > 0 and self._current_sync_interval != self.config.sync.initial_interval:
-            self._current_sync_interval = self.config.sync.initial_interval
-            self._sync_timer.start(self._current_sync_interval * 1000)
-            debug_log(Level.DEBUG, f"Sync timer reset to {self._current_sync_interval}s (new pending)")
+        if pending_count > self._last_pending_count:
+            # New pending ops appeared — retry immediately, then backoff
+            self._current_sync_interval = 0
+            self._sync_timer.start(0)
+            debug_log(Level.DEBUG, f"Sync timer reset to 0s (new pending)")
+        self._last_pending_count = pending_count
         self._update_sync_status()
     
     def _on_auto_refresh(self):
@@ -763,10 +766,11 @@ class MainWindow(QMainWindow):
             # Use background sync - UI remains responsive
             self.event_store.sync_pending_in_background()
 
-            # Exponential backoff: double interval, cap at max
+            # Exponential backoff: double interval, cap at max, floor at initial
+            raw = self._current_sync_interval * self.config.sync.backoff_multiplier
             new_interval = min(
-                self._current_sync_interval * self.config.sync.backoff_multiplier,
                 self.config.sync.max_interval,
+                max(int(raw), self.config.sync.initial_interval),
             )
             if new_interval != self._current_sync_interval:
                 self._current_sync_interval = int(new_interval)

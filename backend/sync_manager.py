@@ -472,7 +472,7 @@ class SyncManager:
                     debug_log(Level.DEBUG, f"sync:   {sid} not found in server calendar list")
                     continue
                 try:
-                    fetch_result = self._fetch_caldav_source(sid, cal_info, now, sync_start, sync_end)
+                    fetch_result = self._fetch_caldav_source(sid, cal_info, session, now, sync_start, sync_end)
                     if fetch_result["ok"]:
                         result["synced"].append(sid)
                         result["source_last_success"][sid] = fetch_result.get("last_success", now)
@@ -508,6 +508,7 @@ class SyncManager:
         self,
         source_id: str,
         cal_info: CalendarInfo,
+        session: DAVSession,
         now: datetime,
         sync_start: Optional[datetime] = None,
         sync_end: Optional[datetime] = None,
@@ -517,7 +518,6 @@ class SyncManager:
         src = self._sources.get(source_id)
         if src is None:
             return result
-        session = self._sessions.get(src.account_name)
         if session is None:
             return result
 
@@ -780,8 +780,9 @@ class SyncManager:
             self._last_sync_time = result["last_sync_time"]
 
         self._rebuild_index()
-        self._notify_change()
-        self._notify_sync_status()
+        if result.get("success", 0) > 0:
+            self._notify_change()
+            self._notify_sync_status()
 
     # ------------------------------------------------------------------
     # Index rebuild
