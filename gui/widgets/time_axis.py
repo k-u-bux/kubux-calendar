@@ -40,6 +40,17 @@ class TimeAxisMapper(ABC):
         """
         ...
 
+    @abstractmethod
+    def scroll_ratio_for_hour(self, hour: float, viewport_height: int) -> float:
+        """Return the scroll ratio [0.0, 1.0] that centres *hour* in the
+        undistorted/lens window.
+
+        For the linear mapper this is simply hour/24.
+        For the quadratic mapper it centres *hour* in the linear window.
+        For the frog-eye lens it centres *hour* at the focus.
+        """
+        ...
+
 
 class LinearTimeAxis(TimeAxisMapper):
     """Linear mapping: y = (hour * hour_height − offset) / viewport_height.
@@ -68,6 +79,9 @@ class LinearTimeAxis(TimeAxisMapper):
         if total <= 0:
             return 1000
         return max(1, int(1000 * viewport_height / total))
+
+    def scroll_ratio_for_hour(self, hour: float, viewport_height: int) -> float:
+        return max(0.0, min(1.0, hour / 24.0))
 
 
 class VariableTimeAxis(TimeAxisMapper):
@@ -194,6 +208,12 @@ class VariableTimeAxis(TimeAxisMapper):
         avg_mag = 1.0 + (self._stretch - 1.0) * min(self._lens_width / 12.0, 1.0)
         visible_hours = vh / max(1.0, self._hh * avg_mag)
         return max(1, min(1000, int(1000 * visible_hours / focus_range)))
+
+    def scroll_ratio_for_hour(self, hour: float, viewport_height: int) -> float:
+        rng = 24.0 - 2.0 * self._margin
+        if rng <= 0.0:
+            return 0.5
+        return max(0.0, min(1.0, (hour - self._margin) / rng))
 
 
 class QuadraticCompressionAxis(TimeAxisMapper):
@@ -341,6 +361,14 @@ class QuadraticCompressionAxis(TimeAxisMapper):
         ratio = self._undistorted_hours * self._hh / viewport_height
         return max(1, min(999, int(1000 * ratio)))
 
+    def scroll_ratio_for_hour(self, hour: float, viewport_height: int) -> float:
+        H = self._undistorted_hours
+        if H >= 24.0:
+            return 0.5
+        max_start = 24.0 - H
+        start_hour = max(0.0, min(max_start, hour - H / 2.0))
+        return start_hour / max_start if max_start > 0 else 0.5
+
 
 class MixedTimeAxis(TimeAxisMapper):
 
@@ -371,3 +399,9 @@ class MixedTimeAxis(TimeAxisMapper):
             return self._quadratic.scrollbar_height( viewport_height )
         else:
             return self._linear.scrollbar_height( viewport_height )
+
+    def scroll_ratio_for_hour(self, hour: float, viewport_height: int) -> float:
+        if self._is_quadratic( viewport_height ):
+            return self._quadratic.scroll_ratio_for_hour( hour, viewport_height )
+        else:
+            return self._linear.scroll_ratio_for_hour( hour, viewport_height )

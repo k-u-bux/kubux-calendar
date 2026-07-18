@@ -286,6 +286,14 @@ class TimelineViewBase(QWidget):
         self._scrollbar.setValue(position)
         self._push_viewport_to_columns()
 
+    def scroll_to_center_hour(self, hour: float):
+        """Scroll so that *hour* is centred in the undistorted/lens window."""
+        vh = self._grid_content_height()
+        if vh <= 0:
+            return
+        ratio = self._mapper.scroll_ratio_for_hour(hour, vh)
+        self.set_scroll_position(int(ratio * 1000))
+
     # ------------------------------------------------------------------
     # Event handling (shared template)
     # ------------------------------------------------------------------

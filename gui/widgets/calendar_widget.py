@@ -238,7 +238,13 @@ class CalendarWidget(QWidget):
         if self._current_view == ViewType.LIST:
             # For list view: scroll to next upcoming event
             self._list_view.scroll_to_upcoming()
-        else:
+        elif self._current_view in (ViewType.DAY, ViewType.WEEK):
+            self.set_date(date.today())
+            now = datetime.now()
+            hour = now.hour + now.minute / 60.0
+            active_view = self._stack.currentWidget()
+            active_view.scroll_to_center_hour(hour)
+        else:  # MONTH
             self.set_date(date.today())
 
     def go_previous(self):
