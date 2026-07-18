@@ -81,7 +81,13 @@ class LinearTimeAxis(TimeAxisMapper):
         return max(1, int(1000 * viewport_height / total))
 
     def scroll_ratio_for_hour(self, hour: float, viewport_height: int) -> float:
-        return max(0.0, min(1.0, hour / 24.0))
+        vh = max(1, viewport_height)
+        total = 24.0 * self._hh
+        max_offset = max(0.0, total - vh)
+        if max_offset <= 0.0:
+            return 0.5
+        offset = hour * self._hh - vh / 2.0
+        return max(0.0, min(1.0, offset / max_offset))
 
 
 class VariableTimeAxis(TimeAxisMapper):
