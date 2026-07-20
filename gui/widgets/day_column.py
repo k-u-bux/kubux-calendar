@@ -18,7 +18,6 @@ from .config_state import (
 )
 from .event_portion import EventPortion
 from .event_widget import EventWidget, DraggableEventWidget, DragMode
-from .time_axis import TimeAxisMapper
 from library.timezone_utils import to_local_datetime
 
 
@@ -36,7 +35,7 @@ class DayColumnWidget(QWidget):
     event_double_clicked = Signal(EventData)
     event_time_changed = Signal(EventData, datetime, datetime)
 
-    def __init__(self, for_date: date, time_mapper: TimeAxisMapper, parent=None):
+    def __init__(self, for_date: date, time_mapper, parent=None):
         super().__init__(parent)
         self._date = for_date
         self._mapper = time_mapper

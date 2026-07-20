@@ -6,53 +6,10 @@ The scrollbar range is always [0, 1000]; the mapper translates
 the normalised ratio [0.0, 1.0] into whatever offset semantics it needs.
 """
 
-from abc import ABC, abstractmethod
 import math
 
 
-class TimeAxisMapper(ABC):
-    """Abstract base for time⇔viewport coordinate mapping.
-
-    scroll_ratio is a float in [0.0, 1.0] derived from the scrollbar.
-    The mapper itself holds only configuration (e.g. hour_height).
-    """
-
-    @abstractmethod
-    def hour_to_y(self, hour: float, viewport_height: int, scroll_ratio: float) -> float:
-        """Convert hour [0.0, 24.0] → viewport-normalized Y.
-
-        Returns a value in [0, 1] when the hour is visible.
-        Values < 0 or > 1 mean the hour is off-screen.
-        """
-        ...
-
-    @abstractmethod
-    def y_to_hour(self, y_norm: float, viewport_height: int, scroll_ratio: float) -> float:
-        """Convert viewport-normalized Y [0.0, 1.0] → hour [0.0, 24.0]."""
-        ...
-
-    @abstractmethod
-    def scrollbar_height(self, viewport_height: int) -> int:
-        """Page-step for a QScrollBar with fixed range [0, 1000].
-
-        Controls the handle size — larger value = smaller handle
-        (proportional to the visible fraction of 24 h).
-        """
-        ...
-
-    @abstractmethod
-    def scroll_ratio_for_hour(self, hour: float, viewport_height: int) -> float:
-        """Return the scroll ratio [0.0, 1.0] that centres *hour* in the
-        undistorted/lens window.
-
-        For the linear mapper this is simply hour/24.
-        For the quadratic mapper it centres *hour* in the linear window.
-        For the frog-eye lens it centres *hour* at the focus.
-        """
-        ...
-
-
-class LinearTimeAxis(TimeAxisMapper):
+class LinearTimeAxis:
     """Linear mapping: y = (hour * hour_height − offset) / viewport_height.
 
     scroll_ratio 0 → offset 0 (top of 24 h)
@@ -90,7 +47,7 @@ class LinearTimeAxis(TimeAxisMapper):
         return max(0.0, min(1.0, offset / max_offset))
 
 
-class VariableTimeAxis(TimeAxisMapper):
+class VariableTimeAxis:
     """Frog-eye lens: hours near the focus centre get more space.
 
     scroll_ratio 0 → focus = margin (e.g. hour 2 — near the top)
@@ -222,7 +179,7 @@ class VariableTimeAxis(TimeAxisMapper):
         return max(0.0, min(1.0, (hour - self._margin) / rng))
 
 
-class QuadraticCompressionAxis(TimeAxisMapper):
+class QuadraticCompressionAxis:
     """Piecewise quadratic compression with an undistorted linear window.
 
     The viewport-normalized Y axis [0, 1] is split into three regions:
@@ -376,7 +333,7 @@ class QuadraticCompressionAxis(TimeAxisMapper):
         return start_hour / max_start if max_start > 0 else 0.5
 
 
-class MixedTimeAxis(TimeAxisMapper):
+class MixedTimeAxis:
 
     def __init__(self, hour_height: int, undistorted_hours: float = 4.0):
         self._linear = LinearTimeAxis( hour_height )

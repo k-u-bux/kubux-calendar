@@ -28,7 +28,7 @@ from .config_state import (
 from .event_portion import EventPortion, is_all_day_event
 from .all_day_events import AllDayEventsRow
 from .day_column import DayColumnWidget
-from .time_axis import TimeAxisMapper, LinearTimeAxis, QuadraticCompressionAxis, MixedTimeAxis
+from .time_axis import LinearTimeAxis, QuadraticCompressionAxis, MixedTimeAxis
 from .shared_scrollbar import SharedScrollBar, _ScrollBarState
 from library.timezone_utils import to_local_datetime
 
@@ -59,7 +59,7 @@ class TimelineViewBase(QWidget):
     event_double_clicked = Signal(EventData)
     event_time_changed = Signal(EventData, datetime, datetime)
 
-    def __init__(self, parent=None, mapper: TimeAxisMapper = None, scroll_state: _ScrollBarState = None):
+    def __init__(self, parent=None, mapper=None, scroll_state: _ScrollBarState = None):
         super().__init__(parent)
         self.setFocusPolicy(Qt.StrongFocus)
         self._events: list[EventData] = []
