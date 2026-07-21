@@ -401,6 +401,9 @@ class MainWindow(QMainWindow):
         
         debug_log(Level.DEBUG, f"_load_state: view_type={view_type}, scroll_pos={scroll_pos}, list_dt={list_top_datetime_str}")
         
+        # Follow-present mode
+        self._pending_restore_follow_present = self._ui_state.get("follow_present", False)
+
         # Store for deferred scroll restoration
         self._pending_restore_view_type = view_type
         self._pending_restore_scroll_pos = scroll_pos
@@ -438,6 +441,9 @@ class MainWindow(QMainWindow):
             self._ui_state["scroll_position"] = scroll_pos
             debug_log(Level.DEBUG, f"_save_state: scroll_position={scroll_pos}")
         
+        # Follow-present mode
+        self._ui_state["follow_present"] = self._calendar_widget.is_follow_present()
+
         # Splitter sizes (sidebar width)
         self._ui_state["splitter_sizes"] = self._splitter.sizes()
         
@@ -542,10 +548,14 @@ class MainWindow(QMainWindow):
         view_type = getattr(self, '_pending_restore_view_type', None)
         scroll_pos = getattr(self, '_pending_restore_scroll_pos', 0)
         list_dt_str = getattr(self, '_pending_restore_list_dt_str', None)
+        follow_present = getattr(self, '_pending_restore_follow_present', False)
         
-        debug_log(Level.DEBUG, f"_restore_scroll_position: view_type={view_type}, scroll_pos={scroll_pos}, list_dt={list_dt_str}")
+        debug_log(Level.DEBUG, f"_restore_scroll_position: view_type={view_type}, scroll_pos={scroll_pos}, list_dt={list_dt_str}, follow_present={follow_present}")
         
-        if view_type == ViewType.LIST:
+        if follow_present:
+            # Follow-present overrides saved scroll: jump to current time
+            self._calendar_widget.go_today()
+        elif view_type == ViewType.LIST:
             if list_dt_str:
                 # Scroll to saved datetime
                 try:

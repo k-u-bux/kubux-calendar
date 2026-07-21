@@ -311,6 +311,10 @@ class CalendarWidget(QWidget):
         self._week_view.set_scroll_position(position)
         self._list_view.set_scroll_position(position)
 
+    def is_follow_present(self) -> bool:
+        """Return whether follow-present mode is currently enabled."""
+        return self._follow_state.follow_present
+
     def refresh_styles(self):
         """Refresh styles after config change."""
         self._week_view.refresh_styles()
