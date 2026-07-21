@@ -65,6 +65,9 @@ class SharedScrollBar(QWidget):
 
     # Expose the underlying QScrollBar's valueChanged signal
     valueChanged = Signal(int)
+    # User-only interactions (drag, trough click, wheel) — never fires
+    # for programmatic setValue.
+    actionTriggered = Signal(int)
 
     def __init__(self, state: _ScrollBarState, parent=None):
         super().__init__(parent)
@@ -83,6 +86,7 @@ class SharedScrollBar(QWidget):
 
         # Propagate local changes → state → all instances
         self._bar.valueChanged.connect(self._on_local_change)
+        self._bar.actionTriggered.connect(self.actionTriggered.emit)
 
         # Propagate state changes → local
         self._state.add_listener(self._on_state_change)

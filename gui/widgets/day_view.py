@@ -16,9 +16,9 @@ from .day_column import DayColumnWidget
 class DayView(TimelineViewBase):
     """Single day view with hourly time slots and all-day events section."""
 
-    def __init__(self, parent=None, mapper=None, scroll_state=None):
+    def __init__(self, parent=None, mapper=None, scroll_state=None, follow_state=None):
         self._date = date.today()
-        super().__init__(parent, mapper=mapper, scroll_state=scroll_state)
+        super().__init__(parent, mapper=mapper, scroll_state=scroll_state, follow_state=follow_state)
 
     # ------------------------------------------------------------------
     # Hooks
@@ -31,7 +31,7 @@ class DayView(TimelineViewBase):
         return [self._date]
 
     def _create_day_columns(self) -> list[DayColumnWidget]:
-        return [DayColumnWidget(self._date, self._mapper)]
+        return [DayColumnWidget(self._date, self._mapper, self._follow_state)]
 
     # No header for day view (uses default None from base)
 

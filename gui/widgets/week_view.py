@@ -22,9 +22,9 @@ from .day_column import DayColumnWidget
 class WeekView(TimelineViewBase):
     """Week view showing 7 days side by side with all-day events section."""
 
-    def __init__(self, parent=None, mapper=None, scroll_state=None):
+    def __init__(self, parent=None, mapper=None, scroll_state=None, follow_state=None):
         self._start_date = self._get_week_start(date.today())
-        super().__init__(parent, mapper=mapper, scroll_state=scroll_state)
+        super().__init__(parent, mapper=mapper, scroll_state=scroll_state, follow_state=follow_state)
 
     # ------------------------------------------------------------------
     # Hooks
@@ -37,7 +37,7 @@ class WeekView(TimelineViewBase):
         return [self._start_date + timedelta(days=i) for i in range(7)]
 
     def _create_day_columns(self) -> list[DayColumnWidget]:
-        return [DayColumnWidget(self._start_date + timedelta(days=i), self._mapper) for i in range(7)]
+        return [DayColumnWidget(self._start_date + timedelta(days=i), self._mapper, self._follow_state) for i in range(7)]
 
     def _create_header(self, time_col_width: int, scrollbar_width: int) -> QWidget:
         """Create the day-name header with scrollbar-aligned spacer."""

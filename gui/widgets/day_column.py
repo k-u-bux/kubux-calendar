@@ -35,10 +35,11 @@ class DayColumnWidget(QWidget):
     event_double_clicked = Signal(EventData)
     event_time_changed = Signal(EventData, datetime, datetime)
 
-    def __init__(self, for_date: date, time_mapper, parent=None):
+    def __init__(self, for_date: date, time_mapper, follow_state, parent=None):
         super().__init__(parent)
         self._date = for_date
         self._mapper = time_mapper
+        self._follow_state = follow_state
         self._viewport_height = 0
         self._scroll_ratio = 0.0
         self._portions: list[EventPortion] = []
@@ -124,6 +125,13 @@ class DayColumnWidget(QWidget):
         self._update_time_indicator()
 
     def _update_time_indicator(self):
+        # Follow-present mode: every hour-bar tick is a go_today().  This
+        # re-centers the view, and on midnight rollover also advances the
+        # day/week and refreshes events.  (_go_today_cb is assigned by the
+        # parent view's set_follow_callback before follow can be enabled.)
+        if self._follow_state.follow_present:
+            self._go_today_cb()
+
         if self._date != date.today():
             self._time_indicator.hide()
             return

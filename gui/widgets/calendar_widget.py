@@ -25,6 +25,7 @@ from .config_state import (
 )
 from .time_axis import MixedTimeAxis
 from .shared_scrollbar import _ScrollBarState
+from .follow_state import FollowState
 from .day_view import DayView
 from .week_view import WeekView
 from .month_view import MonthView
@@ -69,13 +70,22 @@ class CalendarWidget(QWidget):
         # Shared time-axis mapper and scrollbar state for Day/Week views
         self._shared_mapper = MixedTimeAxis(get_hour_height(), get_layout_config().undistorted_hours)
         self._shared_scroll_state = _ScrollBarState()
+        # Shared follow-present flag: set by go_today, cleared by any other
+        # navigation action or user scroll (handled in the timeline views).
+        self._follow_state = FollowState()
 
         self._stack = QStackedWidget()
 
-        self._day_view = DayView(mapper=self._shared_mapper, scroll_state=self._shared_scroll_state)
-        self._week_view = WeekView(mapper=self._shared_mapper, scroll_state=self._shared_scroll_state)
+        self._day_view = DayView(mapper=self._shared_mapper, scroll_state=self._shared_scroll_state,
+                                 follow_state=self._follow_state)
+        self._week_view = WeekView(mapper=self._shared_mapper, scroll_state=self._shared_scroll_state,
+                                   follow_state=self._follow_state)
         self._month_view = MonthView()
         self._list_view = ListView()
+
+        # Follow-present mode: hour-bar ticks invoke go_today()
+        self._day_view.set_follow_callback(self.go_today)
+        self._week_view.set_follow_callback(self.go_today)
 
         for view in [self._day_view, self._week_view]:
             view.slot_clicked.connect(self.slot_clicked.emit)
@@ -104,6 +114,7 @@ class CalendarWidget(QWidget):
         self.set_view(self._current_view)
 
     def set_view(self, view_type: ViewType):
+        self._follow_state.follow_present = False
         # Capture reference datetime from the old view before switching
         old_view = self._current_view
         ref_datetime = self.get_reference_datetime()
@@ -169,6 +180,7 @@ class CalendarWidget(QWidget):
             return datetime.now()
 
     def set_date(self, d: date):
+        self._follow_state.follow_present = False
         self._current_date = d
         self._day_view.set_date(d)
         self._week_view.set_date(d)
@@ -235,19 +247,28 @@ class CalendarWidget(QWidget):
         self._list_view.scroll_to_datetime(target_dt)
 
     def go_today(self):
+        # Skip set_date when already on today: go_today is invoked on every
+        # hour-bar tick in follow mode, and set_date triggers a full event
+        # refresh + state save via date_changed.
+        already_today = self._current_date == date.today()
         if self._current_view == ViewType.LIST:
             # For list view: scroll to next upcoming event
             self._list_view.scroll_to_upcoming()
         elif self._current_view in (ViewType.DAY, ViewType.WEEK):
-            self.set_date(date.today())
+            if not already_today:
+                self.set_date(date.today())
             now = datetime.now()
             hour = now.hour + now.minute / 60.0
             active_view = self._stack.currentWidget()
             active_view.scroll_to_center_hour(hour)
         else:  # MONTH
-            self.set_date(date.today())
+            if not already_today:
+                self.set_date(date.today())
+        # [Today] enables follow-present mode (set_date above cleared it).
+        self._follow_state.follow_present = True
 
     def go_previous(self):
+        self._follow_state.follow_present = False
         if self._current_view == ViewType.DAY:
             self.set_date(self._current_date - timedelta(days=1))
         elif self._current_view == ViewType.WEEK:
@@ -261,6 +282,7 @@ class CalendarWidget(QWidget):
             self._list_view.scroll_page_backward()
 
     def go_next(self):
+        self._follow_state.follow_present = False
         if self._current_view == ViewType.DAY:
             self.set_date(self._current_date + timedelta(days=1))
         elif self._current_view == ViewType.WEEK:

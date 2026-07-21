@@ -12,6 +12,7 @@ from gui.widgets.event_widget import (
 from gui.widgets.event_portion import EventPortion
 from gui.widgets.config_state import HOUR_HEIGHT
 from gui.widgets.day_column import DayColumnWidget
+from gui.widgets.follow_state import FollowState
 from gui.widgets.time_axis import LinearTimeAxis, QuadraticCompressionAxis, MixedTimeAxis, VariableTimeAxis
 
 UTC = pytz.UTC
@@ -172,7 +173,7 @@ def _make_col(for_date: date = None) -> DayColumnWidget:
     if for_date is None:
         for_date = date(2026, 1, 1)
     mapper = MixedTimeAxis(HOUR_HEIGHT)
-    col = DayColumnWidget(for_date, mapper)
+    col = DayColumnWidget(for_date, mapper, FollowState())
     col.set_viewport(800, 0.5)  # mid-scroll = focus at 12h
     return col
 

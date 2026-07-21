@@ -30,6 +30,7 @@ from .all_day_events import AllDayEventsRow
 from .day_column import DayColumnWidget
 from .time_axis import LinearTimeAxis, QuadraticCompressionAxis, MixedTimeAxis
 from .shared_scrollbar import SharedScrollBar, _ScrollBarState
+from .follow_state import FollowState
 from library.timezone_utils import to_local_datetime
 
 
@@ -59,7 +60,7 @@ class TimelineViewBase(QWidget):
     event_double_clicked = Signal(EventData)
     event_time_changed = Signal(EventData, datetime, datetime)
 
-    def __init__(self, parent=None, mapper=None, scroll_state: _ScrollBarState = None):
+    def __init__(self, parent=None, mapper=None, scroll_state: _ScrollBarState = None, follow_state=None):
         super().__init__(parent)
         self.setFocusPolicy(Qt.StrongFocus)
         self._events: list[EventData] = []
@@ -72,7 +73,17 @@ class TimelineViewBase(QWidget):
             self._mapper = MixedTimeAxis(get_hour_height(), get_layout_config().undistorted_hours)
 
         self._scroll_state = scroll_state
+        self._follow_state = follow_state if follow_state is not None else FollowState()
         self._setup_ui()
+
+    def set_follow_callback(self, cb):
+        """Wire the go-today callback into all day columns (follow mode)."""
+        for col in self._day_columns:
+            col._go_today_cb = cb
+
+    def _clear_follow(self):
+        """Disable follow-present mode (called on any user scroll action)."""
+        self._follow_state.follow_present = False
 
     # ------------------------------------------------------------------
     # Hooks for subclasses
@@ -168,6 +179,7 @@ class TimelineViewBase(QWidget):
             self._scrollbar.setRange(0, 1000)
             self._scrollbar.setSingleStep(1)
         self._scrollbar.valueChanged.connect(self._on_scrollbar_value_changed)
+        self._scrollbar.actionTriggered.connect(self._on_scrollbar_action_triggered)
         grid_layout.addWidget(self._scrollbar)
 
         main_layout.addWidget(grid_row, 1)
@@ -178,6 +190,10 @@ class TimelineViewBase(QWidget):
     def _on_scrollbar_value_changed(self, value: int):
         """Scrollbar moved — push new scroll ratio to day columns."""
         self._push_viewport_to_columns()
+
+    def _on_scrollbar_action_triggered(self, action: int):
+        """User interacted with the scrollbar (drag/trough/wheel) — follow off."""
+        self._clear_follow()
 
     def _sync_scrollbar_appearance(self):
         """Update scrollbar handle size and push viewport."""
@@ -292,7 +308,12 @@ class TimelineViewBase(QWidget):
         if vh <= 0:
             return
         ratio = self._mapper.scroll_ratio_for_hour(hour, vh)
-        self.set_scroll_position(int(ratio * 1000))
+        position = int(ratio * 1000)
+        # No-op when already centred — also terminates the follow-mode
+        # cycle: center → push viewport → update indicator → center → …
+        if position == self._scrollbar.value():
+            return
+        self.set_scroll_position(position)
 
     # ------------------------------------------------------------------
     # Event handling (shared template)
@@ -356,6 +377,7 @@ class TimelineViewBase(QWidget):
     # ------------------------------------------------------------------
 
     def wheelEvent(self, event: QWheelEvent):
+        self._clear_follow()
         scaled_delta = event.angleDelta() * _WHEEL_MULTIPLIER
         scaled_event = QWheelEvent(
             event.position(), event.globalPosition(),
@@ -378,6 +400,8 @@ class TimelineViewBase(QWidget):
         page_small = max(page // 8, 1)
 
         key = event.key()
+        if key in (Qt.Key_Up, Qt.Key_Down, Qt.Key_PageUp, Qt.Key_PageDown, Qt.Key_Home, Qt.Key_End):
+            self._clear_follow()
         if key == Qt.Key_Up:
             sb.setValue(sb.value() - small)
         elif key == Qt.Key_Down:
