@@ -256,10 +256,10 @@ class SyncManager:
                 debug_log(Level.DEBUG, f"sync: got password for {account.name}")
                 session = caldav_connect(account.url, account.username, pw,
                                          account.name)
-                result["sessions"][account.name] = session
                 debug_log(Level.DEBUG, f"sync: connected to {account.name}")
 
                 calendars = caldav_list_calendars(session)
+                result["sessions"][account.name] = session
                 debug_log(Level.DEBUG, f"sync: found {len(calendars)} calendars for {account.name}")
                 for cal_info in calendars:
                     source_id = f"caldav:{account.name}:{cal_info.id}"
@@ -485,7 +485,6 @@ class SyncManager:
                         try:
                             pw = acc.get_password(self._config.password_program)
                             session = caldav_connect(acc.url, acc.username, pw, acc.name)
-                            result["sessions"][account_name] = session
                             debug_log(Level.DEBUG, f"sync: connected {account_name}")
                         except Exception as e:
                             debug_log(Level.ERROR, f"sync: connect failed for {account_name}: {e}")
@@ -497,6 +496,7 @@ class SyncManager:
             # List calendars once per account
             try:
                 calendars = caldav_list_calendars(session)
+                result["sessions"][account_name] = session
             except Exception as e:
                 debug_log(Level.ERROR, f"sync: list calendars failed for {account_name}: {e}")
                 continue
@@ -880,10 +880,10 @@ class SyncManager:
             try:
                 pw = acc.get_password(self._config.password_program)
                 session = caldav_connect(acc.url, acc.username, pw, acc.name)
-                result["sessions"][acc.name] = session
                 for cal_info in caldav_list_calendars(session):
                     cid = f"caldav:{acc.name}:{cal_info.id}"
                     result["calendars"][cid] = cal_info
+                result["sessions"][acc.name] = session
             except Exception as e:
                 debug_log(Level.WARN, f"sync: _try_connect_missing failed for {acc.name}: {e}")
         return result
