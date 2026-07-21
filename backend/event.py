@@ -52,6 +52,7 @@ class CalendarSource:
     visible: bool = True
     last_sync_time: Optional[datetime] = None
     is_outdated: bool = False
+    is_orphaned: bool = False
 
     def __hash__(self):
         return hash(self.id)

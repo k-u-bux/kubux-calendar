@@ -84,6 +84,8 @@ class CalendarSidebarItem(QFrame):
         on_toggle: Callable[[str, bool], None],
         on_color_change: Callable[[str, str], None],
         subscription_icon: str = "📡",
+        orphaned_icon: str = "⚠",
+        orphaned_tooltip: str = "Calendar deleted on server",
         parent=None
     ):
         super().__init__(parent)
@@ -91,6 +93,8 @@ class CalendarSidebarItem(QFrame):
         self.on_toggle = on_toggle
         self.on_color_change = on_color_change
         self.subscription_icon = subscription_icon
+        self.orphaned_icon = orphaned_icon
+        self.orphaned_tooltip = orphaned_tooltip
         self._setup_ui()
 
     def _setup_ui(self):
@@ -114,6 +118,12 @@ class CalendarSidebarItem(QFrame):
             type_label = QLabel(self.subscription_icon)
             type_label.setToolTip("ICS Subscription (read-only)")
             layout.addWidget(type_label)
+
+        # Orphan indicator (calendar deleted on server)
+        if self.calendar.is_orphaned:
+            orphan_label = QLabel(self.orphaned_icon)
+            orphan_label.setToolTip(self.orphaned_tooltip)
+            layout.addWidget(orphan_label)
 
     def _on_visibility_toggle_changed(self, checked: bool):
         self.on_toggle(self.calendar.id, checked)
@@ -176,7 +186,9 @@ class CalendarSidebar(QWidget):
                     calendar,
                     self._on_calendar_toggle,
                     self._on_calendar_color_change,
-                    subscription_icon=self.event_store.config.labels.subscription_icon
+                    subscription_icon=self.event_store.config.labels.subscription_icon,
+                    orphaned_icon=self.event_store.config.labels.orphaned_icon,
+                    orphaned_tooltip=self.event_store.config.labels.orphaned_tooltip,
                 )
                 self._list_layout.addWidget(item)
                 self._items[calendar_id] = item

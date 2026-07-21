@@ -177,6 +177,8 @@ class LabelsConfig:
     subscription_icon: str = "📡"
     readonly_notice: str = "🔒 This event is read-only (from a subscription)"
     last_sync_label: str = "Last sync:"
+    orphaned_icon: str = "⚠"
+    orphaned_tooltip: str = "Calendar deleted on server"
 
 
 @dataclass
@@ -472,6 +474,8 @@ class Config:
             subscription_icon=labels_data.get('subscription_icon', LabelsConfig.subscription_icon),
             readonly_notice=labels_data.get('readonly_notice', LabelsConfig.readonly_notice),
             last_sync_label=labels_data.get('last_sync_label', LabelsConfig.last_sync_label),
+            orphaned_icon=labels_data.get('orphaned_icon', LabelsConfig.orphaned_icon),
+            orphaned_tooltip=labels_data.get('orphaned_tooltip', LabelsConfig.orphaned_tooltip),
         )
 
         return cls(

@@ -171,11 +171,40 @@ class SyncManager:
             self._on_sync_status(self.pending_count(), self._last_sync_time)
 
     # ------------------------------------------------------------------
-    # Source registration
+    # Source registration / removal
     # ------------------------------------------------------------------
 
     def register_ics(self, source_id: str, url: str) -> None:
         self._ics_urls[source_id] = url
+
+    def _remove_source(self, source_id: str) -> None:
+        """Remove a source and all its data from local state.
+
+        If the source has pending "create" operations (unsaved user data),
+        marks it as orphaned instead of removing it so the user can rescue
+        their events.
+        """
+        pending = self._fs.load_pending()
+        creates = [op for op in pending
+                   if op.source_id == source_id and op.operation == "create"]
+
+        if creates:
+            src = self._sources.get(source_id)
+            if src:
+                src.is_orphaned = True
+            return
+
+        # Remove non-create pending ops for this source — they can never succeed
+        remaining = [op for op in pending if op.source_id != source_id]
+        self._fs.save_pending(remaining)
+
+        # Clean up all local state
+        self._sources.pop(source_id, None)
+        self._calendars.pop(source_id, None)
+        self._source_last_success.pop(source_id, None)
+        self._source_last_attempt.pop(source_id, None)
+        self._ics_urls.pop(source_id, None)
+        self._fs.purge_source(source_id)
 
     # ------------------------------------------------------------------
     # Connect & discover (background)
@@ -321,6 +350,17 @@ class SyncManager:
                 }
             result["ics"][source_id] = len(events)
 
+        # Detect CalDAV sources that existed locally but are missing from the
+        # server response — only for accounts that connected successfully.
+        removed = []
+        for sid in list(self._sources.keys()):
+            src = self._sources.get(sid)
+            if src and src.source_type == "caldav":
+                if src.account_name in result.get("sessions", {}):
+                    if sid not in result.get("calendars", {}):
+                        removed.append(sid)
+        result["removed_sources"] = removed
+
         # NOTE: self._calendars, self._sessions, self._sources, self._source_last_*,
         #       self._last_sync_time are NOT written here — they are applied in
         #       _on_connect_all_done on the main thread.
@@ -367,6 +407,10 @@ class SyncManager:
         # Apply sync window
         self._valid_sync_window_start = result.get("sync_start")
         self._valid_sync_window_end = result.get("sync_end")
+
+        # Remove sources that were deleted on the server
+        for sid in result.get("removed_sources", []):
+            self._remove_source(sid)
 
         self._rebuild_index()
         self._notify_change()
@@ -502,6 +546,17 @@ class SyncManager:
 
         if result["synced"]:
             result["last_sync_time"] = now
+
+        # Detect CalDAV sources that were targeted but are missing from the
+        # server response — only for accounts that connected successfully.
+        removed = []
+        for sid in ids:
+            src = self._sources.get(sid)
+            if src and src.source_type == "caldav":
+                if src.account_name in result.get("sessions", {}):
+                    if sid not in result.get("calendars", {}):
+                        removed.append(sid)
+        result["removed_sources"] = removed
         return result
 
     def _fetch_caldav_source(
@@ -641,6 +696,10 @@ class SyncManager:
                 src.read_only = src_data.get("read_only", src.read_only)
                 src.is_outdated = src_data.get("is_outdated", src.is_outdated)
                 src.last_sync_time = result.get("source_last_success", {}).get(sid)
+
+        # Remove sources that were deleted on the server
+        for sid in result.get("removed_sources", []):
+            self._remove_source(sid)
 
         self._rebuild_index()
         self._notify_change()

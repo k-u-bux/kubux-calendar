@@ -78,7 +78,27 @@ class EventStore:
     ) -> None:
         self._on_sync_status_callback = callback
 
+    def _cleanup_orphaned_state(self) -> None:
+        """Remove visibility/color state for sources that no longer exist."""
+        current_ids = set(self._sources.keys())
+        changed = False
+        for sid in list(self._visibility.keys()):
+            if sid not in current_ids:
+                del self._visibility[sid]
+                changed = True
+        for sid in list(self._user_colors.keys()):
+            if sid not in current_ids:
+                del self._user_colors[sid]
+                changed = True
+        for sid in list(self._auto_colors.keys()):
+            if sid not in current_ids:
+                del self._auto_colors[sid]
+                changed = True
+        if changed:
+            self._save_state()
+
     def _notify_change(self) -> None:
+        self._cleanup_orphaned_state()
         if self._on_change_callback:
             self._on_change_callback()
 
