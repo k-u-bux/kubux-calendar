@@ -2,30 +2,19 @@
 
 import time
 import pytest
-from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QEventLoop, QTimer
 
 from library.task_dispatch import (
     dispatch_task, wait_for_tasks, cancel_task,
     tasks_are_pending, count_pending_tasks,
     thunk, tie_calls, tie_n_calls, thunk_and_tie,
-    shutdown_tasks,
+    shutdown_tasks, is_pending, tie_thunks,
 )
 
 
 # ----------------------------------------------------------------------
 # Fixtures
 # ----------------------------------------------------------------------
-
-@pytest.fixture(scope="session")
-def qapp():
-    """One QApplication for the whole test session."""
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    yield app
-    # Don't quit — other tests may still need it
-
 
 @pytest.fixture(autouse=True)
 def reset_dispatcher():
@@ -99,6 +88,21 @@ def test_dispatch_task_failure_no_callback(qapp):
 
 
 # ----------------------------------------------------------------------
+# is_pending
+# ----------------------------------------------------------------------
+
+def test_is_pending(qapp):
+    loop = QEventLoop()
+    ticket = dispatch_task(lambda v: loop.quit(), lambda: 42)
+    assert is_pending(ticket) is True
+    loop.exec()
+    # Give a moment for cleanup
+    _wait_for_callback(100)
+    # May or may not still be pending depending on cleanup timing
+    # So just check it was pending at least once
+
+
+# ----------------------------------------------------------------------
 # wait_for_tasks
 # ----------------------------------------------------------------------
 
@@ -125,6 +129,12 @@ def test_wait_for_tasks_timeout(qapp):
     ok = wait_for_tasks(timeout_ms=200)
 
     assert ok is False
+
+
+def test_wait_for_tasks_no_pending(qapp):
+    """No pending tasks returns True immediately."""
+    ok = wait_for_tasks(timeout_ms=1000)
+    assert ok is True
 
 
 # ----------------------------------------------------------------------
@@ -208,6 +218,21 @@ def test_tie_n_calls():
     assert result == [10, 13, 16]
 
 
+def test_tie_n_calls_default_args():
+    f = tie_n_calls(lambda: 1, lambda: 2)
+    result = f()
+    assert result == [1, 2]
+
+
+def test_tie_n_calls_mismatched_args():
+    f = tie_n_calls(lambda x: x)
+    try:
+        f([(1,), (2,)])  # wrong number of arg sets
+        assert False, "should have raised"
+    except ValueError:
+        pass
+
+
 # ----------------------------------------------------------------------
 # thunk_and_tie
 # ----------------------------------------------------------------------
@@ -218,3 +243,24 @@ def test_thunk_and_tie_mixed():
     f = thunk_and_tie(t1, t2)
     result = f()
     assert result == [6, 6]
+
+
+def test_thunk_and_tie_with_kwargs():
+    """thunk_and_tie with (func, args, kwargs) tuples."""
+    f = thunk_and_tie(
+        (lambda a, b=1: a + b, (5,), {"b": 2}),
+    )
+    result = f()
+    assert result == [7]
+
+
+# ----------------------------------------------------------------------
+# tie_thunks
+# ----------------------------------------------------------------------
+
+def test_tie_thunks():
+    t1 = thunk(lambda: 1)
+    t2 = thunk(lambda: 2)
+    f = tie_thunks(t1, t2)
+    result = f()
+    assert result == [1, 2]

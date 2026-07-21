@@ -4,6 +4,7 @@ from datetime import datetime, date
 import pytz
 from library.timezone_utils import (
     ensure_tz, to_utc, to_local_datetime, utc_to_local_naive, local_naive_to_utc,
+    set_timezone, get_local_timezone, _system_timezone_name,
 )
 
 UTC = pytz.UTC
@@ -79,3 +80,18 @@ def test_local_naive_to_utc():
     dt = datetime(2026, 1, 1, 10, 0, 0)
     result = local_naive_to_utc(dt)
     assert result.tzinfo == UTC
+
+
+def test_set_timezone():
+    old = get_local_timezone()
+    set_timezone("Europe/Berlin")
+    tz = get_local_timezone()
+    assert tz.zone == "Europe/Berlin"
+    # Restore
+    set_timezone(old.zone)
+
+
+def test_system_timezone_name():
+    name = _system_timezone_name()
+    assert isinstance(name, str)
+    assert len(name) > 0

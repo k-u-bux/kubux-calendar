@@ -38,10 +38,6 @@ def test_intersecting_empty_result():
 
     results = []
     tree.find_intersecting(dt(2), dt(4), lambda h: results.append(h.data))
-    # A: 0-2, B: 4-6. Query 2-4. A.end=2 which is >= start=2 so matches.
-    # B.start=4 which is <= end=4 so matches.
-    # Actually both touch: A.end(2) >= query.start(2) AND A.start(0) <= query.end(4) => match
-    # B.start(4) <= query.end(4) AND B.end(6) >= query.start(2) => match
     assert len(results) == 2
 
 
@@ -52,8 +48,6 @@ def test_intersecting_strictly_disjoint():
 
     results = []
     tree.find_intersecting(dt(1), dt(3), lambda h: results.append(h.data))
-    # A: 0-1, end=1 is >= query.start=1 => touches
-    # B: 3-4, start=3 is <= query.end=3 => touches
     assert len(results) == 2
 
 
@@ -92,7 +86,6 @@ def test_find_contained_strict():
 
     results = []
     tree.find_contained(dt(2), dt(4), lambda h: results.append(h.data))
-    # inside.start(2) >= query.start(2) and inside.end(4) <= query.end(4) => match
     assert len(results) == 1
 
 
@@ -164,3 +157,52 @@ def test_verify_integrity_after_deletes():
     tree.delete(handles[7])
     tree.delete(handles[0])
     tree.verify_integrity()
+
+# ----------------------------------------------------------------------
+# Randomized stress test
+# ----------------------------------------------------------------------
+
+def test_random_stress_integrity():
+    """Random inserts/deletes keep AVL + max_end invariants.
+
+    The core assertion is that verify_integrity() passes after every
+    insert and every delete.  We also check that the number of surviving
+    intervals matches the number of successful deletes.
+    """
+    import random
+    random.seed(42)
+    tree: IntervalTree[int] = IntervalTree()
+    handles = []
+    for _ in range(200):
+        s = random.randint(0, 1000)
+        e = s + random.randint(1, 50)
+        h = tree.insert(s, e, (s, e))
+        handles.append(h)
+        tree.verify_integrity()
+    # Delete half; verify_integrity after each is the real check
+    random.shuffle(handles)
+    for h in handles[:100]:
+        tree.delete(h)
+        tree.verify_integrity()
+    # Remaining intervals must be queryable
+    results = []
+    tree.find_intersecting(0, 1100, lambda h: results.append(h.data))
+    assert len(results) > 0
+
+
+def test_random_stress_query_matches_bruteforce():
+    """find_intersecting count matches a brute-force scan."""
+    import random
+    random.seed(7)
+    tree: IntervalTree[int] = IntervalTree()
+    intervals = []
+    for _ in range(100):
+        s = random.randint(0, 500)
+        e = s + random.randint(1, 30)
+        tree.insert(s, e, (s, e))
+        intervals.append((s, e))
+    qs, qe = 100, 300
+    tree_results = []
+    tree.find_intersecting(qs, qe, lambda h: tree_results.append(h.data))
+    brute = [(s, e) for (s, e) in intervals if s <= qe and e >= qs]
+    assert len(tree_results) == len(brute)

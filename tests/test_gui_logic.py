@@ -5,8 +5,6 @@ import pytest
 import pytz
 from unittest.mock import MagicMock
 
-from PySide6.QtWidgets import QApplication
-
 from gui.widgets.event_widget import (
     get_contrasting_text_color,
     lighten_color,
@@ -14,17 +12,9 @@ from gui.widgets.event_widget import (
 from gui.widgets.event_portion import EventPortion
 from gui.widgets.config_state import HOUR_HEIGHT
 from gui.widgets.day_column import DayColumnWidget
-from gui.widgets.time_axis import LinearTimeAxis, QuadraticCompressionAxis, MixedTimeAxis
+from gui.widgets.time_axis import LinearTimeAxis, QuadraticCompressionAxis, MixedTimeAxis, VariableTimeAxis
 
 UTC = pytz.UTC
-
-
-@pytest.fixture(scope="module")
-def qapp():
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
 
 
 # ----------------------------------------------------------------------
@@ -90,13 +80,13 @@ def test_lighten_color_clips():
 
 CET = pytz.timezone("Europe/Amsterdam")
 
-def _make_event_mock(start: datetime, end: datetime, all_day=False, read_only=False):
+def _make_event_mock(start: datetime, end: datetime, all_day=False, read_only=False, uid="test-uid"):
     ev = MagicMock()
     ev.start = start
     ev.end = end
     ev.all_day = all_day
     ev.read_only = read_only
-    ev.uid = "test-uid"
+    ev.uid = uid
     return ev
 
 
@@ -172,6 +162,7 @@ def _make_portion(start_h: float, end_h: float, uid: str = "uid") -> EventPortio
     ev = _make_event_mock(
         datetime(2026, 1, 1, tzinfo=UTC),
         datetime(2026, 1, 1, tzinfo=UTC),
+        uid=uid,
     )
     return EventPortion(ev, date(2026, 1, 1), start_h, end_h)
 
@@ -475,3 +466,255 @@ def test_mixed_delegation_boundary():
     y_lin = LinearTimeAxis(60).hour_to_y(12.0, vh, 0.5)
     # Mixed should pick one; both are close at this boundary
     assert abs(y_mixed - y_quad) < 0.05 or abs(y_mixed - y_lin) < 0.05
+
+
+# ----------------------------------------------------------------------
+# LinearTimeAxis tests
+# ----------------------------------------------------------------------
+
+def test_linear_monotonic():
+    """hour_to_y must be strictly increasing."""
+    v = LinearTimeAxis(60)
+    prev = -1.0
+    for h in range(0, 241):
+        y = v.hour_to_y(h / 10.0, 800, 0.5)
+        assert y > prev, f"non-monotonic at h={h/10.0}: {prev:.6f} → {y:.6f}"
+        prev = y
+
+
+def test_linear_range():
+    """hour_to_y with scroll_ratio=0 maps 0→0 and 24→(24*60/800)."""
+    v = LinearTimeAxis(60)
+    # At scroll_ratio=0, offset=0, so hour_to_y(0) = 0, hour_to_y(24) = 24*60/800
+    for ratio in [0.0]:
+        assert v.hour_to_y(0.0, 800, ratio) == pytest.approx(0.0, abs=1e-12)
+        assert v.hour_to_y(24.0, 800, ratio) == pytest.approx(1440.0 / 800.0, abs=1e-12)
+
+
+def test_linear_roundtrip():
+    """Forward + inverse must be accurate within 1e-4 hours."""
+    v = LinearTimeAxis(60)
+    for h in [0.0, 0.1, 2.5, 6.0, 11.9, 12.0, 12.1, 18.0, 22.7, 24.0]:
+        y = v.hour_to_y(h, 800, 0.5)
+        h2 = v.y_to_hour(y, 800, 0.5)
+        assert abs(h - h2) < 1e-4, f"roundtrip failed: {h} → y={y} → {h2}"
+
+
+def test_linear_scroll_changes_offset():
+    """LinearTimeAxis shifts with scroll_ratio."""
+    v = LinearTimeAxis(60)
+    # At scroll_ratio=0, hour 6 → 6*60/800 = 0.45
+    # At scroll_ratio=1, hour 6 → (6*60 - 640)/800 = -0.35
+    y0 = v.hour_to_y(6.0, 800, 0.0)
+    y1 = v.hour_to_y(6.0, 800, 1.0)
+    assert y0 != pytest.approx(y1, abs=1e-6)
+
+
+def test_linear_y_to_hour_roundtrip():
+    """y_to_hour round-trips with hour_to_y."""
+    v = LinearTimeAxis(60)
+    for h in [0.0, 6.0, 12.0, 24.0]:
+        y = v.hour_to_y(h, 800, 0.5)
+        h2 = v.y_to_hour(y, 800, 0.5)
+        assert abs(h - h2) < 1e-4, f"roundtrip failed: {h} → y={y} → {h2}"
+
+
+def test_linear_scrollbar_height():
+    """scrollbar_height returns expected value."""
+    v = LinearTimeAxis(60)
+    h = v.scrollbar_height(800)
+    # scrollbar_height = max(1, int(1000 * viewport / total))
+    # = max(1, int(1000 * 800 / 1440)) = max(1, 555) = 555
+    assert h == int(1000 * 800 / (24 * 60))
+
+
+# ----------------------------------------------------------------------
+# EventPortion property tests
+# ----------------------------------------------------------------------
+
+def test_portion_properties():
+    """Test EventPortion basic properties."""
+    start = datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC)
+    end = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    ev = _make_event_mock(start, end)
+    portion = EventPortion(ev, date(2026, 1, 1), 10.0, 12.0)
+    assert portion.event.uid == "test-uid"
+    assert portion.display_date == date(2026, 1, 1)
+    assert portion.visible_start_hour == 10.0
+    assert portion.visible_end_hour == 12.0
+
+
+# ----------------------------------------------------------------------
+# VariableTimeAxis tests
+# ----------------------------------------------------------------------
+
+def test_variable_monotonic():
+    """hour_to_y must be strictly increasing."""
+    v = VariableTimeAxis(60)
+    prev = -1.0
+    for h in range(0, 241):
+        y = v.hour_to_y(h / 10.0, 800, 0.5)
+        assert y > prev, f"non-monotonic at h={h/10.0}: {prev:.6f} → {y:.6f}"
+        prev = y
+
+
+def test_variable_range():
+    """hour_to_y maps 0→0 and 24→1."""
+    v = VariableTimeAxis(60)
+    for ratio in [0.0, 0.3, 0.5, 0.7, 1.0]:
+        assert v.hour_to_y(0.0, 800, ratio) == pytest.approx(0.0, abs=1e-9)
+        assert v.hour_to_y(24.0, 800, ratio) == pytest.approx(1.0, abs=1e-9)
+
+
+def test_variable_roundtrip():
+    """Forward + inverse must be accurate within 1e-3 hours."""
+    v = VariableTimeAxis(60)
+    for h in [0.0, 0.5, 2.5, 6.0, 11.9, 12.0, 12.1, 18.0, 22.7, 24.0]:
+        y = v.hour_to_y(h, 800, 0.5)
+        h2 = v.y_to_hour(y, 800, 0.5)
+        assert abs(h - h2) < 1e-3, f"roundtrip failed: {h} → y={y} → {h2}"
+
+
+def test_variable_scroll_moves_focus():
+    """Scroll changes where hours map to."""
+    v = VariableTimeAxis(60)
+    y_at_6_r0 = v.hour_to_y(6.0, 800, 0.0)
+    y_at_6_r1 = v.hour_to_y(6.0, 800, 1.0)
+    assert abs(y_at_6_r0 - y_at_6_r1) > 0.01
+
+
+def test_variable_scroll_ratio_for_hour_clamps():
+    v = VariableTimeAxis(60)
+    assert v.scroll_ratio_for_hour(0.0, 800) == 0.0
+    assert v.scroll_ratio_for_hour(24.0, 800) == 1.0
+    assert 0.0 < v.scroll_ratio_for_hour(12.0, 800) < 1.0
+
+
+def test_variable_stretch_magnifies_focus():
+    """A 1-hour span at the focus covers more Y than one at the edge."""
+    v = VariableTimeAxis(60, stretch=3.0, lens_width=6.0, margin=2.0)
+    # focus at scroll=0.5 is hour 12
+    y_focus_span = v.hour_to_y(12.5, 800, 0.5) - v.hour_to_y(11.5, 800, 0.5)
+    y_edge_span = v.hour_to_y(1.5, 800, 0.5) - v.hour_to_y(0.5, 800, 0.5)
+    assert y_focus_span > y_edge_span
+
+
+# ----------------------------------------------------------------------
+# DayColumnWidget._calculate_layout (column packing)
+# ----------------------------------------------------------------------
+
+def test_calculate_layout_disjoint_one_column(qapp):
+    col = _make_col()
+    col.add_portion(_make_portion(8.0, 9.0, uid="a"))
+    col.add_portion(_make_portion(10.0, 11.0, uid="b"))
+    col.add_portion(_make_portion(13.0, 14.0, uid="c"))
+    col._calculate_layout()  # layout only, skip widget creation
+    total_cols = {entry[2] for entry in col._event_layout}
+    assert total_cols == {1}
+
+
+def test_calculate_layout_three_mutual_overlap(qapp):
+    col = _make_col()
+    col.add_portion(_make_portion(10.0, 12.0, uid="a"))
+    col.add_portion(_make_portion(10.5, 12.5, uid="b"))
+    col.add_portion(_make_portion(11.0, 13.0, uid="c"))
+    col._calculate_layout()
+    total_cols = {entry[2] for entry in col._event_layout}
+    assert total_cols == {3}
+
+
+def test_calculate_layout_chain_two_columns(qapp):
+    """A∩B and B∩C but A and C adjacent → one group, 2 columns."""
+    col = _make_col()
+    col.add_portion(_make_portion(8.0, 10.0, uid="a"))
+    col.add_portion(_make_portion(9.0, 11.0, uid="b"))
+    col.add_portion(_make_portion(10.0, 12.0, uid="c"))
+    col._calculate_layout()
+    total_cols = {entry[2] for entry in col._event_layout}
+    assert total_cols == {2}
+
+
+def test_calculate_layout_empty(qapp):
+    col = _make_col()
+    col._calculate_layout()
+    assert col._event_layout == []
+
+
+# ----------------------------------------------------------------------
+# EventPortion.calculate_new_event_times — more cases
+# ----------------------------------------------------------------------
+
+def test_calculate_new_event_times_negative_delta():
+    """Dragging earlier shifts the event back."""
+    start = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    end = datetime(2026, 1, 1, 13, 0, 0, tzinfo=UTC)
+    ev = _make_event_mock(start, end)
+    portion = EventPortion(ev, date(2026, 1, 1), 12.0, 13.0)
+    new_start, new_end = portion.calculate_new_event_times(10.0, 11.0)
+    assert new_start.hour == 11
+    assert new_end.hour == 12
+
+
+def test_calculate_new_event_times_preserves_duration():
+    start = datetime(2026, 1, 1, 9, 0, 0, tzinfo=UTC)
+    end = datetime(2026, 1, 1, 9, 45, 0, tzinfo=UTC)
+    ev = _make_event_mock(start, end)
+    portion = EventPortion(ev, date(2026, 1, 1), 9.0, 9.75)
+    new_start, new_end = portion.calculate_new_event_times(14.0, 14.75)
+    assert (new_end - new_start) == timedelta(minutes=45)
+
+
+# ----------------------------------------------------------------------
+# lighten_color edge cases
+# ----------------------------------------------------------------------
+
+def test_lighten_color_negative_on_white_unchanged():
+    """The blend formula only moves toward white, so white is fixed."""
+    assert lighten_color("#ffffff", -0.5) == "#ffffff"
+
+
+def test_lighten_color_full_darken_clips():
+    result = lighten_color("#202020", -1.0)
+    assert result == "#000000"
+
+
+def test_lighten_color_invalid_returns_input():
+    assert lighten_color("not-a-color", 0.3) == "not-a-color"
+
+
+# ----------------------------------------------------------------------
+# EventWidget._sanitize_text
+# ----------------------------------------------------------------------
+
+def _widget_event(summary="Test", all_day=False, location="", read_only=False,
+                  is_recurring=False, calendar_color="#ff0000", calendar_name="Cal"):
+    ev = MagicMock()
+    ev.summary = summary
+    ev.all_day = all_day
+    ev.location = location
+    ev.read_only = read_only
+    ev.is_recurring = is_recurring
+    ev.calendar_color = calendar_color
+    ev.calendar_name = calendar_name
+    ev.sync_status = ""
+    ev.pending_operation = None
+    ev.uid = "test-uid"
+    ev.start = datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC)
+    ev.end = datetime(2026, 1, 1, 11, 0, 0, tzinfo=UTC)
+    src = MagicMock()
+    src.last_sync_time = None
+    src.is_outdated = False
+    src.color = calendar_color
+    src.name = calendar_name
+    src.read_only = read_only
+    ev.source = src
+    ev.event = ev  # EventView.event returns self
+    return ev
+
+
+def test_sanitize_text_collapses_whitespace(qapp):
+    from gui.widgets.event_widget import EventWidget
+    w = EventWidget(_widget_event(summary="T"), compact=True)
+    assert w._sanitize_text("Line\nBreak\tTab") == "Line Break Tab"
+    assert w._sanitize_text("  multiple   spaces  ") == "multiple spaces"
+    assert w._sanitize_text("") == ""

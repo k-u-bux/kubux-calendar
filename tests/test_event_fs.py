@@ -1,8 +1,9 @@
 """Tests for backend/event_fs.py."""
 
 from datetime import datetime
+import json
 import pytz
-from backend.event_fs import EventFS, SourceMeta, PendingOp, _safe_filename
+from backend.event_fs import EventFS, SourceMeta, PendingOp, _safe_filename, _default_base
 from backend.event import ImmutableEvent
 
 UTC = pytz.UTC
@@ -44,6 +45,17 @@ def test_load_event_missing(tmp_path):
     assert fs.load_event("src1", "nonexistent") is None
 
 
+def test_load_event_corrupt(tmp_path):
+    """Corrupt .ics file (binary junk) should return None."""
+    fs = EventFS(base=tmp_path)
+    path = fs._event_path("src1", "test-uid-001")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Write raw bytes that are not valid UTF-8 to trigger read error
+    path.write_bytes(b"\xff\xfe\x00\xff")
+    loaded = fs.load_event("src1", "test-uid-001")
+    assert loaded is None
+
+
 def test_delete_event(tmp_path):
     fs = EventFS(base=tmp_path)
     ev = ImmutableEvent.from_ical(BASIC_ICAL, "src1")
@@ -71,6 +83,20 @@ def test_list_events_empty_source(tmp_path):
     assert fs.list_events("nonexistent") == []
 
 
+def test_list_events_skips_corrupt(tmp_path):
+    """list_events should skip corrupt .ics files (binary junk) without crashing."""
+    fs = EventFS(base=tmp_path)
+    # Save one valid
+    ev = ImmutableEvent.from_ical(BASIC_ICAL, "src1")
+    fs.save_event(ev)
+    # Write a file with invalid UTF-8 bytes
+    path = fs._event_path("src1", "corrupt-uid")
+    path.write_bytes(b"\xff\xfe\x00\xff")
+    events = fs.list_events("src1")
+    assert len(events) == 1
+    assert events[0].uid == "test-uid-001"
+
+
 def test_source_meta_save_and_load(tmp_path):
     fs = EventFS(base=tmp_path)
     meta = SourceMeta(
@@ -95,6 +121,39 @@ def test_source_meta_round_trip(tmp_path):
     assert loaded is not None
     assert loaded.last_attempt == now
     assert loaded.last_success == now
+
+
+def test_source_meta_all_fields(tmp_path):
+    """Round-trip all SourceMeta fields including null datetimes."""
+    fs = EventFS(base=tmp_path)
+    meta = SourceMeta(
+        source_id="src-full",
+        name="Full",
+        color="#00ff00",
+        read_only=True,
+        source_type="ics",
+        account_name="",
+    )
+    assert meta.last_attempt is None
+    assert meta.last_success is None
+    fs.save_source_meta(meta)
+    loaded = fs.load_source_meta("src-full")
+    assert loaded is not None
+    assert loaded.name == "Full"
+    assert loaded.color == "#00ff00"
+    assert loaded.read_only is True
+    assert loaded.source_type == "ics"
+    assert loaded.last_attempt is None
+    assert loaded.last_success is None
+
+
+def test_load_source_meta_corrupt(tmp_path):
+    """Corrupt JSON should return None."""
+    fs = EventFS(base=tmp_path)
+    path = fs._source_meta_path("src1")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("not json")
+    assert fs.load_source_meta("src1") is None
 
 
 def test_list_source_ids(tmp_path):
@@ -134,6 +193,28 @@ def test_pending_op_replace_on_duplicate_uid(tmp_path):
     assert ops[0].operation == "update"
 
 
+def test_pending_op_with_instance_start(tmp_path):
+    """PendingOp with instance_start round-trips correctly."""
+    fs = EventFS(base=tmp_path)
+    inst_start = datetime(2026, 1, 8, 10, 0, 0, tzinfo=UTC)
+    fs.add_pending(PendingOp(
+        uid="u1", source_id="src1", operation="delete_instance",
+        instance_start=inst_start,
+    ))
+    ops = fs.load_pending()
+    assert len(ops) == 1
+    assert ops[0].operation == "delete_instance"
+    assert ops[0].instance_start == inst_start
+
+
+def test_load_pending_corrupt(tmp_path):
+    """Corrupt pending.json should return empty list."""
+    fs = EventFS(base=tmp_path)
+    fs._pending_file.parent.mkdir(parents=True, exist_ok=True)
+    fs._pending_file.write_text("not json")
+    assert fs.load_pending() == []
+
+
 def test_replace_source(tmp_path):
     fs = EventFS(base=tmp_path)
     ev1 = ImmutableEvent.from_ical(BASIC_ICAL, "src1")
@@ -164,6 +245,16 @@ def test_replace_source_preserves_pending(tmp_path):
     assert "test-uid-002" in uids
 
 
+def test_replace_source_with_pending_but_not_on_disk(tmp_path):
+    """Pending op that hasn't been saved to disk shouldn't cause issues."""
+    fs = EventFS(base=tmp_path)
+    fs.add_pending(PendingOp(uid="pending-only", source_id="src1", operation="create"))
+    ev_new = ImmutableEvent.from_ical(BASIC_ICAL, "src1")
+    fs.replace_source("src1", [ev_new])
+    events = fs.list_events("src1")
+    assert len(events) == 1  # pending-only wasn't on disk, so only new event
+
+
 def test_purge_source(tmp_path):
     fs = EventFS(base=tmp_path)
     ev = ImmutableEvent.from_ical(BASIC_ICAL, "src1")
@@ -182,3 +273,27 @@ def test_purge_all(tmp_path):
     fs.purge_all()
     assert fs.load_event("src1", "test-uid-001") is None
     assert fs.load_source_meta("src1") is None
+
+
+def test_config_tz_round_trip(tmp_path):
+    """config_tz is stored but __post_init__ uses UTC for parsing.
+    This test verifies round-trip doesn't crash and returns an event."""
+    berlin = pytz.timezone("Europe/Berlin")
+    fs = EventFS(base=tmp_path, config_tz=berlin)
+    ical = (
+        "BEGIN:VCALENDAR\r\n"
+        "VERSION:2.0\r\n"
+        "PRODID:-//Test//\r\n"
+        "BEGIN:VEVENT\r\n"
+        "DTSTART:20260101T100000Z\r\n"
+        "DTEND:20260101T110000Z\r\n"
+        "SUMMARY:Test\r\n"
+        "UID:float-1\r\n"
+        "END:VEVENT\r\n"
+        "END:VCALENDAR\r\n"
+    )
+    ev = ImmutableEvent.from_ical(ical, "src1", config_tz=berlin)
+    fs.save_event(ev)
+    loaded = fs.load_event("src1", "float-1")
+    assert loaded is not None
+    assert loaded.summary == "Test"

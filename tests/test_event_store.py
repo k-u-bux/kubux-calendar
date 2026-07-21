@@ -123,6 +123,42 @@ def test_create_event_ics_rejected(tmp_path):
     assert view is None
 
 
+def test_create_event_nonexistent_source(tmp_path):
+    """Creating an event on a nonexistent source returns None."""
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    view = store.create_event(
+        calendar_id="nonexistent",
+        summary="New",
+        start=datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC),
+        end=datetime(2026, 1, 1, 11, 0, 0, tzinfo=UTC),
+    )
+    assert view is None
+
+
+def test_create_event_with_recurrence_object(tmp_path):
+    """Create event with a RecurrenceRule object."""
+    from backend.event import RecurrenceRule
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    src = CalendarSource(id="caldav:acc:cal1", name="Cal1", source_type="caldav")
+    store._sources["caldav:acc:cal1"] = src
+
+    rrule = RecurrenceRule(frequency="WEEKLY", interval=2)
+    view = store.create_event(
+        calendar_id="caldav:acc:cal1",
+        summary="Recurring",
+        start=datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC),
+        end=datetime(2026, 1, 1, 11, 0, 0, tzinfo=UTC),
+        recurrence=rrule,
+    )
+    assert view is not None
+    # The event should have recurrence info
+    events = store._fs.list_events("caldav:acc:cal1")
+    assert len(events) == 1
+    assert events[0].is_recurring is True
+
+
 # ----------------------------------------------------------------------
 # update_event
 # ----------------------------------------------------------------------
@@ -247,6 +283,19 @@ def test_delete_recurring_instance(tmp_path):
     assert instance_ops[-1].instance_start == inst_start
 
 
+def test_delete_recurring_instance_read_only(tmp_path):
+    """delete_recurring_instance on a read-only source returns False."""
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    src = CalendarSource(id="caldav:acc:cal1", name="Cal1", source_type="caldav", read_only=True)
+    store._sources["caldav:acc:cal1"] = src
+
+    ev = ImmutableEvent.from_ical(BASIC_ICAL, "caldav:acc:cal1")
+    view = EventView(ev, src)
+    ok = store.delete_recurring_instance(view, datetime(2026, 1, 8, 10, 0, 0, tzinfo=UTC))
+    assert ok is False
+
+
 # ----------------------------------------------------------------------
 # move_event
 # ----------------------------------------------------------------------
@@ -289,6 +338,43 @@ def test_move_event_same_calendar_noop(tmp_path):
     )
     result = store.move_event(view, "caldav:acc:cal1")
     assert result is view  # same object returned
+
+
+def test_move_event_read_only_target(tmp_path):
+    """Moving to a read-only source returns None."""
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+
+    src1 = CalendarSource(id="caldav:acc:cal1", name="Cal1", source_type="caldav")
+    src2 = CalendarSource(id="caldav:acc:cal2", name="Cal2", source_type="caldav", read_only=True)
+    store._sources["caldav:acc:cal1"] = src1
+    store._sources["caldav:acc:cal2"] = src2
+
+    view = store.create_event(
+        calendar_id="caldav:acc:cal1",
+        summary="Movable",
+        start=datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC),
+        end=datetime(2026, 1, 1, 11, 0, 0, tzinfo=UTC),
+    )
+    result = store.move_event(view, "caldav:acc:cal2")
+    assert result is None
+
+
+def test_move_event_nonexistent_target(tmp_path):
+    """Moving to a nonexistent source returns None."""
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    src = CalendarSource(id="caldav:acc:cal1", name="Cal1", source_type="caldav")
+    store._sources["caldav:acc:cal1"] = src
+
+    view = store.create_event(
+        calendar_id="caldav:acc:cal1",
+        summary="Movable",
+        start=datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC),
+        end=datetime(2026, 1, 1, 11, 0, 0, tzinfo=UTC),
+    )
+    result = store.move_event(view, "nonexistent")
+    assert result is None
 
 
 # ----------------------------------------------------------------------
@@ -336,6 +422,20 @@ def test_get_calendars_visible_only():
     cals = store.get_calendars(visible_only=True)
     assert len(cals) == 1
     assert cals[0].id == "cal1"
+
+
+def test_get_calendar():
+    cfg = MagicMock()
+    cfg.timezone = "UTC"
+    cfg.state_file = Path("/tmp/state.json")
+    cfg.ics_subscriptions = []
+    cfg.nextcloud_accounts = []
+
+    store = EventStore(cfg)
+    store._sources["cal1"] = CalendarSource(id="cal1", name="Cal1")
+    assert store.get_calendar("cal1") is not None
+    assert store.get_calendar("cal1").id == "cal1"
+    assert store.get_calendar("nonexistent") is None
 
 
 def test_get_writable_calendars():
@@ -388,6 +488,24 @@ def test_set_calendar_color(tmp_path):
     assert state["user-assigned-colors"]["cal1"] == "#ff0000"
 
 
+def test_get_used_colors():
+    cfg = MagicMock()
+    cfg.timezone = "UTC"
+    cfg.state_file = Path("/tmp/state.json")
+    cfg.ics_subscriptions = []
+    cfg.nextcloud_accounts = []
+
+    store = EventStore(cfg)
+    store._sources["cal1"] = CalendarSource(id="cal1", name="Cal1", color="#ff0000")
+    store._sources["cal2"] = CalendarSource(id="cal2", name="Cal2", color="#00ff00")
+    store._sources["cal3"] = CalendarSource(id="cal3", name="Cal3", color="#ff0000")  # dup
+
+    colors = store.get_used_colors()
+    assert len(colors) == 2
+    assert "#ff0000" in colors
+    assert "#00ff00" in colors
+
+
 # ----------------------------------------------------------------------
 # get_sources_by_visibility
 # ----------------------------------------------------------------------
@@ -427,6 +545,38 @@ def test_state_round_trip(tmp_path):
     assert store2._visibility["cal1"] is False
     assert store2._user_colors["cal1"] == "#ff0000"
     assert store2._auto_colors["cal2"] == "#00ff00"
+
+
+def test_load_state_missing_file(tmp_path):
+    """Loading state with no file should not crash and leave empty dicts."""
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    assert store._state_file.exists() is False
+    store._load_state()
+    assert store._visibility == {}
+    assert store._user_colors == {}
+    assert store._auto_colors == {}
+
+
+def test_get_cached_event_count(tmp_path):
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    assert store.get_cached_event_count() == 0
+    src = CalendarSource(id="cal1", name="Cal1", source_type="caldav")
+    store._sources["cal1"] = src
+    ev = ImmutableEvent.from_ical(BASIC_ICAL, "cal1")
+    store._index.add(ev)
+    assert store.get_cached_event_count() == 1
+
+
+def test_mark_pending(tmp_path):
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    store.mark_pending("uid-1", "delete", "src1")
+    ops = store._fs.load_pending()
+    assert len(ops) == 1
+    assert ops[0].uid == "uid-1"
+    assert ops[0].operation == "delete"
 
 
 # ----------------------------------------------------------------------
@@ -529,3 +679,334 @@ def test_is_cache_valid_outside_window():
     start = datetime(2026, 1, 1, tzinfo=UTC)
     end = datetime(2026, 2, 1, tzinfo=UTC)
     assert store._is_cache_valid(start, end) is False
+
+
+# ----------------------------------------------------------------------
+# get_events_from_cache / _build_event_views
+# ----------------------------------------------------------------------
+
+def test_get_events_from_cache(tmp_path):
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    src = CalendarSource(id="cal1", name="Cal1")
+    store._sources["cal1"] = src
+    ev = ImmutableEvent.from_ical(BASIC_ICAL, "cal1")
+    store._index.add(ev)
+
+    views = store.get_events_from_cache(
+        datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC),
+        datetime(2026, 1, 2, 0, 0, 0, tzinfo=UTC),
+    )
+    assert len(views) == 1
+    assert views[0].summary == "Test"
+
+
+def test_get_events_from_cache_empty(tmp_path):
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    views = store.get_events_from_cache(
+        datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC),
+        datetime(2026, 1, 2, 0, 0, 0, tzinfo=UTC),
+    )
+    assert views == []
+
+
+def test_build_event_views_visible_only(tmp_path):
+    """Events from invisible sources should be excluded."""
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    src_visible = CalendarSource(id="cal1", name="Visible")
+    src_hidden = CalendarSource(id="cal2", name="Hidden")
+    store._sources["cal1"] = src_visible
+    store._sources["cal2"] = src_hidden
+    store._visibility["cal2"] = False
+
+    ev1 = ImmutableEvent.from_ical(BASIC_ICAL, "cal1")
+    ev2 = ImmutableEvent.from_ical(BASIC_ICAL.replace("UID:uid-1", "UID:uid-2"), "cal2")
+    store._index.add(ev1)
+    store._index.add(ev2)
+
+    views = store._build_event_views(
+        datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC),
+        datetime(2026, 1, 2, 0, 0, 0, tzinfo=UTC),
+    )
+    assert len(views) == 1
+    assert views[0].uid == "uid-1"
+
+
+def test_build_event_views_calendar_ids_filter(tmp_path):
+    """Filter by specific calendar IDs."""
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    src1 = CalendarSource(id="cal1", name="Cal1")
+    src2 = CalendarSource(id="cal2", name="Cal2")
+    store._sources["cal1"] = src1
+    store._sources["cal2"] = src2
+
+    ev1 = ImmutableEvent.from_ical(BASIC_ICAL, "cal1")
+    ev2 = ImmutableEvent.from_ical(BASIC_ICAL.replace("UID:uid-1", "UID:uid-2"), "cal2")
+    store._index.add(ev1)
+    store._index.add(ev2)
+
+    views = store._build_event_views(
+        datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC),
+        datetime(2026, 1, 2, 0, 0, 0, tzinfo=UTC),
+        calendar_ids=["cal1"],
+    )
+    assert len(views) == 1
+    assert views[0].uid == "uid-1"
+
+
+def test_build_event_views_naive_datetimes(tmp_path):
+    """Naive datetimes should be made UTC-aware."""
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    src = CalendarSource(id="cal1", name="Cal1")
+    store._sources["cal1"] = src
+    ev = ImmutableEvent.from_ical(BASIC_ICAL, "cal1")
+    store._index.add(ev)
+
+    views = store._build_event_views(
+        datetime(2026, 1, 1, 0, 0, 0),  # naive
+        datetime(2026, 1, 2, 0, 0, 0),  # naive
+    )
+    assert len(views) == 1
+
+
+def test_build_event_views_skips_missing_source(tmp_path):
+    """Events whose source is not in _sources should be skipped."""
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    ev = ImmutableEvent.from_ical(BASIC_ICAL, "cal1")
+    store._index.add(ev)  # source "cal1" not in store._sources
+
+    views = store._build_event_views(
+        datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC),
+        datetime(2026, 1, 2, 0, 0, 0, tzinfo=UTC),
+    )
+    assert views == []
+
+
+def test_trigger_background_fetch(tmp_path):
+    """_trigger_background_fetch should call refresh_all_in_background."""
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    with patch.object(store, 'refresh_all_in_background') as mock:
+        store._trigger_background_fetch(
+            datetime(2026, 1, 1, tzinfo=UTC),
+            datetime(2026, 2, 1, tzinfo=UTC),
+        )
+        mock.assert_called_once_with(
+            datetime(2026, 1, 1, tzinfo=UTC),
+            datetime(2026, 2, 1, tzinfo=UTC),
+        )
+
+
+# ----------------------------------------------------------------------
+# initialize_sources_only
+# ----------------------------------------------------------------------
+
+def test_initialize_sources_only(tmp_path):
+    """Initialize sources from EventFS metadata."""
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+
+    # Manually create source metadata in EventFS
+    fs = store._fs
+    from backend.event_fs import SourceMeta
+    fs.save_source_meta(SourceMeta(
+        source_id="src1", name="Cal1", color="#ff0000",
+        source_type="caldav", account_name="Personal",
+    ))
+
+    ok = store.initialize_sources_only()
+    assert ok is True
+    assert "src1" in store._sources
+    assert store._sources["src1"].name == "Cal1"
+    assert store._sources["src1"].color == "#ff0000"
+
+
+def test_initialize_sources_only_no_metadata(tmp_path):
+    """No cached metadata should return False and not crash."""
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    ok = store.initialize_sources_only()
+    assert ok is False
+
+
+# ----------------------------------------------------------------------
+# Callbacks
+# ----------------------------------------------------------------------
+
+def test_set_on_change_callback(tmp_path):
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    fired = []
+    def cb():
+        fired.append(True)
+    store.set_on_change_callback(cb)
+    store._notify_change()
+    assert fired == [True]
+
+
+def test_set_on_sync_status_callback(tmp_path):
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    statuses = []
+    def cb(pending, last_sync):
+        statuses.append((pending, last_sync))
+    store.set_on_sync_status_callback(cb)
+    store._notify_sync_status(pending_count=5, last_sync_time=datetime(2026, 1, 1, tzinfo=UTC))
+    assert len(statuses) == 1
+    assert statuses[0] == (5, datetime(2026, 1, 1, tzinfo=UTC))
+
+
+# ----------------------------------------------------------------------
+# load_events_for_source
+# ----------------------------------------------------------------------
+
+def test_load_events_for_source(tmp_path):
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    fs = store._fs
+    ev = ImmutableEvent.from_ical(BASIC_ICAL, "src1")
+    fs.save_event(ev)
+
+    count = store.load_events_for_source("src1")
+    assert count == 1
+    assert len(store._index) == 1
+
+
+def test_load_events_for_source_no_events(tmp_path):
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    count = store.load_events_for_source("src1")
+    assert count == 0
+
+
+# ----------------------------------------------------------------------
+# get_pending_sync_count
+# ----------------------------------------------------------------------
+
+def test_get_pending_sync_count(tmp_path):
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    assert store.get_pending_sync_count() == 0
+    store._fs.add_pending(PendingOp(uid="u1", source_id="src1", operation="create"))
+    assert store.get_pending_sync_count() == 1
+
+# ----------------------------------------------------------------------
+# _expand_instances
+# ----------------------------------------------------------------------
+
+RECURRING_ICAL = (
+    "BEGIN:VCALENDAR\r\n"
+    "VERSION:2.0\r\n"
+    "PRODID:-//Test//\r\n"
+    "BEGIN:VEVENT\r\n"
+    "DTSTART:20260101T100000Z\r\n"
+    "DTEND:20260101T110000Z\r\n"
+    "SUMMARY:Recur\r\n"
+    "UID:recur-1\r\n"
+    "RRULE:FREQ=DAILY;COUNT=5\r\n"
+    "END:VEVENT\r\n"
+    "END:VCALENDAR\r\n"
+)
+
+
+def test_expand_instances_recurring(tmp_path):
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    ev = ImmutableEvent.from_ical(RECURRING_ICAL, "src1", config_tz=UTC)
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = datetime(2026, 1, 6, tzinfo=UTC)
+    instances = store._expand_instances([ev], start, end)
+    assert len(instances) == 5
+    assert instances[0].start == datetime(2026, 1, 1, 10, 0, tzinfo=UTC)
+    assert instances[1].start == datetime(2026, 1, 2, 10, 0, tzinfo=UTC)
+    assert instances[4].start == datetime(2026, 1, 5, 10, 0, tzinfo=UTC)
+
+
+def test_expand_instances_non_recurring_passthrough(tmp_path):
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    ev = ImmutableEvent.from_ical(BASIC_ICAL, "src1", config_tz=UTC)
+    instances = store._expand_instances(
+        [ev], datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 2, tzinfo=UTC)
+    )
+    assert len(instances) == 1
+    assert instances[0] is ev
+
+
+# ----------------------------------------------------------------------
+# get_events — cache validity triggers fetch
+# ----------------------------------------------------------------------
+
+def test_get_events_triggers_fetch_when_cache_invalid(tmp_path):
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    src = CalendarSource(id="cal1", name="Cal1")
+    store._sources["cal1"] = src
+    ev = ImmutableEvent.from_ical(BASIC_ICAL, "cal1")
+    store._index.add(ev)
+    with patch.object(store, "_trigger_background_fetch") as mock_fetch:
+        views = store.get_events(
+            datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 2, tzinfo=UTC)
+        )
+        mock_fetch.assert_called_once()
+    assert len(views) == 1
+
+
+def test_get_events_no_fetch_when_cache_valid(tmp_path):
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    src = CalendarSource(id="cal1", name="Cal1")
+    store._sources["cal1"] = src
+    ev = ImmutableEvent.from_ical(BASIC_ICAL, "cal1")
+    store._index.add(ev)
+    store._sync_manager = MagicMock()
+    store._sync_manager.valid_sync_window_start = datetime(2025, 12, 1, tzinfo=UTC)
+    store._sync_manager.valid_sync_window_end = datetime(2026, 3, 1, tzinfo=UTC)
+    with patch.object(store, "_trigger_background_fetch") as mock_fetch:
+        views = store.get_events(
+            datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 2, tzinfo=UTC)
+        )
+        mock_fetch.assert_not_called()
+    assert len(views) == 1
+
+
+# ----------------------------------------------------------------------
+# _apply_source_state — outdated detection
+# ----------------------------------------------------------------------
+
+def test_apply_source_state_marks_outdated(tmp_path):
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    src = CalendarSource(id="cal1", name="Cal1")
+    store._sources["cal1"] = src
+    from backend.event_fs import SourceMeta
+    old = datetime.now() - timedelta(seconds=99999)
+    store._fs.save_source_meta(SourceMeta(source_id="cal1", name="Cal1", last_success=old))
+    store._apply_source_state()
+    assert src.is_outdated is True
+
+
+def test_apply_source_state_not_outdated(tmp_path):
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    src = CalendarSource(id="cal1", name="Cal1")
+    store._sources["cal1"] = src
+    from backend.event_fs import SourceMeta
+    recent = datetime.now()
+    store._fs.save_source_meta(SourceMeta(source_id="cal1", name="Cal1", last_success=recent))
+    store._apply_source_state()
+    assert src.is_outdated is False
+
+
+def test_apply_source_state_no_meta_is_outdated(tmp_path):
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    src = CalendarSource(id="cal1", name="Cal1")
+    store._sources["cal1"] = src
+    store._apply_source_state()
+    assert src.is_outdated is True

@@ -173,6 +173,54 @@ def test_is_source_outdated_stale():
 
 
 # ----------------------------------------------------------------------
+# properties
+# ----------------------------------------------------------------------
+
+def test_properties():
+    cfg = _make_config()
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg)
+    assert sm.last_sync_time is None
+    assert sm.valid_sync_window_start is None
+    assert sm.valid_sync_window_end is None
+    assert sm.source_last_success("src1") is None
+    assert sm.source_last_attempt("src1") is None
+    assert sm.pending_count() == 0
+    assert sm.get_calendar_info("src1") is None
+
+
+def test_properties_with_values():
+    cfg = _make_config()
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg)
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    sm._last_sync_time = now
+    sm._valid_sync_window_start = now - timedelta(days=120)
+    sm._valid_sync_window_end = now + timedelta(days=240)
+    sm._source_last_success["src1"] = now
+    sm._source_last_attempt["src1"] = now
+    sm._calendars["src1"] = MagicMock()
+    sm._fs.load_pending = MagicMock(return_value=[MagicMock()])
+
+    assert sm.last_sync_time == now
+    assert sm.valid_sync_window_start == now - timedelta(days=120)
+    assert sm.valid_sync_window_end == now + timedelta(days=240)
+    assert sm.source_last_success("src1") == now
+    assert sm.source_last_attempt("src1") == now
+    assert sm.pending_count() == 1
+    assert sm.get_calendar_info("src1") is not None
+
+
+# ----------------------------------------------------------------------
+# register_ics
+# ----------------------------------------------------------------------
+
+def test_register_ics():
+    cfg = _make_config()
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg)
+    sm.register_ics("ics:Holidays", "https://example.com/holidays.ics")
+    assert sm._ics_urls["ics:Holidays"] == "https://example.com/holidays.ics"
+
+
+# ----------------------------------------------------------------------
 # _rebuild_index
 # ----------------------------------------------------------------------
 
@@ -391,3 +439,313 @@ def test_on_connect_all_done_assigns_color_when_empty():
     src = sm._sources["caldav:Personal:cal1"]
     assert src.color.startswith("#")
     assert len(src.color) == 7
+
+
+# ----------------------------------------------------------------------
+# _on_refresh_done
+# ----------------------------------------------------------------------
+
+def test_on_refresh_done_applies_state():
+    cfg = _make_config()
+    sources = {"src1": CalendarSource(id="src1", name="Cal1", color="#000000")}
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources=sources, config=cfg)
+
+    result = {
+        "synced": ["src1"],
+        "sessions": {},
+        "calendars": {},
+        "sources": {
+            "src1": {
+                "color": "#ff0000",
+                "read_only": False,
+                "is_outdated": False,
+            }
+        },
+        "source_last_success": {"src1": datetime(2026, 1, 1, tzinfo=UTC)},
+        "source_last_attempt": {"src1": datetime(2026, 1, 1, tzinfo=UTC)},
+        "last_sync_time": datetime(2026, 1, 1, tzinfo=UTC),
+        "sync_start": datetime(2025, 12, 1, tzinfo=UTC),
+        "sync_end": datetime(2026, 3, 1, tzinfo=UTC),
+    }
+    sm._on_refresh_done(result)
+
+    assert sm._sources["src1"].color == "#ff0000"
+    assert sm._last_sync_time == result["last_sync_time"]
+    assert sm._valid_sync_window_start == result["sync_start"]
+    assert sm._valid_sync_window_end == result["sync_end"]
+    assert sm._source_last_success["src1"] == result["source_last_success"]["src1"]
+
+
+def test_on_refresh_done_no_sync_time():
+    """When no sync_time in result, last_sync_time is not updated."""
+    cfg = _make_config()
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg)
+    sm._on_refresh_done({
+        "synced": [],
+        "sessions": {}, "calendars": {}, "sources": {},
+        "source_last_success": {}, "source_last_attempt": {},
+        "last_sync_time": None, "sync_start": None, "sync_end": None,
+    })
+    assert sm._last_sync_time is None
+
+
+# ----------------------------------------------------------------------
+# _notify_change / _notify_sync_status
+# ----------------------------------------------------------------------
+
+def test_notify_change_callback():
+    cfg = _make_config()
+    fired = []
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg,
+                     on_change=lambda: fired.append(True))
+    sm._notify_change()
+    assert fired == [True]
+
+
+def test_notify_sync_status_callback():
+    cfg = _make_config()
+    fires = []
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg,
+                     on_sync_status=lambda pc, lst: fires.append((pc, lst)))
+    sm._notify_sync_status()
+    assert len(fires) == 1
+
+
+# ----------------------------------------------------------------------
+# refresh_due_in_background
+# ----------------------------------------------------------------------
+
+def test_refresh_due_in_background_dispatches():
+    cfg = _make_config(refresh_interval=300)
+    sources = {"src1": CalendarSource(id="src1", name="Cal1")}
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources=sources, config=cfg)
+    with patch('backend.sync_manager.dispatch_task') as mock:
+        sm.refresh_due_in_background()
+        mock.assert_called_once()
+
+
+def test_refresh_due_in_background_no_due():
+    """No due sources → no dispatch."""
+    cfg = _make_config(refresh_interval=300)
+    sources = {"src1": CalendarSource(id="src1", name="Cal1")}
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources=sources, config=cfg)
+    sm._source_last_attempt["src1"] = datetime.now()  # just synced
+    with patch('backend.sync_manager.dispatch_task') as mock:
+        sm.refresh_due_in_background()
+        mock.assert_not_called()
+
+
+# ----------------------------------------------------------------------
+# sync_pending_in_background
+# ----------------------------------------------------------------------
+
+def test_sync_pending_in_background_dispatches(tmp_path):
+    cfg = _make_config()
+    fs = EventFS(base=tmp_path)
+    fs.add_pending(PendingOp(uid="u1", source_id="src1", operation="create"))
+    sm = SyncManager(fs=fs, index=MagicMock(), sources={}, config=cfg)
+    with patch('backend.sync_manager.dispatch_task') as mock:
+        sm.sync_pending_in_background()
+        mock.assert_called_once()
+
+
+def test_sync_pending_in_background_no_ops():
+    """No pending ops → no dispatch."""
+    cfg = _make_config()
+    fs = MagicMock()
+    fs.load_pending.return_value = []
+    sm = SyncManager(fs=fs, index=MagicMock(), sources={}, config=cfg)
+    with patch('backend.sync_manager.dispatch_task') as mock:
+        sm.sync_pending_in_background()
+        mock.assert_not_called()
+
+
+# ----------------------------------------------------------------------
+# _sync_one
+# ----------------------------------------------------------------------
+
+def test_sync_one_missing_cal_info():
+    cfg = _make_config()
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg)
+    op = PendingOp(uid="u1", source_id="src1", operation="create")
+    ok = sm._sync_one(op, {}, {}, {})
+    assert ok is False
+
+
+def test_sync_one_missing_session():
+    cfg = _make_config()
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg)
+    cal_info = MagicMock()
+    src = CalendarSource(id="src1", name="Cal1", account_name="acc1")
+    op = PendingOp(uid="u1", source_id="src1", operation="create")
+    ok = sm._sync_one(op, {"src1": cal_info}, {}, {"src1": src})
+    assert ok is False
+
+
+def test_sync_one_create_missing_event():
+    """If the event is not in FS, create returns False."""
+    cfg = _make_config()
+    fs = MagicMock()
+    fs.load_event.return_value = None
+    sm = SyncManager(fs=fs, index=MagicMock(), sources={}, config=cfg)
+    cal_info = MagicMock()
+    session = MagicMock()
+    src = CalendarSource(id="src1", name="Cal1", account_name="acc1")
+    op = PendingOp(uid="u1", source_id="src1", operation="create")
+    ok = sm._sync_one(op, {"src1": cal_info}, {"acc1": session}, {"src1": src})
+    assert ok is False
+
+
+def test_sync_one_delete_instance_no_start():
+    cfg = _make_config()
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg)
+    op = PendingOp(uid="u1", source_id="src1", operation="delete_instance", instance_start=None)
+    ok = sm._sync_one(op, {}, {}, {})
+    assert ok is False
+
+
+def test_sync_one_unknown_operation():
+    cfg = _make_config()
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg)
+    op = PendingOp(uid="u1", source_id="src1", operation="unknown")
+    cal_info = MagicMock()
+    session = MagicMock()
+    src = CalendarSource(id="src1", name="Cal1", account_name="acc1")
+    ok = sm._sync_one(op, {"src1": cal_info}, {"acc1": session}, {"src1": src})
+    assert ok is False
+
+
+# ----------------------------------------------------------------------
+# _try_connect_missing
+# ----------------------------------------------------------------------
+
+def test_try_connect_missing_no_accounts():
+    cfg = _make_config()
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg)
+    result = sm._try_connect_missing()
+    assert result == {"sessions": {}, "calendars": {}}
+
+# ----------------------------------------------------------------------
+# _do_connect_all (worker)
+# ----------------------------------------------------------------------
+
+def test_do_connect_all_caldav(tmp_path):
+    cfg = _make_config()
+    fs = EventFS(base=tmp_path)
+    idx = EventIndex()
+    sources = {}
+    acc = MagicMock()
+    acc.name = "Personal"
+    acc.url = "https://nc.example.com"
+    acc.username = "user"
+    acc.get_password = MagicMock(return_value="pw")
+    cfg.nextcloud_accounts = [acc]
+    sm = SyncManager(fs=fs, index=idx, sources=sources, config=cfg)
+
+    with patch("backend.sync_manager.caldav_connect") as mock_connect, \
+         patch("backend.sync_manager.caldav_list_calendars") as mock_list, \
+         patch("backend.sync_manager.caldav_fetch_events") as mock_fetch:
+        mock_connect.return_value = MagicMock()
+        mock_cal = MagicMock()
+        mock_cal.id = "cal1"
+        mock_cal.name = "Cal1"
+        mock_cal.color = "#ff0000"
+        mock_cal.writable = True
+        mock_list.return_value = [mock_cal]
+        mock_fetch.return_value = [(BASIC_ICAL, "/cal/ev1.ics")]
+        result = sm._do_connect_all()
+
+    sid = "caldav:Personal:cal1"
+    assert sid in result["calendars"]
+    assert result["caldav"][sid] == 1
+    meta = fs.load_source_meta(sid)
+    assert meta is not None
+    assert meta.name == "Cal1"
+
+
+def test_do_connect_all_no_accounts(tmp_path):
+    cfg = _make_config()
+    fs = EventFS(base=tmp_path)
+    idx = EventIndex()
+    sm = SyncManager(fs=fs, index=idx, sources={}, config=cfg)
+    result = sm._do_connect_all()
+    assert result["caldav"] == {}
+    assert result["ics"] == {}
+    assert result["sync_start"] is not None
+    assert result["sync_end"] is not None
+
+
+# ----------------------------------------------------------------------
+# _do_sync_pending (worker)
+# ----------------------------------------------------------------------
+
+def test_do_sync_pending_success(tmp_path):
+    cfg = _make_config()
+    fs = EventFS(base=tmp_path)
+    idx = EventIndex()
+    sources = {"src1": CalendarSource(id="src1", name="Cal1", account_name="acc1")}
+    sm = SyncManager(fs=fs, index=idx, sources=sources, config=cfg)
+    fs.add_pending(PendingOp(uid="u1", source_id="src1", operation="create"))
+    with patch.object(sm, "_sync_one", return_value=True):
+        result = sm._do_sync_pending({}, {}, sources)
+    assert result["success"] == 1
+    assert result["done_uids"] == ["u1"]
+
+
+def test_do_sync_pending_failure_counts(tmp_path):
+    cfg = _make_config()
+    fs = EventFS(base=tmp_path)
+    idx = EventIndex()
+    sources = {"src1": CalendarSource(id="src1", name="Cal1", account_name="acc1")}
+    sm = SyncManager(fs=fs, index=idx, sources=sources, config=cfg)
+    fs.add_pending(PendingOp(uid="u1", source_id="src1", operation="delete"))
+    with patch.object(sm, "_sync_one", return_value=False):
+        result = sm._do_sync_pending({}, {}, sources)
+    assert result["success"] == 0
+    assert result["failed"] == 1
+    assert result["done_uids"] == []
+
+
+# ----------------------------------------------------------------------
+# _refresh_ics (worker)
+# ----------------------------------------------------------------------
+
+ICS_ICAL = (
+    "BEGIN:VCALENDAR\r\n"
+    "VERSION:2.0\r\n"
+    "PRODID:-//Test//\r\n"
+    "BEGIN:VEVENT\r\n"
+    "DTSTART:20260101T100000Z\r\n"
+    "DTEND:20260101T110000Z\r\n"
+    "SUMMARY:Holiday\r\n"
+    "UID:ics-1\r\n"
+    "END:VEVENT\r\n"
+    "END:VCALENDAR\r\n"
+)
+
+
+def test_refresh_ics_ok(tmp_path):
+    cfg = _make_config()
+    fs = EventFS(base=tmp_path)
+    idx = EventIndex()
+    sources = {"ics:Holidays": CalendarSource(id="ics:Holidays", name="Holidays", source_type="ics")}
+    sm = SyncManager(fs=fs, index=idx, sources=sources, config=cfg)
+    sm.register_ics("ics:Holidays", "https://example.com/h.ics")
+    with patch("backend.sync_manager.ics_fetch", return_value=ICS_ICAL), \
+         patch("backend.sync_manager.ics_parse_events", return_value=[ICS_ICAL]):
+        result = sm._refresh_ics("ics:Holidays", datetime.now(UTC), None, None)
+    assert result["ok"] is True
+    events = fs.list_events("ics:Holidays")
+    assert len(events) == 1
+
+
+def test_refresh_ics_fetch_fails(tmp_path):
+    cfg = _make_config()
+    fs = EventFS(base=tmp_path)
+    idx = EventIndex()
+    sources = {"ics:Holidays": CalendarSource(id="ics:Holidays", name="Holidays", source_type="ics")}
+    sm = SyncManager(fs=fs, index=idx, sources=sources, config=cfg)
+    sm.register_ics("ics:Holidays", "https://example.com/h.ics")
+    with patch("backend.sync_manager.ics_fetch", return_value=None):
+        result = sm._refresh_ics("ics:Holidays", datetime.now(UTC), None, None)
+    assert result["ok"] is False

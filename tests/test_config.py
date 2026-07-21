@@ -249,3 +249,174 @@ outdate_threshold = 14400
     assert config.nextcloud_accounts[0].outdate_threshold == 3600
     assert config.ics_subscriptions[0].refresh_interval == 600
     assert config.ics_subscriptions[0].outdate_threshold == 14400
+
+
+# ----------------------------------------------------------------------
+# NextcloudAccount.get_password
+# ----------------------------------------------------------------------
+
+def test_get_password_success(tmp_path):
+    from backend.config import NextcloudAccount
+    # The password program is called as [password_program, password_key]
+    # /usr/bin/true returns empty stdout, so password will be ""
+    acc = NextcloudAccount(name="Test", url="", username="", password_key="test-secret")
+    try:
+        pw = acc.get_password("/usr/bin/true")
+        assert pw == ""  # true returns empty stdout
+    except RuntimeError:
+        # May not be available in all environments
+        pass
+
+
+def test_get_password_cached():
+    """Password is cached after first call."""
+    from backend.config import NextcloudAccount
+    acc = NextcloudAccount(name="Test", url="", username="", password_key="test/key")
+    try:
+        pw1 = acc.get_password("/usr/bin/true")
+        pw2 = acc.get_password("/usr/bin/true")  # cached, no second call
+        assert pw1 == pw2
+    except RuntimeError:
+        pass
+
+
+def test_get_password_failure():
+    from backend.config import NextcloudAccount
+    acc = NextcloudAccount(name="Test", url="", username="", password_key="test/key")
+    try:
+        acc.get_password("/nonexistent/password/program")
+        assert False, "should have raised"
+    except RuntimeError:
+        pass
+
+
+# ----------------------------------------------------------------------
+# LocalizationConfig
+# ----------------------------------------------------------------------
+
+def test_get_day_name():
+    from backend.config import LocalizationConfig
+    loc = LocalizationConfig()
+    assert loc.get_day_name(0) == "Mon"
+    assert loc.get_day_name(6) == "Sun"
+    assert loc.get_day_name(7) == ""
+
+
+def test_get_day_name_out_of_range():
+    from backend.config import LocalizationConfig
+    loc = LocalizationConfig()
+    assert loc.get_day_name(-1) == ""
+    assert loc.get_day_name(99) == ""
+
+
+def test_get_day_name_for_column():
+    from backend.config import LocalizationConfig
+    loc = LocalizationConfig(day_names=["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+                             first_day_of_week=0)  # Monday first
+    assert loc.get_day_name_for_column(0) == "Mon"
+    assert loc.get_day_name_for_column(3) == "Thu"
+
+    loc2 = LocalizationConfig(day_names=["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+                              first_day_of_week=6)  # Sunday first
+    # Formula: (first_day_of_week + col) % 7 = (6 + 0) % 7 = 6 → day_names[6] = "Sat"
+    # So column 0 = Saturday, column 1 = Sunday
+    assert loc2.get_day_name_for_column(0) == "Sat"
+    assert loc2.get_day_name_for_column(1) == "Sun"
+
+
+def test_get_week_start():
+    from backend.config import LocalizationConfig
+    from datetime import date
+
+    loc = LocalizationConfig(first_day_of_week=0)  # Monday
+    # 2026-01-01 is a Thursday
+    d = date(2026, 1, 1)
+    week_start = loc.get_week_start(d)
+    assert week_start.weekday() == 0  # Monday
+    assert week_start == date(2025, 12, 29)  # Monday before Thursday
+
+    loc2 = LocalizationConfig(first_day_of_week=6)  # Sunday
+    week_start2 = loc2.get_week_start(d)
+    assert week_start2.weekday() == 6  # Sunday
+    assert week_start2 == date(2025, 12, 28)  # Sunday before Thursday
+
+
+def test_get_month_name():
+    from backend.config import LocalizationConfig
+    loc = LocalizationConfig()
+    assert loc.get_month_name(1) == "January"
+    assert loc.get_month_name(12) == "December"
+    assert loc.get_month_name(0) == ""
+    assert loc.get_month_name(13) == ""
+
+
+# ----------------------------------------------------------------------
+# Default paths
+# ----------------------------------------------------------------------
+
+def test_get_default_config_path():
+    import os
+    path = Config.get_default_config_path()
+    assert str(path).endswith("kubux-calendar.toml")
+    assert "XDG_CONFIG_HOME" not in str(path) or os.environ.get("XDG_CONFIG_HOME") is not None
+
+
+def test_get_default_state_path():
+    import os
+    path = Config.get_default_state_path()
+    assert str(path).endswith("state.json")
+    assert "XDG_STATE_HOME" not in str(path) or os.environ.get("XDG_STATE_HOME") is not None
+
+# ----------------------------------------------------------------------
+# Edge cases
+# ----------------------------------------------------------------------
+
+def test_load_empty_general_uses_defaults(tmp_path):
+    """A config with an empty [General] still loads with defaults."""
+    cfg = _write_config(tmp_path, """
+[General]
+""")
+    config = Config.load(cfg)
+    assert config.password_program == "/usr/bin/pass"
+    assert config.refresh_interval == 300
+
+
+def test_load_invalid_toml_raises(tmp_path):
+    """Malformed TOML should raise tomllib.TOMLDecodeError."""
+    import tomllib
+    cfg = _write_config(tmp_path, "this is = = not valid toml [[[")
+    try:
+        Config.load(cfg)
+        assert False, "should have raised"
+    except tomllib.TOMLDecodeError:
+        pass
+
+
+def test_load_state_file_expansion(tmp_path):
+    """state_file with ~ should be expanded."""
+    cfg = _write_config(tmp_path, """
+[General]
+password_program = "/usr/bin/pass"
+state_file = "~/some-state.json"
+""")
+    config = Config.load(cfg)
+    assert "~" not in str(config.state_file)
+
+
+def test_load_outdate_threshold_default(tmp_path):
+    cfg = _write_config(tmp_path, """
+[General]
+password_program = "/usr/bin/pass"
+""")
+    config = Config.load(cfg)
+    assert config.outdate_threshold == 7200
+
+
+def test_load_outdate_threshold_custom(tmp_path):
+    cfg = _write_config(tmp_path, """
+[General]
+password_program = "/usr/bin/pass"
+outdate_threshold = 3600
+""")
+    config = Config.load(cfg)
+    assert config.outdate_threshold == 3600

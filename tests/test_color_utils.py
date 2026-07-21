@@ -1,6 +1,6 @@
 """Tests for library/color_utils.py."""
 
-from library.color_utils import color_to_hue, get_unused_color
+from library.color_utils import color_to_hue, get_unused_color, _angular_distance
 
 
 def test_color_to_hue_basic():
@@ -36,3 +36,16 @@ def test_get_unused_color_many_existing():
     c = get_unused_color(used)
     assert c.startswith("#")
     assert c not in used
+
+
+def test_angular_distance_same():
+    assert _angular_distance(0.0, 0.0) == 0.0
+
+
+def test_angular_distance_opposite():
+    assert _angular_distance(0.0, 180.0) == 180.0
+
+
+def test_angular_distance_wrap():
+    """Distance across 0/360 boundary handled correctly."""
+    assert _angular_distance(350.0, 10.0) == 20.0
