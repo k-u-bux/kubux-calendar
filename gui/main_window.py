@@ -140,7 +140,6 @@ class MainWindow(QMainWindow):
         # On reload the EventIndex already has events — skip network init.
         # On first init, start the full two-phase load.
         if is_reload:
-            self._initializing = False  # reload: init done after state restore
             self._sidebar.refresh()
             self._sidebar.update_tooltips()
             self._update_display_from_cache()
@@ -893,6 +892,7 @@ class MainWindow(QMainWindow):
             self._init_from_config(new_config, captured_scroll)
             QApplication.processEvents()
             self._restore_scroll_position()
+            self._initializing = False
             self._statusbar.showMessage("Configuration applied successfully", 3000)
         except Exception as e:
             error_msg = f"Failed to apply config: {e}"
