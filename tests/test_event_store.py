@@ -1003,10 +1003,11 @@ def test_apply_source_state_not_outdated(tmp_path):
     assert src.is_outdated is False
 
 
-def test_apply_source_state_no_meta_is_outdated(tmp_path):
+def test_apply_source_state_no_meta_not_outdated(tmp_path):
+    """No metadata on disk = unverified cache, not stale."""
     cfg = _make_config_path(tmp_path)
     store = EventStore(cfg)
     src = CalendarSource(id="cal1", name="Cal1")
     store._sources["cal1"] = src
     store._apply_source_state()
-    assert src.is_outdated is True
+    assert src.is_outdated is False

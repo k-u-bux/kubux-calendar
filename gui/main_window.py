@@ -758,7 +758,11 @@ class MainWindow(QMainWindow):
         # Use background refresh - UI remains responsive
         self.event_store.refresh_due_sources_in_background()
         
-        # Update sidebar tooltips with new sync times
+        # Re-evaluate stale status — EventView.is_outdated compares confirmed_at
+        # vs datetime.now() live, so re-creating views picks up events that
+        # crossed the threshold since the last sync / display update.
+        self._update_display_from_cache()
+        self._update_sync_status()
         self._sidebar.update_tooltips()
     
     def _on_sync_timer(self):
@@ -806,12 +810,11 @@ class MainWindow(QMainWindow):
             # Show count of cached events (not just visible ones)
             cached_count = self.event_store.get_cached_event_count()
             time_str = last_sync.strftime("%H:%M")
-            # Check if any sources have stale data (sync failed / never succeeded)
-            outdated = [s for s in self.event_store.get_calendars() if s.is_outdated]
-            if outdated:
+            # Count stale events based on per-event mtime
+            stale_count = self.event_store.get_stale_event_count()
+            if stale_count:
                 self._statusbar.showMessage(
-                    f"Last sync at {time_str}, {cached_count} events cached "
-                    f"({len(outdated)} source{'s' if len(outdated) != 1 else ''} stale)"
+                    f"Last sync at {time_str}, {cached_count} events cached, {stale_count} stale"
                 )
             else:
                 self._statusbar.showMessage(f"Last sync at {time_str}, {cached_count} events cached")

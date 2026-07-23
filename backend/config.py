@@ -6,6 +6,7 @@ Handles TOML file parsing and secure password retrieval via external programs.
 
 import subprocess
 import os
+import shlex
 import tomllib
 from dataclasses import dataclass, field
 from datetime import date
@@ -28,11 +29,19 @@ class NextcloudAccount:
     _password: Optional[str] = field(default=None, repr=False)
 
     def get_password(self, password_program: str) -> str:
-        """Retrieve password using the configured password program."""
+        """Retrieve password using the configured password program.
+
+        Runs the command through a shell (``shell=True``) so that pipes,
+        ``~`` expansion, and other shell features work.  The
+        *password_key* is appended unquoted — both values come from the
+        config file and are not user-controlled.
+        """
         if self._password is None:
+            cmd = f"{password_program} {self.password_key}"
             try:
                 result = subprocess.run(
-                    [password_program, self.password_key],
+                    cmd,
+                    shell=True,
                     capture_output=True,
                     text=True,
                     timeout=30

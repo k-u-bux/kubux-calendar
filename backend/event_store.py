@@ -213,23 +213,31 @@ class EventStore:
             self._save_state()
 
     def _apply_source_state(self) -> None:
-        """Apply color overrides and outdated status to all sources.
+        """Apply color overrides, outdated status, and per-source threshold.
 
         Called after source initialization and after sync cycles.
-        Does not trigger SyncManager creation — uses cached metadata.
+        Uses SyncManager's per-session timing when available; falls
+        back to disk metadata only for sources the SyncManager doesn't
+        know about yet (pre-initialization).
         """
         for sid, src in self._sources.items():
             if sid in self._user_colors:
                 src.color = self._user_colors[sid]
             elif sid in self._auto_colors:
                 src.color = self._auto_colors[sid]
-            meta = self._fs.load_source_meta(sid)
-            if meta and meta.last_success:
-                threshold = self._source_outdate_threshold(sid)
-                elapsed = (datetime.now() - meta.last_success).total_seconds()
-                src.is_outdated = elapsed > threshold
+            # Set per-source outdate threshold from config
+            src.outdate_threshold = self._source_outdate_threshold(sid)
+            if self._sync_manager is not None:
+                src.is_outdated = self._sync_manager.is_source_outdated(sid)
             else:
-                src.is_outdated = True
+                # No SyncManager yet — use disk metadata.
+                # If no last_success on disk, data is unverified, not stale.
+                meta = self._fs.load_source_meta(sid)
+                if meta and meta.last_success:
+                    elapsed = (datetime.now() - meta.last_success).total_seconds()
+                    src.is_outdated = elapsed > src.outdate_threshold
+                else:
+                    src.is_outdated = False
 
     def _source_outdate_threshold(self, source_id: str) -> int:
         """Delegates to SyncManager's per-source or global threshold."""
@@ -819,6 +827,16 @@ class EventStore:
 
     def get_cached_event_count(self) -> int:
         return len(self._index)
+
+    def get_stale_event_count(self) -> int:
+        """Count cached events whose mtime (confirmed_at) exceeds the outdate threshold."""
+        stale = 0
+        for sid, src in self._sources.items():
+            threshold = src.outdate_threshold
+            for ev in self._fs.list_events(sid):
+                if ev.confirmed_at and (datetime.now() - ev.confirmed_at).total_seconds() > threshold:
+                    stale += 1
+        return stale
 
     def mark_pending(self, uid: str, operation: str, source_id: str) -> None:
         """Record a pending sync operation for an event."""

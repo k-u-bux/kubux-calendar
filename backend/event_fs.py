@@ -168,9 +168,13 @@ class EventFS:
     # === Event CRUD ========================================================
 
     def save_event(self, event: ImmutableEvent) -> None:
-        """Persist a single event (atomic)."""
+        """Persist a single event (atomic).  Returns confirmed_at (mtime)."""
         path = self._event_path(event.source_id, event.uid)
         _atomic_write(path, event.ical_data)
+        try:
+            return datetime.fromtimestamp(path.stat().st_mtime)
+        except OSError:
+            return None
 
     def load_event(self, source_id: str, uid: str) -> Optional[ImmutableEvent]:
         """Load a single event, or *None* if not cached."""
@@ -179,7 +183,11 @@ class EventFS:
             return None
         try:
             ical_data = path.read_text(encoding="utf-8")
-            return ImmutableEvent.from_ical(ical_data, source_id, config_tz=self._config_tz)
+            confirmed = datetime.fromtimestamp(path.stat().st_mtime)
+            return ImmutableEvent.from_ical(
+                ical_data, source_id, config_tz=self._config_tz,
+                confirmed_at=confirmed,
+            )
         except Exception as e:
             debug_log(Level.WARN, f"event_fs: load_event failed — {e}")
             return None
@@ -201,7 +209,11 @@ class EventFS:
         for p in src_dir.glob("*.ics"):
             try:
                 ical_data = p.read_text(encoding="utf-8")
-                ev = ImmutableEvent.from_ical(ical_data, source_id, config_tz=self._config_tz)
+                confirmed = datetime.fromtimestamp(p.stat().st_mtime)
+                ev = ImmutableEvent.from_ical(
+                    ical_data, source_id, config_tz=self._config_tz,
+                    confirmed_at=confirmed,
+                )
                 events.append(ev)
             except Exception as e:
                 debug_log(Level.DEBUG, f"event_fs: list_events — skipping unparseable event: {e}")
@@ -222,9 +234,6 @@ class EventFS:
         for op in self.load_pending():
             if op.source_id == source_id:
                 pending_uids.add(op.uid)
-
-        # Build new UID set
-        new_uids = {ev.uid for ev in events}
 
         # Delete old files that aren't in new set (and aren't pending)
         if src_dir.is_dir():

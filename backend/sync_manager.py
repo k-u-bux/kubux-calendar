@@ -117,10 +117,16 @@ class SyncManager:
 
     def is_source_outdated(self, source_id: str) -> bool:
         threshold = self.source_outdate_threshold(source_id)
-        last = self._source_last_success.get(source_id)
-        if last is None:
+        last_attempt = self._source_last_attempt.get(source_id)
+        last_success = self._source_last_success.get(source_id)
+        # No sync attempted yet this session — data is "unverified" not stale
+        if last_attempt is None:
+            return False
+        # Sync was attempted but never succeeded — data is stale
+        if last_success is None:
             return True
-        return (datetime.now() - last).total_seconds() > threshold
+        # Sync succeeded but too long ago
+        return (datetime.now() - last_success).total_seconds() > threshold
 
     def pending_count(self) -> int:
         return len(self._fs.load_pending())
@@ -277,15 +283,6 @@ class SyncManager:
                         "is_outdated": False,
                     }
 
-                    # Persist metadata (filesystem write is safe from worker)
-                    self._fs.save_source_meta(SourceMeta(
-                        source_id=source_id, name=cal_info.name,
-                        color=cal_info.color,
-                        read_only=not cal_info.writable,
-                        source_type="caldav", account_name=account.name,
-                        last_success=now,
-                    ))
-                    result["source_last_success"][source_id] = now
                     result["source_last_attempt"][source_id] = now
 
                     # Fetch events
@@ -295,6 +292,16 @@ class SyncManager:
                     if raw_events is None:
                         debug_log(Level.DEBUG, f"sync: fetch failed for {source_id} — keeping cached events")
                         continue
+
+                    # Persist metadata — only after successful fetch
+                    self._fs.save_source_meta(SourceMeta(
+                        source_id=source_id, name=cal_info.name,
+                        color=cal_info.color,
+                        read_only=not cal_info.writable,
+                        source_type="caldav", account_name=account.name,
+                        last_success=now,
+                    ))
+                    result["source_last_success"][source_id] = now
                     debug_log(Level.DEBUG, f"sync: got {len(raw_events)} raw events from {source_id}")
                     events = []
                     for ical_text, href in raw_events:

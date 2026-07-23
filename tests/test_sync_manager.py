@@ -149,10 +149,20 @@ def test_get_sources_needing_refresh_zero_interval_skipped():
 # is_source_outdated
 # ----------------------------------------------------------------------
 
-def test_is_source_outdated_no_last_success():
+def test_is_source_outdated_no_attempt():
+    """No sync attempted this session — data is unverified, not stale."""
     cfg = _make_config(outdate_threshold=7200)
     sources = {"src1": CalendarSource(id="src1", name="Cal1")}
     sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources=sources, config=cfg)
+    assert sm.is_source_outdated("src1") is False
+
+
+def test_is_source_outdated_attempted_but_no_success():
+    """Sync was attempted but never succeeded — data is stale."""
+    cfg = _make_config(outdate_threshold=7200)
+    sources = {"src1": CalendarSource(id="src1", name="Cal1")}
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources=sources, config=cfg)
+    sm._source_last_attempt["src1"] = datetime.now()
     assert sm.is_source_outdated("src1") is True
 
 
@@ -168,6 +178,7 @@ def test_is_source_outdated_stale():
     cfg = _make_config(outdate_threshold=1)
     sources = {"src1": CalendarSource(id="src1", name="Cal1")}
     sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources=sources, config=cfg)
+    sm._source_last_attempt["src1"] = datetime.now() - timedelta(seconds=10)
     sm._source_last_success["src1"] = datetime.now() - timedelta(seconds=10)
     assert sm.is_source_outdated("src1") is True
 

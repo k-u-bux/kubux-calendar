@@ -358,8 +358,8 @@ class EventWidget(QFrame):
         # sync_status: "" = not tracked, "pending" = waiting for sync, "syncing" = in progress, "synced" = done, "failed" = error
         has_pending_sync = self.event_data.sync_status in ("pending", "syncing", "failed")
         
-        # Check if source is outdated (no successful sync within threshold)
-        is_outdated = getattr(self.event_data.source, 'is_outdated', False)
+        # Per-event staleness based on file mtime
+        is_outdated = self.event_data.is_outdated
         
         if not self.event_data.is_recurring and not self.event_data.read_only and not has_pending_sync and not is_outdated:
             return

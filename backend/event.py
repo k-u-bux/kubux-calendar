@@ -53,6 +53,7 @@ class CalendarSource:
     last_sync_time: Optional[datetime] = None
     is_outdated: bool = False
     is_orphaned: bool = False
+    outdate_threshold: int = 28800
 
     def __hash__(self):
         return hash(self.id)
@@ -242,6 +243,10 @@ class ImmutableEvent:
     sync_state: str = "clean"
     caldav_href: Optional[str] = None
 
+    # Timestamp of last server confirmation (file mtime when written).
+    # None = never confirmed (e.g. newly created, pending sync).
+    confirmed_at: Optional[datetime] = None
+
     # Override times for recurring-event instances (ephemeral, not persisted).
     _instance_start: Optional[datetime] = field(
         default=None, repr=False, compare=False, hash=False
@@ -336,6 +341,7 @@ class ImmutableEvent:
         config_tz: Optional[pytz.BaseTzInfo] = None,
         caldav_href: Optional[str] = None,
         sync_state: str = "clean",
+        confirmed_at: Optional[datetime] = None,
     ) -> "ImmutableEvent":
         """
         Parse raw iCalendar text into an ImmutableEvent.
@@ -360,6 +366,7 @@ class ImmutableEvent:
             ical_data=ical_text,
             sync_state=sync_state,
             caldav_href=caldav_href,
+            confirmed_at=confirmed_at,
             _config_tz=config_tz,
         )
         return ev
@@ -590,6 +597,15 @@ class EventView:
     @property
     def sync_status(self) -> str:
         return "pending" if self._event.sync_state != "clean" else ""
+
+    @property
+    def is_outdated(self) -> bool:
+        """Per-event staleness based on file mtime vs config threshold."""
+        if self._event.confirmed_at is None:
+            return False
+        threshold = self._source.outdate_threshold
+        elapsed = (datetime.now() - self._event.confirmed_at).total_seconds()
+        return elapsed > threshold
 
     @property
     def pending_operation(self):
