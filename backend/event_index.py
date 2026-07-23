@@ -47,6 +47,12 @@ class EventIndex:
             self._tree.delete(handle)
         self._recurring.pop(uid, None)
 
+    def remove_all_for_source(self, source_id: str) -> None:
+        """Remove all events belonging to *source_id* from the index."""
+        removed_uids = [uid for uid, h in self._handles.items() if h.data.source_id == source_id]
+        for uid in removed_uids:
+            self.remove(uid)
+
     def clear(self) -> None:
         """Drop all entries."""
         self._tree = IntervalTree()

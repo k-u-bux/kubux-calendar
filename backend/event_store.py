@@ -756,6 +756,39 @@ class EventStore:
         # ICS URLs from new config
         new._ics_urls = {f"ics:{sub.name}": sub.url for sub in new_config.ics_subscriptions}
 
+        # Reconcile ICS subscription sources against new config:
+        #   - Remove subscriptions that were deleted from config
+        #   - Add subscriptions that were added to config
+        # This ensures the sidebar and event grid reflect changes immediately.
+        new_ics_ids = {f"ics:{sub.name}" for sub in new_config.ics_subscriptions}
+        old_ics_ids = {
+            sid for sid in new._sources
+            if sid.startswith("ics:")
+        }
+        # Remove old ICS sources no longer in config
+        for sid in old_ics_ids - new_ics_ids:
+            new._sources.pop(sid, None)
+            new._visibility.pop(sid, None)
+            new._user_colors.pop(sid, None)
+            new._auto_colors.pop(sid, None)
+            # Also remove from index so they don't render
+            new._index.remove_all_for_source(sid)
+        # Add new ICS sources from config
+        for sid in new_ics_ids - old_ics_ids:
+            # Find the matching subscription in config
+            sub_name = sid[len("ics:"):]
+            for sub in new_config.ics_subscriptions:
+                if sub.name == sub_name:
+                    new._sources[sid] = CalendarSource(
+                        id=sid,
+                        name=sub.name,
+                        color=sub.color,
+                        read_only=True,
+                        source_type="ics",
+                    )
+                    break
+        new._ensure_source_colors()
+
         # Callbacks — caller must re-register
         new._on_change_callback = None
         new._on_sync_status_callback = None
