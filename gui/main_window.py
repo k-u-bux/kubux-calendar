@@ -38,6 +38,10 @@ from .event_dialog import EventDialog
 from library.log import debug_log, Level
 
 
+# Module-level reference so EventStore can write the complete state file.
+main_window: 'MainWindow | None' = None
+
+
 class MainWindow(QMainWindow):
     """
     Main application window.
@@ -50,6 +54,9 @@ class MainWindow(QMainWindow):
     
     def __init__(self, config: Config, parent=None):
         super().__init__(parent)
+
+        global main_window
+        main_window = self
 
         # Track open event dialogs
         self._event_dialogs: list[EventDialog] = []
@@ -215,6 +222,7 @@ class MainWindow(QMainWindow):
         self._calendar_widget.view_changed.connect(self._on_view_changed)
         self._calendar_widget.date_changed.connect(self._on_date_changed)
         self._calendar_widget.visible_range_changed.connect(self._on_list_visible_range_changed)
+        self._calendar_widget.follow_present_changed.connect(self._save_state)
         
         main_layout.addWidget(self._calendar_widget)
         self._splitter.addWidget(main_widget)
@@ -349,24 +357,12 @@ class MainWindow(QMainWindow):
             self._ui_state = {}
     
     def _save_ui_state(self):
-        """Save UI state to the JSON state file."""
-        try:
-            # Load existing state to preserve calendar visibility/colors
-            existing_state = {}
-            if self._state_file.exists():
-                with open(self._state_file, 'r') as f:
-                    existing_state = json.load(f)
-            
-            # Update UI state
-            existing_state['ui'] = self._ui_state
-            
-            # Ensure directory exists
-            self._state_file.parent.mkdir(parents=True, exist_ok=True)
-            
-            with open(self._state_file, 'w') as f:
-                json.dump(existing_state, f, indent=2)
-        except Exception as e:
-            debug_log(Level.ERROR, f"Error saving UI state: {e}")
+        """Save UI state to the JSON state file.
+
+        Delegates to EventStore._save_state() which writes the complete
+        file including both UI and event-store sections.
+        """
+        self.event_store._save_state()
     
     def _load_state(self):
         """Load persisted application state from JSON."""

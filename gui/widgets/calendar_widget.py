@@ -50,6 +50,7 @@ class CalendarWidget(QWidget):
     view_changed = Signal(ViewType)
     date_changed = Signal(date)
     visible_range_changed = Signal(datetime, datetime)  # For list view date label updates
+    follow_present_changed = Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -73,6 +74,7 @@ class CalendarWidget(QWidget):
         # Shared follow-present flag: set by go_today, cleared by any other
         # navigation action or user scroll (handled in the timeline views).
         self._follow_state = FollowState()
+        self._follow_state.changed.connect(self.follow_present_changed.emit)
 
         self._stack = QStackedWidget()
 

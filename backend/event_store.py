@@ -652,9 +652,13 @@ class EventStore:
     def _save_state(self) -> None:
         try:
             self._state_file.parent.mkdir(parents=True, exist_ok=True)
+            # Import here to avoid circular import at module level.
+            from gui.main_window import main_window
+            ui_state = main_window._ui_state if main_window is not None else {}
             with open(self._state_file, 'w') as f:
                 json.dump(
                     {
+                        'ui': ui_state,
                         'visibility': self._visibility,
                         'user-assigned-colors': self._user_colors,
                         'auto-assigned-colors': self._auto_colors,
