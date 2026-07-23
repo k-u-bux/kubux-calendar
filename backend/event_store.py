@@ -99,6 +99,7 @@ class EventStore:
 
     def _notify_change(self) -> None:
         self._cleanup_orphaned_state()
+        self._apply_source_state()
         if self._on_change_callback:
             self._on_change_callback()
 

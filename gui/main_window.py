@@ -806,7 +806,15 @@ class MainWindow(QMainWindow):
             # Show count of cached events (not just visible ones)
             cached_count = self.event_store.get_cached_event_count()
             time_str = last_sync.strftime("%H:%M")
-            self._statusbar.showMessage(f"Last sync at {time_str}, {cached_count} events cached")
+            # Check if any sources have stale data (sync failed / never succeeded)
+            outdated = [s for s in self.event_store.get_calendars() if s.is_outdated]
+            if outdated:
+                self._statusbar.showMessage(
+                    f"Last sync at {time_str}, {cached_count} events cached "
+                    f"({len(outdated)} source{'s' if len(outdated) != 1 else ''} stale)"
+                )
+            else:
+                self._statusbar.showMessage(f"Last sync at {time_str}, {cached_count} events cached")
     
     def _on_reload_clicked(self):
         """Handle reload button click - force refresh from server (non-blocking)."""
