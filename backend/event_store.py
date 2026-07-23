@@ -144,8 +144,10 @@ class EventStore:
         # Register ICS subscriptions from config — iterate the config directly
         # so every subscription gets its real URL, regardless of cache state.
         # Always use config color, overriding any cached state.
+        config_ics_ids: set[str] = set()
         for sub in self.config.ics_subscriptions:
             sid = f"ics:{sub.name}"
+            config_ics_ids.add(sid)
             self._ics_urls[sid] = sub.url
             if sid not in self._sources:
                 self._sources[sid] = CalendarSource(
@@ -154,6 +156,15 @@ class EventStore:
                 )
             else:
                 self._sources[sid].color = sub.color
+
+        # Remove ICS sources from cache that are no longer in the config.
+        # Otherwise a subscription removed between runs would persist.
+        for sid in list(self._sources.keys()):
+            if sid.startswith("ics:") and sid not in config_ics_ids:
+                self._sources.pop(sid, None)
+                self._visibility.pop(sid, None)
+                self._user_colors.pop(sid, None)
+                self._auto_colors.pop(sid, None)
 
         self._apply_source_state()
         self._ensure_source_colors()
