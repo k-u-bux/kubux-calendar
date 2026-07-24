@@ -216,13 +216,17 @@ def test_load_pending_corrupt(tmp_path):
 
 
 def test_replace_source(tmp_path):
+    """replace_source deletes events inside the sync window that the server didn't return."""
     fs = EventFS(base=tmp_path)
     ev1 = ImmutableEvent.from_ical(BASIC_ICAL, "src1")
     ev2 = ImmutableEvent.from_ical(
         BASIC_ICAL.replace("UID:test-uid-001", "UID:test-uid-002"), "src1"
     )
     fs.save_event(ev1)
-    fs.replace_source("src1", [ev2])
+    # ev1 (2026-01-01) is inside the sync window and not in the server response → deleted
+    fs.replace_source("src1", [ev2],
+                      datetime(2025, 1, 1, tzinfo=UTC),
+                      datetime(2027, 1, 1, tzinfo=UTC))
     events = fs.list_events("src1")
     assert len(events) == 1
     assert events[0].uid == "test-uid-002"
@@ -238,7 +242,9 @@ def test_replace_source_preserves_pending(tmp_path):
     ev_new = ImmutableEvent.from_ical(
         BASIC_ICAL.replace("UID:test-uid-001", "UID:test-uid-002"), "src1"
     )
-    fs.replace_source("src1", [ev_new])
+    fs.replace_source("src1", [ev_new],
+                      datetime(2025, 1, 1, tzinfo=UTC),
+                      datetime(2027, 1, 1, tzinfo=UTC))
     events = fs.list_events("src1")
     uids = {e.uid for e in events}
     assert "test-uid-001" in uids  # pending event preserved
@@ -250,7 +256,9 @@ def test_replace_source_with_pending_but_not_on_disk(tmp_path):
     fs = EventFS(base=tmp_path)
     fs.add_pending(PendingOp(uid="pending-only", source_id="src1", operation="create"))
     ev_new = ImmutableEvent.from_ical(BASIC_ICAL, "src1")
-    fs.replace_source("src1", [ev_new])
+    fs.replace_source("src1", [ev_new],
+                      datetime(2025, 1, 1, tzinfo=UTC),
+                      datetime(2027, 1, 1, tzinfo=UTC))
     events = fs.list_events("src1")
     assert len(events) == 1  # pending-only wasn't on disk, so only new event
 

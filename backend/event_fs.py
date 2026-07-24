@@ -216,16 +216,36 @@ class EventFS:
                 )
                 events.append(ev)
             except Exception as e:
-                debug_log(Level.DEBUG, f"event_fs: list_events — skipping unparseable event: {e}")
-                continue
+                # If the file was modified recently, it may be a concurrent
+                # write from another thread — skip it.  Older unparseable
+                # files are genuinely corrupted and should be deleted.
+                age = (datetime.now() - datetime.fromtimestamp(p.stat().st_mtime)).total_seconds()
+                if age < 10:
+                    debug_log(Level.DEBUG, f"event_fs: list_events — skipping recently modified unparseable {p.name} (age={age:.1f}s, err={e})")
+                    continue
+                debug_log(Level.DEBUG, f"event_fs: list_events — deleting corrupted {p.name} (age={age:.1f}s, err={e})")
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
         return events
 
-    def replace_source(self, source_id: str, events: list[ImmutableEvent]) -> None:
+    def replace_source(
+        self,
+        source_id: str,
+        events: list[ImmutableEvent],
+        sync_start: datetime,
+        sync_end: datetime,
+    ) -> None:
         """
-        Replace *all* cached events for a source atomically.
+        Update cached events for a source with fresh server data.
 
-        Old files are deleted, new files are written.  Events with pending
-        sync state are **not** overwritten if they already exist.
+        New/updated events from the server response are written.
+        Cached events that fall **within** the sync window but were not
+        returned by the server are deleted (they were removed on the
+        server).  Cached events **outside** the sync window are preserved.
+
+        Events with pending sync state are never overwritten or deleted.
         """
         src_dir = self._source_dir(source_id)
 
@@ -235,23 +255,45 @@ class EventFS:
             if op.source_id == source_id:
                 pending_uids.add(op.uid)
 
-        # Delete old files that aren't in new set (and aren't pending)
-        if src_dir.is_dir():
-            for p in src_dir.glob("*.ics"):
-                uid_stem = p.stem  # sanitised UID
-                # Check if any new event would map to this file
-                keep = False
-                for ev in events:
-                    if _safe_filename(ev.uid) == uid_stem:
-                        keep = True
-                        break
-                if not keep and uid_stem not in {_safe_filename(u) for u in pending_uids}:
-                    try:
-                        p.unlink()
-                    except OSError:
-                        pass
+        # Build set of UIDs the server returned
+        server_uids = {ev.uid for ev in events}
 
-        # Write new events (skip pending ones)
+        # Delete cached events that are inside the sync window but absent
+        # from the server response (they were deleted on the server).
+        if src_dir.is_dir():
+            pending_hex = {_safe_filename(u) for u in pending_uids}
+            server_hex = {_safe_filename(u) for u in server_uids}
+            for p in src_dir.glob("*.ics"):
+                uid_stem = p.stem
+                # Check if this file corresponds to a pending event
+                if uid_stem in pending_hex:
+                    continue
+                # Check if the server returned this event
+                if uid_stem in server_hex:
+                    continue
+                # Load the event to check its time range
+                try:
+                    ical_data = p.read_text(encoding="utf-8")
+                    ev = ImmutableEvent.from_ical(
+                        ical_data, source_id, config_tz=self._config_tz,
+                    )
+                    # Delete only if the event overlaps the sync window.
+                    # Strip tzinfo for comparison — iCal allows both aware
+                    # and floating (naive) datetimes, and sync_start/sync_end
+                    # may also be either.
+                    ev_start = ev.start.replace(tzinfo=None) if ev.start.tzinfo else ev.start
+                    ev_end = ev.end.replace(tzinfo=None) if ev.end.tzinfo else ev.end
+                    s_start = sync_start.replace(tzinfo=None) if sync_start.tzinfo else sync_start
+                    s_end = sync_end.replace(tzinfo=None) if sync_end.tzinfo else sync_end
+                    if ev_end > s_start and ev_start < s_end:
+                        debug_log(Level.DEBUG, f"event_fs: deleting {ev.uid} ({ev.start}..{ev.end}) — inside sync window {sync_start}..{sync_end} but not in server response")
+                        p.unlink()
+                    else:
+                        debug_log(Level.DEBUG, f"event_fs: keeping {ev.uid} ({ev.start}..{ev.end}) — outside sync window {sync_start}..{sync_end}")
+                except Exception as e:
+                    debug_log(Level.ERROR, f"event_fs: replace_source — failed to parse {p.name}: {e}")
+
+        # Write new/updated events (skip pending ones)
         for ev in events:
             if ev.uid not in pending_uids:
                 self.save_event(ev)

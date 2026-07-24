@@ -668,10 +668,10 @@ def test_do_connect_all_caldav(tmp_path):
 
     sid = "caldav:Personal:cal1"
     assert sid in result["calendars"]
-    assert result["caldav"][sid] == 1
-    meta = fs.load_source_meta(sid)
-    assert meta is not None
-    assert meta.name == "Cal1"
+    # _do_connect_all no longer fetches events — it only discovers calendars.
+    # Event fetching is done by the subsequent refresh in the queue.
+    assert sid in result["sources"]
+    assert result["sources"][sid]["name"] == "Cal1"
 
 
 def test_do_connect_all_no_accounts(tmp_path):
@@ -680,8 +680,8 @@ def test_do_connect_all_no_accounts(tmp_path):
     idx = EventIndex()
     sm = SyncManager(fs=fs, index=idx, sources={}, config=cfg)
     result = sm._do_connect_all()
-    assert result["caldav"] == {}
-    assert result["ics"] == {}
+    assert result["sessions"] == {}
+    assert result["calendars"] == {}
     assert result["sync_start"] is not None
     assert result["sync_end"] is not None
 

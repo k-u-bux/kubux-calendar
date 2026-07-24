@@ -8,8 +8,12 @@ Every network call runs in a background thread via ``dispatch_task``.
 Results are delivered to the main thread through the dispatcher's
 Qt-signal mechanism; the manager then updates EventFS / EventIndex
 and fires the user-supplied *on_change* callback.
+
+Concurrent sync requests are serialised: a queue holds pending
+(source_id, sync_start, sync_end) tuples.  Only one runs at a time.
 """
 
+from collections import deque
 from datetime import datetime, timedelta
 from typing import Optional, Callable
 
@@ -73,6 +77,11 @@ class SyncManager:
 
         # ICS subscription URLs (source_id → url)
         self._ics_urls: dict[str, str] = {}
+
+        # Serialised sync queue: (source_id, sync_start, sync_end) tuples.
+        # source_id may be None → refresh all sources.
+        self._sync_queue: deque[tuple] = deque()
+        self._sync_running: bool = False
 
     # ------------------------------------------------------------------
     # State transfer (for EventStore.clone)
@@ -213,7 +222,7 @@ class SyncManager:
         self._fs.purge_source(source_id)
 
     # ------------------------------------------------------------------
-    # Connect & discover (background)
+    # Connect & discover (background) — sessions only, no event fetching
     # ------------------------------------------------------------------
 
     def connect_all_in_background(
@@ -221,10 +230,13 @@ class SyncManager:
         sync_start: Optional[datetime] = None,
         sync_end: Optional[datetime] = None,
     ) -> None:
-        """Connect to every configured CalDAV account + fetch ICS, in background.
+        """Connect to every configured CalDAV account, in background.
 
-        *sync_start* / *sync_end* define the time window to fetch.
-        If omitted, falls back to ``now ± SYNC_WINDOW_*_DAYS``.
+        Discovers calendars and builds sessions.  Does NOT fetch events —
+        that is done by the first refresh in the queue.
+
+        *sync_start* / *sync_end* are forwarded to the subsequent refresh
+        so the initial fetch covers the right window.
         """
         dispatch_task(self._on_connect_all_done, self._do_connect_all, sync_start, sync_end)
 
@@ -233,7 +245,7 @@ class SyncManager:
         sync_start: Optional[datetime] = None,
         sync_end: Optional[datetime] = None,
     ) -> dict:
-        """Runs in worker thread.  Returns results dict — no shared state mutation."""
+        """Runs in worker thread.  Connects, discovers calendars, returns metadata."""
         now = datetime.now()
         if sync_start is None:
             sync_start = now - timedelta(days=SYNC_WINDOW_PAST_DAYS)
@@ -241,8 +253,6 @@ class SyncManager:
             sync_end = now + timedelta(days=SYNC_WINDOW_FUTURE_DAYS)
 
         result: dict = {
-            "caldav": {},
-            "ics": {},
             "sessions": {},
             "calendars": {},
             "sources": {},          # source_id → CalendarSource data dict
@@ -284,69 +294,20 @@ class SyncManager:
                     }
 
                     result["source_last_attempt"][source_id] = now
-
-                    # Fetch events
-                    debug_log(Level.DEBUG, f"sync: fetching events for {source_id} in window {sync_start}..{sync_end}...")
-                    raw_events = caldav_fetch_events(cal_info,
-                                                     sync_start, sync_end)
-                    if raw_events is None:
-                        debug_log(Level.DEBUG, f"sync: fetch failed for {source_id} — keeping cached events")
-                        continue
-
-                    # Persist metadata — only after successful fetch
-                    self._fs.save_source_meta(SourceMeta(
-                        source_id=source_id, name=cal_info.name,
-                        color=cal_info.color,
-                        read_only=not cal_info.writable,
-                        source_type="caldav", account_name=account.name,
-                        last_success=now,
-                    ))
+                    # Mark last_success so the source is not treated as outdated
+                    # even though we haven't fetched events yet.
                     result["source_last_success"][source_id] = now
-                    debug_log(Level.DEBUG, f"sync: got {len(raw_events)} raw events from {source_id}")
-                    events = []
-                    for ical_text, href in raw_events:
-                        try:
-                            ev = ImmutableEvent.from_ical(
-                                ical_text, source_id, config_tz=self._config_tz, caldav_href=href)
-                            events.append(ev)
-                        except Exception as e:
-                            debug_log(Level.DEBUG, f"sync:   parse error for {href}: {e}")
-                            continue
-                    self._fs.replace_source(source_id, events)
-                    result["caldav"][source_id] = len(events)
-                    debug_log(Level.DEBUG, f"sync: stored {len(events)} events for {source_id}")
 
             except Exception as e:
                 debug_log(Level.ERROR, f"sync: CalDAV error for {account.name}: {e}")
 
-        # --- ICS ----------------------------------------------------------
+        # --- ICS — just register source metadata, no fetch yet ------------
         for source_id, url in self._ics_urls.items():
-            debug_log(Level.DEBUG, f"sync: fetching ICS {source_id}")
+            debug_log(Level.DEBUG, f"sync: registering ICS {source_id} for later fetch")
             result["source_last_attempt"][source_id] = now
-            raw = ics_fetch(url)
-            if raw is None:
-                debug_log(Level.DEBUG, f"sync:   ICS fetch returned None for {source_id}")
-                continue
-            texts = ics_parse_events(raw)
-            events = []
-            for t in texts:
-                try:
-                    events.append(ImmutableEvent.from_ical(t, source_id, config_tz=self._config_tz))
-                except Exception as e:
-                    debug_log(Level.DEBUG, f"sync: ics_event parse — skipping: {e}")
-                    continue
-            self._fs.replace_source(source_id, events)
             result["source_last_success"][source_id] = now
-            debug_log(Level.DEBUG, f"sync: stored {len(events)} events for ICS {source_id}")
-
-            # Snapshot source info for main-thread metadata write
             src = self._sources.get(source_id)
             if src:
-                self._fs.save_source_meta(SourceMeta(
-                    source_id=source_id, name=src.name,
-                    color=src.color, read_only=True,
-                    source_type="ics", last_success=now,
-                ))
                 result["sources"][source_id] = {
                     "id": source_id,
                     "name": src.name,
@@ -355,7 +316,6 @@ class SyncManager:
                     "source_type": "ics",
                     "is_outdated": False,
                 }
-            result["ics"][source_id] = len(events)
 
         # Detect CalDAV sources that existed locally but are missing from the
         # server response — only for accounts that connected successfully.
@@ -368,20 +328,11 @@ class SyncManager:
                         removed.append(sid)
         result["removed_sources"] = removed
 
-        # NOTE: self._calendars, self._sessions, self._sources, self._source_last_*,
-        #       self._last_sync_time are NOT written here — they are applied in
-        #       _on_connect_all_done on the main thread.
         return result
 
     def _on_connect_all_done(self, result):
-        """Main-thread callback — applies worker results to shared state."""
-        caldav_counts = result.get("caldav", {})
-        ics_counts = result.get("ics", {})
-        debug_log(Level.DEBUG, f"sync: connect_all done — CalDAV calendars: {list(caldav_counts.keys())}")
-        for sid, count in caldav_counts.items():
-            debug_log(Level.DEBUG, f"sync:   {sid}: {count} events")
-        for sid, count in ics_counts.items():
-            debug_log(Level.DEBUG, f"sync:   {sid}: {count} events")
+        """Main-thread callback — applies sessions, then enqueues a full refresh."""
+        debug_log(Level.DEBUG, f"sync: connect_all done — {len(result.get('sessions', {}))} sessions, {len(result.get('calendars', {}))} calendars")
 
         # Apply sessions
         self._sessions.update(result.get("sessions", {}))
@@ -394,6 +345,7 @@ class SyncManager:
                 existing.read_only = src_data["read_only"]
                 existing.is_outdated = src_data["is_outdated"]
                 existing.color = src_data["color"]
+                existing.account_name = src_data.get("account_name", existing.account_name)
             else:
                 color = src_data["color"]
                 if not color:
@@ -423,9 +375,41 @@ class SyncManager:
         self._notify_change()
         self._notify_sync_status()
 
+        # Now enqueue a full refresh to actually fetch events.
+        # The queue will serialise this with any already-pending refresh.
+        sync_start = result.get("sync_start")
+        sync_end = result.get("sync_end")
+        self._enqueue_refresh(None, sync_start, sync_end)
+
     # ------------------------------------------------------------------
-    # Refresh (background)
+    # Refresh queue — serialises all event-fetching tasks
     # ------------------------------------------------------------------
+
+    def _enqueue_refresh(
+        self,
+        source_id: Optional[str] = None,
+        sync_start: Optional[datetime] = None,
+        sync_end: Optional[datetime] = None,
+    ) -> None:
+        """Add a refresh request to the front of the queue and dispatch if not running.
+
+        LIFO order — the most recent request is processed next, so rapid
+        navigation only fetches the latest viewport.
+        """
+        self._sync_queue.appendleft((source_id, sync_start, sync_end))
+        self._dispatch_next_if_idle()
+
+    def _dispatch_next_if_idle(self) -> None:
+        """If no refresh is running and the queue is non-empty, dispatch the next."""
+        if self._sync_running:
+            return
+        if not self._sync_queue:
+            return
+        source_id, sync_start, sync_end = self._sync_queue.popleft()
+        self._sync_running = True
+        debug_log(Level.DEBUG, f"sync: dispatching refresh (source_id={source_id}, queue_len={len(self._sync_queue)})")
+        dispatch_task(self._on_refresh_done,
+                      self._do_refresh, source_id, sync_start, sync_end)
 
     def refresh_in_background(
         self,
@@ -433,8 +417,22 @@ class SyncManager:
         sync_start: Optional[datetime] = None,
         sync_end: Optional[datetime] = None,
     ) -> None:
-        dispatch_task(self._on_refresh_done,
-                      self._do_refresh, source_id, sync_start, sync_end)
+        """Refresh one or all sources.  Queued if another sync is running."""
+        debug_log(Level.DEBUG, f"sync: refresh_in_background (source_id={source_id}, queue_len={len(self._sync_queue)})")
+        self._enqueue_refresh(source_id, sync_start, sync_end)
+
+    def refresh_due_in_background(self) -> None:
+        """Refresh sources that are due.  Queued if another sync is running."""
+        due = self.get_sources_needing_refresh()
+        if not due:
+            return
+        # A single refresh with source_id=None covers all sources,
+        # which will refresh the overdue ones.  Queue it.
+        self._enqueue_refresh(None)
+
+    # ------------------------------------------------------------------
+    # Refresh — worker (does the actual file I/O)
+    # ------------------------------------------------------------------
 
     def _do_refresh(
         self,
@@ -603,15 +601,19 @@ class SyncManager:
             except Exception as e:
                 debug_log(Level.DEBUG, f"sync:   parse error: {e}")
                 continue
-        self._fs.replace_source(source_id, events)
+        self._fs.replace_source(source_id, events, sync_start, sync_end)
         debug_log(Level.DEBUG, f"sync: stored {len(events)} events for {source_id}")
+
+        # Extract account_name from source_id (caldav:{account_name}:{calendar_id})
+        parts = source_id.split(":", 2)
+        account_name = parts[1] if len(parts) == 3 and parts[0] == "caldav" else src.account_name
 
         # Source data to apply on main thread
         result["source_data"] = {
             "id": source_id,
             "name": cal_info.name,
             "color": cal_info.color,
-            "account_name": src.account_name,
+            "account_name": account_name,
             "read_only": not cal_info.writable,
             "source_type": "caldav",
             "is_outdated": False,
@@ -623,7 +625,7 @@ class SyncManager:
             source_id=source_id, name=cal_info.name,
             color=cal_info.color,
             read_only=not cal_info.writable,
-            source_type="caldav", account_name=src.account_name,
+            source_type="caldav", account_name=account_name,
             last_success=now,
         ))
         result["ok"] = True
@@ -652,7 +654,7 @@ class SyncManager:
             except Exception as e:
                 debug_log(Level.DEBUG, f"sync: ics_event parse — skipping: {e}")
                 continue
-        self._fs.replace_source(source_id, events)
+        self._fs.replace_source(source_id, events, sync_start, sync_end)
         result["last_success"] = now
 
         src = self._sources.get(source_id)
@@ -673,7 +675,7 @@ class SyncManager:
         return result
 
     def _on_refresh_done(self, result: dict):
-        """Main-thread callback — applies worker results to shared state."""
+        """Main-thread callback — applies worker results, then dispatches next."""
         # Apply sessions
         self._sessions.update(result.get("sessions", {}))
         # Apply calendars
@@ -702,15 +704,20 @@ class SyncManager:
                 src.color = color
                 src.read_only = src_data.get("read_only", src.read_only)
                 src.is_outdated = src_data.get("is_outdated", src.is_outdated)
+                src.account_name = src_data.get("account_name", src.account_name)
                 src.last_sync_time = result.get("source_last_success", {}).get(sid)
 
         # Remove sources that were deleted on the server
         for sid in result.get("removed_sources", []):
             self._remove_source(sid)
 
+        self._sync_running = False
         self._rebuild_index()
         self._notify_change()
         self._notify_sync_status()
+
+        # Dispatch the next queued refresh
+        self._dispatch_next_if_idle()
 
     # ------------------------------------------------------------------
     # Refresh due sources
@@ -727,15 +734,6 @@ class SyncManager:
             if last is None or (now - last).total_seconds() >= interval:
                 due.append(sid)
         return due
-
-    def refresh_due_in_background(self) -> None:
-        due = self.get_sources_needing_refresh()
-        if not due:
-            return
-        # Single task refreshes all due sources — avoids flooding the
-        # thread pool with N individual tasks that would starve
-        # higher-priority work like connect_all_in_background.
-        dispatch_task(self._on_refresh_done, self._do_refresh, None)
 
     # ------------------------------------------------------------------
     # Pending sync (background)
@@ -867,12 +865,18 @@ class SyncManager:
         pending_by_uid: dict[str, str] = {}
         for op in self._fs.load_pending():
             pending_by_uid[op.uid] = state_map.get(op.operation, "clean")
+        total = 0
         for source_id in self._sources:
+            count = 0
             for ev in self._fs.list_events(source_id):
                 pending_op = pending_by_uid.get(ev.uid)
                 if pending_op and pending_op != ev.sync_state:
                     ev = ev.with_updates(sync_state=pending_op)
                 self._index.add(ev)
+                count += 1
+            debug_log(Level.DEBUG, f"sync: _rebuild_index — source {source_id}: {count} events")
+            total += count
+        debug_log(Level.DEBUG, f"sync: _rebuild_index — total: {total} events across {len(self._sources)} sources")
 
     # ------------------------------------------------------------------
     # Helper — reconnect missing CalDAV clients

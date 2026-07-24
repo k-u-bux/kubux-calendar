@@ -295,7 +295,7 @@ class EventStore:
         sub_order = {sub.name: i for i, sub in enumerate(self.config.ics_subscriptions)}
 
         def sort_key(src: CalendarSource) -> tuple:
-            if src.account_name:
+            if src.source_type == "caldav":
                 # (group 0, account index, calendar name lowercase)
                 idx = account_order.get(src.account_name, 999)
                 return (0, idx, src.name.lower())
