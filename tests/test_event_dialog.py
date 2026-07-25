@@ -100,3 +100,40 @@ def test_on_tz_changed_converts_displayed_time(qapp, tmp_path):
     end = dlg._end_edit.dateTime().toPython()
     assert start.hour == 11
     assert end.hour == 12
+
+
+# ----------------------------------------------------------------------
+# Regression: edit-dialog title must apply the dialog_edit_event
+# format template ("Edit: {}") instead of showing a literal "{}"
+# ----------------------------------------------------------------------
+
+def _make_event_view(summary="Dentist"):
+    ev = MagicMock()
+    ev.summary = summary
+    ev.location = ""
+    ev.description = ""
+    ev.all_day = False
+    ev.read_only = False
+    ev.recurrence = None
+    ev.start = datetime(2026, 1, 1, 10, 0)
+    ev.end = datetime(2026, 1, 1, 11, 0)
+    src = CalendarSource(id="cal1", name="Cal1", source_type="caldav")
+    ev.source = src
+    ev.immutable_event = ev
+    ev.tzid = None
+    return ev
+
+
+def test_edit_dialog_title_uses_format_template(qapp, tmp_path):
+    store = _make_store(tmp_path)
+    with patch("gui.event_dialog.QMessageBox"):
+        dlg = EventDialog(store, event_data=_make_event_view())
+    assert dlg.windowTitle() == "Edit: Dentist"
+
+
+def test_edit_dialog_title_label_without_placeholder(qapp, tmp_path):
+    store = _make_store(tmp_path)
+    store.config.labels.dialog_edit_event = "Edit:"
+    with patch("gui.event_dialog.QMessageBox"):
+        dlg = EventDialog(store, event_data=_make_event_view())
+    assert dlg.windowTitle() == "Edit: Dentist"

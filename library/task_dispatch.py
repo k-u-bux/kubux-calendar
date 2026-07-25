@@ -71,6 +71,15 @@ class _DispatcherEngine(QObject):
             except Exception as e:
                 debug_log(Level.ERROR, f"UNKNOWN: Task {ticket} {type(e).__name__}: {e} — investigate")
                 self.task_failed.emit(ticket, str(e))
+            except BaseException as e:
+                # SystemExit / KeyboardInterrupt in a worker: nothing may
+                # escape, or the ticket stays in _pending forever and
+                # wait_for_tasks() hangs.  Emit task_failed so the ticket
+                # is cleaned up on the main thread.
+                debug_log(Level.ERROR, f"FATAL: Task {ticket} {type(e).__name__}: {e}")
+                self.task_failed.emit(ticket, str(e))
+
+
 
         future = self._executor.submit(_wrapper)
         self._pending[ticket] = future

@@ -264,3 +264,20 @@ def test_tie_thunks():
     f = tie_thunks(t1, t2)
     result = f()
     assert result == [1, 2]
+
+# ----------------------------------------------------------------------
+# Regression: a BaseException (SystemExit/KeyboardInterrupt) in a worker
+# must not leave the ticket in _pending forever (wait_for_tasks hangs)
+# ----------------------------------------------------------------------
+
+def test_dispatch_task_base_exception_cleans_ticket(qapp):
+    called = []
+
+    def boom():
+        raise SystemExit(1)
+
+    ticket = dispatch_task(called.append, boom)
+    ok = wait_for_tasks(timeout_ms=2000)
+    assert ok is True
+    assert not is_pending(ticket)
+    assert called == []

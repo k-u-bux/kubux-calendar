@@ -91,7 +91,15 @@ class EventDialog(QWidget):
         if self.is_new:
             self.setWindowTitle(self.event_store.config.labels.dialog_new_event)
         else:
-            self.setWindowTitle(f"{self.event_store.config.labels.dialog_edit_event}: {self.event_data.summary}")
+            # dialog_edit_event is a format template ("Edit: {}").  Labels
+            # without a placeholder are used verbatim (summary appended).
+            label = self.event_store.config.labels.dialog_edit_event
+            try:
+                title = label.format(self.event_data.summary) if "{}" in label else f"{label} {self.event_data.summary}"
+            except Exception:
+                title = f"{label} {self.event_data.summary}"
+            self.setWindowTitle(title)
+
         self.setWindowFlags(Qt.Window)
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.setMinimumSize(400, 500)
