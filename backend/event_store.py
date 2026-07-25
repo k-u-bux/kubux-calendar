@@ -339,15 +339,11 @@ class EventStore:
     # ------------------------------------------------------------------
 
     def _is_cache_valid(self, start: datetime, end: datetime) -> bool:
-        """Check if the SyncManager has a valid sync window covering [start, end]."""
+        """Check if the SyncManager has a non-stale sync window covering [start, end]."""
         sm = self._sync_manager
         if sm is None:
             return False
-        w_start = sm.valid_sync_window_start
-        w_end = sm.valid_sync_window_end
-        if w_start is None or w_end is None:
-            return False
-        return start >= w_start and end <= w_end
+        return sm.is_range_covered(start, end)
 
     def _expand_instances(
         self, events: list[ImmutableEvent],
@@ -836,9 +832,8 @@ class EventStore:
         """Count cached events whose mtime (confirmed_at) exceeds the outdate threshold."""
         stale = 0
         for sid, src in self._sources.items():
-            threshold = src.outdate_threshold
             for ev in self._fs.list_events(sid):
-                if ev.confirmed_at and (datetime.now() - ev.confirmed_at).total_seconds() > threshold:
+                if ev.is_outdated(src.outdate_threshold):
                     stale += 1
         return stale
 

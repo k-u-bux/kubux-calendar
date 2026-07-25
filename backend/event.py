@@ -268,6 +268,13 @@ class ImmutableEvent:
     def __post_init__(self):
         object.__setattr__(self, "_cache", _parse_vevent(self.ical_data))
 
+    def is_outdated(self, threshold: int) -> bool:
+        """Return True if this event's cache is older than *threshold* seconds."""
+        if self.confirmed_at is None:
+            return False
+        elapsed = (datetime.now() - self.confirmed_at).total_seconds()
+        return elapsed > threshold
+
     # --- content properties ------------------------------------------------
 
     @property
@@ -601,11 +608,7 @@ class EventView:
     @property
     def is_outdated(self) -> bool:
         """Per-event staleness based on file mtime vs config threshold."""
-        if self._event.confirmed_at is None:
-            return False
-        threshold = self._source.outdate_threshold
-        elapsed = (datetime.now() - self._event.confirmed_at).total_seconds()
-        return elapsed > threshold
+        return self._event.is_outdated(self._source.outdate_threshold)
 
     @property
     def pending_operation(self):

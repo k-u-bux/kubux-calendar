@@ -191,8 +191,7 @@ def test_properties():
     cfg = _make_config()
     sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg)
     assert sm.last_sync_time is None
-    assert sm.valid_sync_window_start is None
-    assert sm.valid_sync_window_end is None
+    assert sm.is_range_covered(datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 2, tzinfo=UTC)) is False
     assert sm.source_last_success("src1") is None
     assert sm.source_last_attempt("src1") is None
     assert sm.pending_count() == 0
@@ -202,18 +201,17 @@ def test_properties():
 def test_properties_with_values():
     cfg = _make_config()
     sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg)
-    now = datetime(2026, 1, 1, tzinfo=UTC)
+    now = datetime.now(pytz.UTC)
     sm._last_sync_time = now
-    sm._valid_sync_window_start = now - timedelta(days=120)
-    sm._valid_sync_window_end = now + timedelta(days=240)
+    sm._sync_windows.append((now - timedelta(days=120), now + timedelta(days=240), now))
     sm._source_last_success["src1"] = now
     sm._source_last_attempt["src1"] = now
     sm._calendars["src1"] = MagicMock()
     sm._fs.load_pending = MagicMock(return_value=[MagicMock()])
 
     assert sm.last_sync_time == now
-    assert sm.valid_sync_window_start == now - timedelta(days=120)
-    assert sm.valid_sync_window_end == now + timedelta(days=240)
+    assert sm.is_range_covered(now - timedelta(days=30), now + timedelta(days=30)) is True
+    assert sm.is_range_covered(now - timedelta(days=200), now - timedelta(days=150)) is False
     assert sm.source_last_success("src1") == now
     assert sm.source_last_attempt("src1") == now
     assert sm.pending_count() == 1
@@ -327,8 +325,6 @@ def test_on_connect_all_done_adds_sources():
 
     assert "caldav:Personal:cal1" in sm._sources
     assert sm._sources["caldav:Personal:cal1"].name == "My Calendar"
-    assert sm._valid_sync_window_start is not None
-    assert sm._valid_sync_window_end is not None
 
 
 def test_on_connect_all_done_updates_existing_source():
@@ -399,8 +395,7 @@ def test_copy_state_from():
     cfg = _make_config()
     sm1 = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg)
     sm1._last_sync_time = datetime(2026, 1, 1, tzinfo=UTC)
-    sm1._valid_sync_window_start = datetime(2025, 1, 1, tzinfo=UTC)
-    sm1._valid_sync_window_end = datetime(2026, 6, 1, tzinfo=UTC)
+    sm1._sync_windows.append((datetime(2025, 1, 1, tzinfo=UTC), datetime(2026, 6, 1, tzinfo=UTC), datetime(2026, 1, 1, tzinfo=UTC)))
     sm1._source_last_success["src1"] = datetime(2026, 1, 1, tzinfo=UTC)
     sm1._source_last_attempt["src1"] = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -408,8 +403,7 @@ def test_copy_state_from():
     sm2.copy_state_from(sm1)
 
     assert sm2._last_sync_time == sm1._last_sync_time
-    assert sm2._valid_sync_window_start == sm1._valid_sync_window_start
-    assert sm2._valid_sync_window_end == sm1._valid_sync_window_end
+    assert sm2._sync_windows == sm1._sync_windows
     assert sm2._source_last_success == sm1._source_last_success
     assert sm2._source_last_attempt == sm1._source_last_attempt
 
@@ -482,9 +476,11 @@ def test_on_refresh_done_applies_state():
 
     assert sm._sources["src1"].color == "#ff0000"
     assert sm._last_sync_time == result["last_sync_time"]
-    assert sm._valid_sync_window_start == result["sync_start"]
-    assert sm._valid_sync_window_end == result["sync_end"]
     assert sm._source_last_success["src1"] == result["source_last_success"]["src1"]
+    # Sync window should be recorded
+    assert len(sm._sync_windows) == 1
+    assert sm._sync_windows[0][0] == result["sync_start"]
+    assert sm._sync_windows[0][1] == result["sync_end"]
 
 
 def test_on_refresh_done_no_sync_time():

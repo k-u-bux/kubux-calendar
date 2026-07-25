@@ -661,8 +661,7 @@ def test_is_cache_valid_within_window():
     cfg = _make_config_path(Path("/tmp"))
     store = EventStore(cfg)
     store._sync_manager = MagicMock()
-    store._sync_manager.valid_sync_window_start = datetime(2025, 12, 1, tzinfo=UTC)
-    store._sync_manager.valid_sync_window_end = datetime(2026, 3, 1, tzinfo=UTC)
+    store._sync_manager.is_range_covered.return_value = True
 
     start = datetime(2026, 1, 1, tzinfo=UTC)
     end = datetime(2026, 2, 1, tzinfo=UTC)
@@ -673,8 +672,7 @@ def test_is_cache_valid_outside_window():
     cfg = _make_config_path(Path("/tmp"))
     store = EventStore(cfg)
     store._sync_manager = MagicMock()
-    store._sync_manager.valid_sync_window_start = datetime(2025, 12, 1, tzinfo=UTC)
-    store._sync_manager.valid_sync_window_end = datetime(2026, 1, 15, tzinfo=UTC)
+    store._sync_manager.is_range_covered.return_value = False
 
     start = datetime(2026, 1, 1, tzinfo=UTC)
     end = datetime(2026, 2, 1, tzinfo=UTC)
@@ -965,8 +963,7 @@ def test_get_events_no_fetch_when_cache_valid(tmp_path):
     ev = ImmutableEvent.from_ical(BASIC_ICAL, "cal1")
     store._index.add(ev)
     store._sync_manager = MagicMock()
-    store._sync_manager.valid_sync_window_start = datetime(2025, 12, 1, tzinfo=UTC)
-    store._sync_manager.valid_sync_window_end = datetime(2026, 3, 1, tzinfo=UTC)
+    store._sync_manager.is_range_covered.return_value = True
     with patch.object(store, "_trigger_background_fetch") as mock_fetch:
         views = store.get_events(
             datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 2, tzinfo=UTC)

@@ -13,7 +13,7 @@ Concurrent sync requests are serialised: a queue holds pending
 (source_id, sync_start, sync_end) tuples.  Only one runs at a time.
 """
 
-from collections import deque
+from collections import namedtuple
 from datetime import datetime, timedelta
 from typing import Optional, Callable
 
@@ -70,17 +70,18 @@ class SyncManager:
         self._source_last_attempt: dict[str, datetime] = {}
         self._source_last_success: dict[str, datetime] = {}
 
-        # Sync window — tracks what time range the network has actually fetched.
-        # None until the first connect/refresh completes.
-        self._valid_sync_window_start: Optional[datetime] = None
-        self._valid_sync_window_end: Optional[datetime] = None
+        # Sync windows — each is (start, end, sync_time).  A viewport is
+        # covered if any non-stale window contains it.  Windows older than
+        # outdate_threshold are pruned on each check.
+        self._sync_windows: list[tuple[datetime, datetime, datetime]] = []
 
         # ICS subscription URLs (source_id → url)
         self._ics_urls: dict[str, str] = {}
 
-        # Serialised sync queue: (source_id, sync_start, sync_end) tuples.
-        # source_id may be None → refresh all sources.
-        self._sync_queue: deque[tuple] = deque()
+        # Single pending refresh slot.  When a new request arrives while
+        # a refresh is running, it overwrites this slot — only the latest
+        # request is remembered.
+        self._pending_refresh: Optional[tuple] = None
         self._sync_running: bool = False
 
     # ------------------------------------------------------------------
@@ -94,8 +95,7 @@ class SyncManager:
         CalDAV sessions so the cloned store does not trigger a full re-fetch.
         """
         self._last_sync_time = other._last_sync_time
-        self._valid_sync_window_start = other._valid_sync_window_start
-        self._valid_sync_window_end = other._valid_sync_window_end
+        self._sync_windows = list(other._sync_windows)
         self._source_last_attempt = dict(other._source_last_attempt)
         self._source_last_success = dict(other._source_last_success)
         self._sessions = dict(other._sessions)       # share live connections
@@ -110,13 +110,22 @@ class SyncManager:
     def last_sync_time(self) -> Optional[datetime]:
         return self._last_sync_time
 
-    @property
-    def valid_sync_window_start(self) -> Optional[datetime]:
-        return self._valid_sync_window_start
-
-    @property
-    def valid_sync_window_end(self) -> Optional[datetime]:
-        return self._valid_sync_window_end
+    def is_range_covered(self, start: datetime, end: datetime) -> bool:
+        """Return True if *start*..*end* is covered by a non-stale sync window."""
+        now = datetime.now(pytz.UTC)
+        stale: list[tuple[datetime, datetime, datetime]] = []
+        covered = False
+        for w_start, w_end, sync_time in self._sync_windows:
+            threshold = self._config.outdate_threshold
+            if (now - sync_time).total_seconds() > threshold:
+                stale.append((w_start, w_end, sync_time))
+                continue
+            if start >= w_start and end <= w_end:
+                covered = True
+        # Prune stale windows
+        for s in stale:
+            self._sync_windows.remove(s)
+        return covered
 
     def source_last_success(self, source_id: str) -> Optional[datetime]:
         return self._source_last_success.get(source_id)
@@ -363,15 +372,11 @@ class SyncManager:
         self._source_last_success.update(result.get("source_last_success", {}))
         self._source_last_attempt.update(result.get("source_last_attempt", {}))
         self._last_sync_time = result.get("last_sync_time")
-        # Apply sync window
-        self._valid_sync_window_start = result.get("sync_start")
-        self._valid_sync_window_end = result.get("sync_end")
 
         # Remove sources that were deleted on the server
         for sid in result.get("removed_sources", []):
             self._remove_source(sid)
 
-        self._rebuild_index()
         self._notify_change()
         self._notify_sync_status()
 
@@ -391,23 +396,20 @@ class SyncManager:
         sync_start: Optional[datetime] = None,
         sync_end: Optional[datetime] = None,
     ) -> None:
-        """Add a refresh request to the front of the queue and dispatch if not running.
-
-        LIFO order — the most recent request is processed next, so rapid
-        navigation only fetches the latest viewport.
-        """
-        self._sync_queue.appendleft((source_id, sync_start, sync_end))
+        """Remember the latest refresh request.  Dispatches if idle."""
+        self._pending_refresh = (source_id, sync_start, sync_end)
         self._dispatch_next_if_idle()
 
     def _dispatch_next_if_idle(self) -> None:
-        """If no refresh is running and the queue is non-empty, dispatch the next."""
+        """If no refresh is running and a pending request exists, dispatch it."""
         if self._sync_running:
             return
-        if not self._sync_queue:
+        if self._pending_refresh is None:
             return
-        source_id, sync_start, sync_end = self._sync_queue.popleft()
+        source_id, sync_start, sync_end = self._pending_refresh
+        self._pending_refresh = None
         self._sync_running = True
-        debug_log(Level.DEBUG, f"sync: dispatching refresh (source_id={source_id}, queue_len={len(self._sync_queue)})")
+        debug_log(Level.DEBUG, f"sync: dispatching refresh (source_id={source_id})")
         dispatch_task(self._on_refresh_done,
                       self._do_refresh, source_id, sync_start, sync_end)
 
@@ -418,7 +420,7 @@ class SyncManager:
         sync_end: Optional[datetime] = None,
     ) -> None:
         """Refresh one or all sources.  Queued if another sync is running."""
-        debug_log(Level.DEBUG, f"sync: refresh_in_background (source_id={source_id}, queue_len={len(self._sync_queue)})")
+        debug_log(Level.DEBUG, f"sync: refresh_in_background (source_id={source_id})")
         self._enqueue_refresh(source_id, sync_start, sync_end)
 
     def refresh_due_in_background(self) -> None:
@@ -562,6 +564,27 @@ class SyncManager:
                     if sid not in result.get("calendars", {}):
                         removed.append(sid)
         result["removed_sources"] = removed
+
+        # Build a fresh index in the worker thread — reading .ics files
+        # from disk is expensive and must not block the GUI.
+        new_index = EventIndex()
+        state_map = {
+            "create": "pending_create",
+            "update": "pending_update",
+            "delete": "pending_delete",
+            "delete_instance": "pending_delete_instance",
+        }
+        pending_by_uid: dict[str, str] = {}
+        for op in self._fs.load_pending():
+            pending_by_uid[op.uid] = state_map.get(op.operation, "clean")
+        for source_id in self._sources:
+            for ev in self._fs.list_events(source_id):
+                pending_op = pending_by_uid.get(ev.uid)
+                if pending_op and pending_op != ev.sync_state:
+                    ev = ev.with_updates(sync_state=pending_op)
+                new_index.add(ev)
+        result["new_index"] = new_index
+
         return result
 
     def _fetch_caldav_source(
@@ -686,13 +709,11 @@ class SyncManager:
         if result.get("last_sync_time"):
             self._last_sync_time = result["last_sync_time"]
 
-        # Apply sync window
+        # Record sync window
         sync_start = result.get("sync_start")
         sync_end = result.get("sync_end")
-        if sync_start is not None:
-            self._valid_sync_window_start = sync_start
-        if sync_end is not None:
-            self._valid_sync_window_end = sync_end
+        if sync_start is not None and sync_end is not None:
+            self._sync_windows.append((sync_start, sync_end, datetime.now(pytz.UTC)))
 
         # Apply source mutations (color, outdated) from fetch results
         for sid, src_data in result.get("sources", {}).items():
@@ -712,7 +733,12 @@ class SyncManager:
             self._remove_source(sid)
 
         self._sync_running = False
-        self._rebuild_index()
+
+        # Atomically swap in the index built by the worker thread.
+        # This avoids re-reading all .ics files on the main thread.
+        if "new_index" in result:
+            self._index = result["new_index"]
+
         self._notify_change()
         self._notify_sync_status()
 
