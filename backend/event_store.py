@@ -25,7 +25,10 @@ def _parse_ical_cached(ical_data: str):
     return ICalCalendar.from_ical(ical_data)
 
 from .config import Config
-from .event import ImmutableEvent, CalendarSource, EventView, RecurrenceRule
+from .event import (
+    ImmutableEvent, CalendarSource, EventView, RecurrenceRule,
+    SYNC_WINDOW_PAST_DAYS, SYNC_WINDOW_FUTURE_DAYS,
+)
 from .event_fs import EventFS, SourceMeta, PendingOp
 from .event_index import EventIndex
 from .sync_manager import SyncManager
@@ -68,9 +71,36 @@ class EventStore:
         self._user_colors: dict[str, str] = {}  # user-picked, non-negotiable
         self._auto_colors: dict[str, str] = {}  # auto-assigned, can be re-evaluated on collision
 
+        # Current viewport (set whenever the GUI queries events).
+        # All sync windows are anchored here, not at `now`.
+        self._viewport: Optional[tuple[datetime, datetime]] = None
+
         # Callbacks
         self._on_change_callback: Optional[Callable[[], None]] = None
         self._on_sync_status_callback: Optional[Callable[[int, Optional[datetime]], None]] = None
+
+    # ------------------------------------------------------------------
+    # Viewport-anchored sync window
+    # ------------------------------------------------------------------
+
+    def _sync_window(self) -> tuple[datetime, datetime]:
+        """Return the sync window anchored at the current viewport.
+
+        The window is ``viewport_start - SYNC_WINDOW_PAST_DAYS`` ..
+        ``viewport_end + SYNC_WINDOW_FUTURE_DAYS``.  Before any viewport
+        is known (startup), falls back to ``now +/- SYNC_WINDOW_*_DAYS``.
+        """
+        if self._viewport is not None:
+            v_start, v_end = self._viewport
+            return (
+                v_start - timedelta(days=SYNC_WINDOW_PAST_DAYS),
+                v_end + timedelta(days=SYNC_WINDOW_FUTURE_DAYS),
+            )
+        now = datetime.now()
+        return (
+            now - timedelta(days=SYNC_WINDOW_PAST_DAYS),
+            now + timedelta(days=SYNC_WINDOW_FUTURE_DAYS),
+        )
 
 
     # ------------------------------------------------------------------
@@ -392,6 +422,7 @@ class EventStore:
         Return events from local cache only — no network.
         Used for initial render.
         """
+        self._viewport = (start, end)
         return self._build_event_views(start, end)
 
     def get_events(
@@ -413,6 +444,7 @@ class EventStore:
         the sync layer fetches exactly the range the user is viewing
         (widened by SYNC_WINDOW_*_DAYS).
         """
+        self._viewport = (start, end)
         if not self._is_cache_valid(start, end):
             self._trigger_background_fetch(start, end)
 
@@ -486,11 +518,12 @@ class EventStore:
         Kick off a background refresh of all sources without blocking.
         The on_change callback will fire when data arrives.
 
-        *sync_start* / *sync_end* define the time window to fetch from
-        the server.  When called from :meth:`get_events`, these are the
-        widened viewer window.
+        The caller-supplied range is ignored in favour of
+        :meth:`_sync_window`, which widens the current viewport by
+        ``SYNC_WINDOW_PAST_DAYS`` / ``SYNC_WINDOW_FUTURE_DAYS``.
         """
-        self.refresh_all_in_background(sync_start, sync_end)
+        start, end = self._sync_window()
+        self.refresh_in_background(None, start, end)
 
     # ------------------------------------------------------------------
     # Event CRUD
@@ -701,8 +734,11 @@ class EventStore:
         """Connect servers and refresh all data in background.
 
         *sync_start* / *sync_end* define the time window to fetch.
-        If omitted, falls back to ``now ± SYNC_WINDOW_*_DAYS``.
+        If omitted, the window is anchored at the current viewport
+        (see :meth:`_sync_window`).
         """
+        if sync_start is None or sync_end is None:
+            sync_start, sync_end = self._sync_window()
         self._ensure_sync_manager()
         # Register ICS URLs
         for sid, url in self._ics_urls.items():
@@ -718,17 +754,24 @@ class EventStore:
         """Refresh one or all sources in background.
 
         *sync_start* / *sync_end* define the time window to fetch.
-        If omitted, falls back to ``now ± SYNC_WINDOW_*_DAYS``.
+        If omitted, the window is anchored at the current viewport
+        (see :meth:`_sync_window`).
         """
+        if sync_start is None or sync_end is None:
+            sync_start, sync_end = self._sync_window()
         sm = self._ensure_sync_manager()
         for sid, url in self._ics_urls.items():
             sm.register_ics(sid, url)
         sm.refresh_in_background(calendar_id, sync_start, sync_end)
 
     def refresh_due_sources_in_background(self) -> None:
-        """Refresh sources that are due in background."""
+        """Refresh sources that are due in background.
+
+        Uses the viewport-anchored sync window (see :meth:`_sync_window`).
+        """
+        sync_start, sync_end = self._sync_window()
         sm = self._ensure_sync_manager()
-        sm.refresh_due_in_background()
+        sm.refresh_due_in_background(sync_start, sync_end)
 
     def sync_pending_in_background(self) -> None:
         """Sync pending changes in background."""
@@ -800,6 +843,9 @@ class EventStore:
 
         # ICS URLs from new config
         new._ics_urls = {f"ics:{sub.name}": sub.url for sub in new_config.ics_subscriptions}
+
+        # Viewport — keep sync windows anchored at what the user sees
+        new._viewport = self._viewport
 
         # Reconcile ICS subscription sources against new config:
         #   - Remove subscriptions that were deleted from config

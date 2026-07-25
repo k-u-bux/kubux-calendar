@@ -785,17 +785,19 @@ def test_build_event_views_skips_missing_source(tmp_path):
 
 
 def test_trigger_background_fetch(tmp_path):
-    """_trigger_background_fetch should call refresh_all_in_background."""
+    """_trigger_background_fetch refreshes with the widened viewport window."""
+    from backend.event import SYNC_WINDOW_PAST_DAYS, SYNC_WINDOW_FUTURE_DAYS
     cfg = _make_config_path(tmp_path)
     store = EventStore(cfg)
-    with patch.object(store, 'refresh_all_in_background') as mock:
-        store._trigger_background_fetch(
-            datetime(2026, 1, 1, tzinfo=UTC),
-            datetime(2026, 2, 1, tzinfo=UTC),
-        )
+    v_start = datetime(2026, 1, 1, tzinfo=UTC)
+    v_end = datetime(2026, 2, 1, tzinfo=UTC)
+    store._viewport = (v_start, v_end)
+    with patch.object(store, 'refresh_in_background') as mock:
+        store._trigger_background_fetch(v_start, v_end)
         mock.assert_called_once_with(
-            datetime(2026, 1, 1, tzinfo=UTC),
-            datetime(2026, 2, 1, tzinfo=UTC),
+            None,
+            v_start - timedelta(days=SYNC_WINDOW_PAST_DAYS),
+            v_end + timedelta(days=SYNC_WINDOW_FUTURE_DAYS),
         )
 
 
@@ -1040,3 +1042,128 @@ def test_delete_event_pending_create_short_circuits(tmp_path):
     assert store._fs.load_event("caldav:acc:cal1", uid) is None
     # Index entry removed
     assert len(store._index) == 0
+
+
+# ----------------------------------------------------------------------
+# Viewport-anchored sync windows
+# ----------------------------------------------------------------------
+
+def test_sync_window_anchored_at_viewport(tmp_path):
+    """After the GUI queries a past range, the sync window widens around it."""
+    from backend.event import SYNC_WINDOW_PAST_DAYS, SYNC_WINDOW_FUTURE_DAYS
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+
+    v_start = datetime(2026, 1, 1)
+    v_end = datetime(2026, 2, 1)
+    store.get_events_from_cache(v_start, v_end)
+
+    w_start, w_end = store._sync_window()
+    assert w_start == v_start - timedelta(days=SYNC_WINDOW_PAST_DAYS)
+    assert w_end == v_end + timedelta(days=SYNC_WINDOW_FUTURE_DAYS)
+
+
+def test_sync_window_fallback_to_now_before_viewport(tmp_path):
+    """No viewport yet — window is now +/- SYNC_WINDOW_*."""
+    from backend.event import SYNC_WINDOW_PAST_DAYS, SYNC_WINDOW_FUTURE_DAYS
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+
+    before = datetime.now()
+    w_start, w_end = store._sync_window()
+    after = datetime.now()
+
+    assert before - timedelta(days=SYNC_WINDOW_PAST_DAYS) <= w_start
+    assert w_start <= after - timedelta(days=SYNC_WINDOW_PAST_DAYS - 1)
+    assert w_end >= before + timedelta(days=SYNC_WINDOW_FUTURE_DAYS - 1)
+
+
+def test_refresh_in_background_uses_viewport_window(tmp_path):
+    """Reload (refresh_in_background with no window) must fetch around the
+    viewport, not around now."""
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    src = CalendarSource(id="src1", name="Cal1")
+    store._sources["src1"] = src
+
+    v_start = datetime(2026, 1, 1)
+    v_end = datetime(2026, 2, 1)
+    store.get_events_from_cache(v_start, v_end)
+
+    captured = {}
+
+    def fake_enqueue(source_id=None, sync_start=None, sync_end=None):
+        captured["args"] = (source_id, sync_start, sync_end)
+
+    sm = store._ensure_sync_manager()
+    sm._enqueue_refresh = fake_enqueue
+
+    store.refresh_in_background()  # what the Reload button calls
+
+    from backend.event import SYNC_WINDOW_PAST_DAYS, SYNC_WINDOW_FUTURE_DAYS
+    source_id, w_start, w_end = captured["args"]
+    assert source_id is None
+    assert w_start == v_start - timedelta(days=SYNC_WINDOW_PAST_DAYS)
+    assert w_end == v_end + timedelta(days=SYNC_WINDOW_FUTURE_DAYS)
+
+
+def test_refresh_due_uses_viewport_window(tmp_path):
+    """Auto-refresh timer path must also sync around the viewport."""
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    store._sources["src1"] = CalendarSource(id="src1", name="Cal1")
+
+    v_start = datetime(2026, 1, 1)
+    v_end = datetime(2026, 2, 1)
+    store.get_events_from_cache(v_start, v_end)
+
+    captured = {}
+
+    def fake_due(sync_start=None, sync_end=None):
+        captured["args"] = (sync_start, sync_end)
+
+    sm = store._ensure_sync_manager()
+    sm.refresh_due_in_background = fake_due
+
+    store.refresh_due_sources_in_background()
+
+    from backend.event import SYNC_WINDOW_PAST_DAYS, SYNC_WINDOW_FUTURE_DAYS
+    w_start, w_end = captured["args"]
+    assert w_start == v_start - timedelta(days=SYNC_WINDOW_PAST_DAYS)
+    assert w_end == v_end + timedelta(days=SYNC_WINDOW_FUTURE_DAYS)
+
+
+def test_get_events_triggers_fetch_with_widened_viewport(tmp_path):
+    """Navigation to an uncovered range fetches viewport +/- SYNC_WINDOW_*."""
+    from backend.event import SYNC_WINDOW_PAST_DAYS, SYNC_WINDOW_FUTURE_DAYS
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    store._sources["src1"] = CalendarSource(id="src1", name="Cal1")
+
+    captured = {}
+
+    def fake_enqueue(source_id=None, sync_start=None, sync_end=None):
+        captured["args"] = (source_id, sync_start, sync_end)
+
+    sm = store._ensure_sync_manager()
+    sm._enqueue_refresh = fake_enqueue
+
+    v_start = datetime(2026, 1, 1)
+    v_end = datetime(2026, 2, 1)
+    store.get_events(v_start, v_end)
+
+    assert "args" in captured
+    _, w_start, w_end = captured["args"]
+    assert w_start == v_start - timedelta(days=SYNC_WINDOW_PAST_DAYS)
+    assert w_end == v_end + timedelta(days=SYNC_WINDOW_FUTURE_DAYS)
+
+
+def test_clone_preserves_viewport(tmp_path):
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+    v_start = datetime(2026, 1, 1)
+    v_end = datetime(2026, 2, 1)
+    store.get_events_from_cache(v_start, v_end)
+
+    new_store = store.clone(cfg)
+    assert new_store._viewport == (v_start, v_end)

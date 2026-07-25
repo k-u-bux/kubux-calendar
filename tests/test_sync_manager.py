@@ -813,3 +813,73 @@ def test_on_refresh_done_preserves_last_sync_time_for_unsynced_source():
         "sync_start": None, "sync_end": None,
     })
     assert src.last_sync_time == prev
+
+
+# ----------------------------------------------------------------------
+# _enqueue_refresh merge — pending slot must not drop viewport windows
+# ----------------------------------------------------------------------
+
+def test_enqueue_refresh_merges_windows_union():
+    """A second enqueue must not discard the first request's window."""
+    cfg = _make_config()
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg)
+    sm._sync_running = True  # force queueing, no dispatch
+
+    past_start = datetime(2026, 1, 1)
+    past_end = datetime(2026, 2, 1)
+    sm._enqueue_refresh(None, past_start, past_end)
+
+    now_start = datetime(2026, 6, 1)
+    now_end = datetime(2026, 12, 1)
+    sm._enqueue_refresh(None, now_start, now_end)
+
+    assert sm._pending_refresh is not None
+    source_id, w_start, w_end = sm._pending_refresh
+    assert source_id is None
+    assert w_start == past_start   # union keeps the far-past start
+    assert w_end == now_end        # and the latest end
+
+
+def test_enqueue_refresh_none_window_resolves_to_default():
+    """A None window becomes now +/- SYNC_WINDOW_* before merging."""
+    from backend.event import SYNC_WINDOW_PAST_DAYS, SYNC_WINDOW_FUTURE_DAYS
+    cfg = _make_config()
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg)
+    sm._sync_running = True
+
+    past_start = datetime(2026, 1, 1)
+    past_end = datetime(2026, 2, 1)
+    sm._enqueue_refresh(None, past_start, past_end)
+    sm._enqueue_refresh(None)  # due-timer style request, no window
+
+    source_id, w_start, w_end = sm._pending_refresh
+    assert w_start == past_start  # past window survived the None-window enqueue
+    assert w_end >= datetime.now() + timedelta(days=SYNC_WINDOW_FUTURE_DAYS - 1)
+
+
+def test_enqueue_refresh_all_sources_wins_over_specific_source():
+    cfg = _make_config()
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg)
+    sm._sync_running = True
+
+    sm._enqueue_refresh("src1", datetime(2026, 1, 1), datetime(2026, 2, 1))
+    sm._enqueue_refresh(None, datetime(2026, 6, 1), datetime(2026, 7, 1))
+
+    source_id, w_start, w_end = sm._pending_refresh
+    assert source_id is None
+    assert w_start == datetime(2026, 1, 1)
+    assert w_end == datetime(2026, 7, 1)
+
+
+def test_refresh_due_forwards_window():
+    """refresh_due_in_background passes the given window to the queue."""
+    cfg = _make_config(refresh_interval=300)
+    sources = {"src1": CalendarSource(id="src1", name="Cal1")}
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources=sources, config=cfg)
+    sm._sync_running = True
+
+    start = datetime(2026, 1, 1)
+    end = datetime(2026, 2, 1)
+    sm.refresh_due_in_background(start, end)
+
+    assert sm._pending_refresh == (None, start, end)

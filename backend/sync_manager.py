@@ -79,8 +79,8 @@ class SyncManager:
         self._ics_urls: dict[str, str] = {}
 
         # Single pending refresh slot.  When a new request arrives while
-        # a refresh is running, it overwrites this slot — only the latest
-        # request is remembered.
+        # a refresh is running, it is MERGED into this slot (union of
+        # windows) — see _enqueue_refresh.
         self._pending_refresh: Optional[tuple] = None
         self._sync_running: bool = False
 
@@ -396,7 +396,32 @@ class SyncManager:
         sync_start: Optional[datetime] = None,
         sync_end: Optional[datetime] = None,
     ) -> None:
-        """Remember the latest refresh request.  Dispatches if idle."""
+        """Queue a refresh request.  Dispatches if idle.
+
+        When a request is already pending, the two are *merged* instead
+        of the new one overwriting the old: the sync window becomes the
+        union of both ranges and a request for all sources
+        (``source_id=None``) wins over a source-specific one.  This
+        prevents a viewport-anchored request (e.g. the user navigated
+        far into the past) from being silently discarded when the
+        auto-refresh timer or Reload enqueues shortly after.
+        """
+        if sync_start is None or sync_end is None:
+            now = datetime.now()
+            if sync_start is None:
+                sync_start = now - timedelta(days=SYNC_WINDOW_PAST_DAYS)
+            if sync_end is None:
+                sync_end = now + timedelta(days=SYNC_WINDOW_FUTURE_DAYS)
+
+        if self._pending_refresh is not None:
+            p_source, p_start, p_end = self._pending_refresh
+            # source_id=None (all sources) supersedes a specific source
+            if p_source is None:
+                source_id = None
+            # Union of both windows
+            sync_start = min(p_start, sync_start)
+            sync_end = max(p_end, sync_end)
+
         self._pending_refresh = (source_id, sync_start, sync_end)
         self._dispatch_next_if_idle()
 
@@ -423,14 +448,18 @@ class SyncManager:
         debug_log(Level.DEBUG, f"sync: refresh_in_background (source_id={source_id})")
         self._enqueue_refresh(source_id, sync_start, sync_end)
 
-    def refresh_due_in_background(self) -> None:
+    def refresh_due_in_background(
+        self,
+        sync_start: Optional[datetime] = None,
+        sync_end: Optional[datetime] = None,
+    ) -> None:
         """Refresh sources that are due.  Queued if another sync is running."""
         due = self.get_sources_needing_refresh()
         if not due:
             return
         # A single refresh with source_id=None covers all sources,
         # which will refresh the overdue ones.  Queue it.
-        self._enqueue_refresh(None)
+        self._enqueue_refresh(None, sync_start, sync_end)
 
     # ------------------------------------------------------------------
     # Refresh — worker (does the actual file I/O)
