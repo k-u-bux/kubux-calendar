@@ -24,6 +24,12 @@ class RecurrenceWidget(QGroupBox):
     DAY_CODES = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
     DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
+    # RRULE frequencies in combo order.  Never compare against the combo's
+    # display text — labels are user-configurable (may be translated).
+    FREQ_CODES = ["DAILY", "WEEKLY", "MONTHLY", "YEARLY"]
+    _FREQ_UNIT_LABELS = ["day(s)", "week(s)", "month(s)", "year(s)"]
+
+
     def __init__(self, labels_config=None, parent=None):
         from backend.config import LabelsConfig
         self.labels = labels_config or LabelsConfig()
@@ -103,14 +109,13 @@ class RecurrenceWidget(QGroupBox):
         layout.addRow(self.labels.recurrence_until, self._until_edit)
 
     def _update_interval_label(self):
-        freq = self._freq_combo.currentText().lower()
-        labels = {"daily": "day(s)", "weekly": "week(s)", "monthly": "month(s)", "yearly": "year(s)"}
-        self._interval_label.setText(labels.get(freq, "day(s)"))
+        idx = self._freq_combo.currentIndex()
+        self._interval_label.setText(self._FREQ_UNIT_LABELS[idx] if 0 <= idx < len(self._FREQ_UNIT_LABELS) else "day(s)")
 
     def _update_weekday_visibility(self):
         """Show/hide weekday row based on frequency selection."""
-        is_weekly = self._freq_combo.currentText() == "Weekly"
-        self._weekday_row.setVisible(is_weekly)
+        self._weekday_row.setVisible(self._freq_combo.currentIndex() == 1)  # WEEKLY
+
 
     def _update_end_widget(self):
         index = self._end_combo.currentIndex()
@@ -120,9 +125,9 @@ class RecurrenceWidget(QGroupBox):
     def get_recurrence(self) -> Optional[RecurrenceRule]:
         if not self.isChecked():
             return None
-        freq_map = {"Daily": "DAILY", "Weekly": "WEEKLY", "Monthly": "MONTHLY", "Yearly": "YEARLY"}
-        freq = freq_map[self._freq_combo.currentText()]
+        freq = self.FREQ_CODES[self._freq_combo.currentIndex()]
         interval = self._interval_spin.value()
+
         count = None
         until = None
         by_day = None

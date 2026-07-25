@@ -50,10 +50,15 @@ class EventPortion:
 
         if local_end.date() == day:
             end_hour = local_end.hour + local_end.minute / 60.0
+            if end_hour == 0.0:
+                # Event ends exactly at midnight — it does not visibly
+                # appear on this day (no ghost sliver at 00:00).
+                return None
         else:
             end_hour = 24.0  # Event continues after this day
 
         return EventPortion(event, day, start_hour, end_hour)
+
 
     def calculate_new_event_times(
         self, new_visible_start_hour: float, new_visible_end_hour: float

@@ -719,3 +719,34 @@ def test_sanitize_text_collapses_whitespace(qapp):
     assert w._sanitize_text("Line\nBreak\tTab") == "Line Break Tab"
     assert w._sanitize_text("  multiple   spaces  ") == "multiple spaces"
     assert w._sanitize_text("") == ""
+
+
+# ----------------------------------------------------------------------
+# Regression: events ending exactly at midnight must not produce a
+# portion on their end day (ghost sliver at 00:00)
+# ----------------------------------------------------------------------
+
+def test_portion_event_ending_at_midnight():
+    # Naive datetimes pass through to_local_datetime unchanged
+    start = datetime(2026, 1, 1, 22, 0, 0)
+    end = datetime(2026, 1, 2, 0, 0, 0)  # midnight
+    ev = _make_event_mock(start, end)
+
+    # Visible on the start day (22:00-24:00)
+    portion = EventPortion.create_for_day(ev, date(2026, 1, 1))
+    assert portion is not None
+    assert portion.visible_end_hour == 24.0
+
+    # NOT visible on the end day — it ends at 00:00 sharp
+    assert EventPortion.create_for_day(ev, date(2026, 1, 2)) is None
+
+
+def test_portion_event_ending_after_midnight_still_visible():
+    start = datetime(2026, 1, 1, 22, 0, 0)
+    end = datetime(2026, 1, 2, 1, 0, 0)
+    ev = _make_event_mock(start, end)
+    portion = EventPortion.create_for_day(ev, date(2026, 1, 2))
+    assert portion is not None
+    assert portion.visible_start_hour == 0.0
+    assert portion.visible_end_hour == 1.0
+

@@ -481,8 +481,9 @@ class EventDialog(QWidget):
                 if moved_event:
                     # Save last used calendar for new events
                     self._dialog_state["last_calendar_id"] = selected_calendar_id
-                    self.event_saved.emit(self.event_data)
+                    self.event_saved.emit(moved_event)
                     self.close()
+
                 else:
                     QMessageBox.critical(self, "Error", "Failed to move event to new calendar.")
             else:

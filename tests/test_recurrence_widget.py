@@ -119,3 +119,43 @@ def test_set_recurrence_with_until(qapp):
     assert w._end_combo.currentIndex() == 2
     out = w.get_recurrence()
     assert out.until is not None
+
+# ----------------------------------------------------------------------
+# Regression: localized (non-English) labels must not break frequency
+# handling — mapping is index-based, never text-based
+# ----------------------------------------------------------------------
+
+def test_recurrence_widget_localized_labels(qapp):
+    from backend.config import LabelsConfig
+    labels = LabelsConfig()
+    labels.freq_daily = "Täglich"
+    labels.freq_weekly = "Wöchentlich"
+    labels.freq_monthly = "Monatlich"
+    labels.freq_yearly = "Jährlich"
+    w = RecurrenceWidget(labels_config=labels)
+    w.setChecked(True)
+
+    # Select "Wöchentlich" (index 1) — a text-based freq lookup would
+    # raise KeyError here.
+    w._freq_combo.setCurrentIndex(1)
+    rule = w.get_recurrence()
+    assert rule is not None
+    assert rule.frequency == "WEEKLY"
+
+    # Interval label follows the index, not the (localized) text
+    w._freq_combo.setCurrentIndex(2)
+    assert w._interval_label.text() == "month(s)"
+
+
+def test_recurrence_widget_weekday_visibility_index_based(qapp):
+    w = RecurrenceWidget()
+    w._freq_combo.setCurrentIndex(0)  # DAILY
+    w._update_weekday_visibility()
+    assert w._weekday_row.isHidden()
+    w._freq_combo.setCurrentIndex(1)  # WEEKLY
+    w._update_weekday_visibility()
+    assert not w._weekday_row.isHidden()
+    w._freq_combo.setCurrentIndex(2)  # MONTHLY
+    w._update_weekday_visibility()
+    assert w._weekday_row.isHidden()
+

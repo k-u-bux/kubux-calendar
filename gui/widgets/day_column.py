@@ -255,7 +255,10 @@ class DayColumnWidget(QWidget):
         hours = max(0.0, min(24.0, hours))
 
         total_minutes = int(hours * 60)
-        snapped_minutes = round(total_minutes / snap_minutes) * snap_minutes
+        # Round-half-up (Python's round() does banker's rounding, which
+        # snaps 12.5 min down to 10 instead of up to 15 at a 5-min snap).
+        snapped_minutes = int(total_minutes / snap_minutes + 0.5) * snap_minutes
+
         snapped_minutes = max(0, min(24 * 60 - 1, snapped_minutes))
 
         return dt_time(hour=snapped_minutes // 60, minute=snapped_minutes % 60)

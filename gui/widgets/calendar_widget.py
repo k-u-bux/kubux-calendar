@@ -57,12 +57,8 @@ class CalendarWidget(QWidget):
         self._current_view = ViewType.WEEK
         self._current_date = date.today()
         self._cached_events: list[EventData] = []
-        # Stale flags - views need refresh when switched to
-        self._day_view_stale = True
-        self._week_view_stale = True
-        self._month_view_stale = True
-        self._list_view_stale = True
         self._setup_ui()
+
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -184,58 +180,31 @@ class CalendarWidget(QWidget):
     def set_date(self, d: date):
         self._follow_state.follow_present = False
         self._current_date = d
-        # Only update the currently active view; mark others as stale.
+        # Only update the currently active view.  Inactive views are
+        # refreshed via view_changed → set_events when switched to.
         if self._current_view == ViewType.DAY:
             self._day_view.set_date(d)
-            self._week_view_stale = True
-            self._month_view_stale = True
-            self._list_view_stale = True
         elif self._current_view == ViewType.WEEK:
             self._week_view.set_date(d)
-            self._day_view_stale = True
-            self._month_view_stale = True
-            self._list_view_stale = True
         elif self._current_view == ViewType.MONTH:
             self._month_view.set_date(d)
-            self._day_view_stale = True
-            self._week_view_stale = True
-            self._list_view_stale = True
         else:  # LIST
             self._list_view.set_date(d)
-            self._day_view_stale = True
-            self._week_view_stale = True
-            self._month_view_stale = True
         self.date_changed.emit(d)
 
     def set_events(self, events: list[EventData]):
-        """Set events - only updates the active view, others are marked stale."""
+        """Set events - only updates the active view."""
         self._cached_events = events
 
-        # Only update the currently active view, mark others as stale
         if self._current_view == ViewType.DAY:
             self._day_view.set_events(events)
-            self._day_view_stale = False  # Just got fresh events
-            self._week_view_stale = True
-            self._month_view_stale = True
-            self._list_view_stale = True
         elif self._current_view == ViewType.WEEK:
             self._week_view.set_events(events)
-            self._week_view_stale = False  # Just got fresh events
-            self._day_view_stale = True
-            self._month_view_stale = True
-            self._list_view_stale = True
         elif self._current_view == ViewType.MONTH:
             self._month_view.set_events(events)
-            self._month_view_stale = False  # Just got fresh events
-            self._day_view_stale = True
-            self._week_view_stale = True
-            self._list_view_stale = True
         else:  # LIST
             self._list_view.set_events(events)
-            self._list_view_stale = False  # Just got fresh events
-            self._day_view_stale = True
-            self._week_view_stale = True
-            self._month_view_stale = True
+
 
     def get_current_view(self) -> ViewType:
         return self._current_view

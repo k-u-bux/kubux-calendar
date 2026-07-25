@@ -913,11 +913,20 @@ class MainWindow(QMainWindow):
     
     def _clear_ui(self):
         """Clear existing UI components to prepare for rebuild."""
+        # Remove keyboard shortcuts — they are parented to the MainWindow
+        # (not the central widget), so they survive a UI rebuild and would
+        # otherwise accumulate: each config reload would add another set,
+        # making every keypress fire N times.
+        for shortcut in self.findChildren(QShortcut):
+            shortcut.setEnabled(False)
+            shortcut.deleteLater()
+
         # Remove central widget
         old_central = self.centralWidget()
         if old_central:
             old_central.deleteLater()
         self.setCentralWidget(None)
+
         
         # Remove toolbar
         for toolbar in self.findChildren(QToolBar):
