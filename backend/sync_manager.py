@@ -709,11 +709,15 @@ class SyncManager:
         if result.get("last_sync_time"):
             self._last_sync_time = result["last_sync_time"]
 
-        # Record sync window
+        # Record sync window — but only if at least one source actually
+        # synced.  Recording a window after a failed refresh would make
+        # is_range_covered() claim the stale cache is fresh and suppress
+        # further background fetches.
         sync_start = result.get("sync_start")
         sync_end = result.get("sync_end")
-        if sync_start is not None and sync_end is not None:
+        if sync_start is not None and sync_end is not None and result.get("synced"):
             self._sync_windows.append((sync_start, sync_end, datetime.now(pytz.UTC)))
+
 
         # Apply source mutations (color, outdated) from fetch results
         for sid, src_data in result.get("sources", {}).items():
@@ -726,7 +730,11 @@ class SyncManager:
                 src.read_only = src_data.get("read_only", src.read_only)
                 src.is_outdated = src_data.get("is_outdated", src.is_outdated)
                 src.account_name = src_data.get("account_name", src.account_name)
-                src.last_sync_time = result.get("source_last_success", {}).get(sid)
+                # Only update last_sync_time when this source actually
+                # synced in this round — never wipe a previous value.
+                if sid in result.get("source_last_success", {}):
+                    src.last_sync_time = result["source_last_success"][sid]
+
 
         # Remove sources that were deleted on the server
         for sid in result.get("removed_sources", []):

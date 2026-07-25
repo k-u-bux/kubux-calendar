@@ -607,10 +607,28 @@ class EventStore:
             debug_log(Level.DEBUG, f"store: delete uid={event.uid} FAILED — read_only")
             return False
 
-        debug_log(Level.DEBUG, f"store: delete uid={event.uid} source_id={event.source.id}")
+        uid = event.uid
+        source_id = event.source.id
+
+        # If the event was created offline and never reached the server,
+        # there is nothing to delete remotely — just drop the pending
+        # create, the cached file, and the index entry.  Recording a
+        # "delete" op would retry forever against a nonexistent resource.
+        existing_ops = [op for op in self._fs.load_pending() if op.uid == uid]
+        if any(op.operation == "create" for op in existing_ops):
+            debug_log(Level.DEBUG, f"store: delete uid={uid} — was pending_create, removing locally")
+            self._fs.remove_pending(uid)
+            self._fs.delete_event(source_id, uid)
+            self._index.remove(uid)
+            self._notify_change()
+            self._notify_sync_status()
+            return True
+
+        debug_log(Level.DEBUG, f"store: delete uid={uid} source_id={source_id}")
         self._fs.add_pending(PendingOp(
             uid=event.uid, source_id=event.source.id, operation="delete"
         ))
+
         event._set_pending_sync_state("delete")
 
         updated_ev = event.immutable_event

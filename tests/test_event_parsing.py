@@ -655,3 +655,39 @@ def test_rebuild_ical_raises_on_no_vevent():
         assert False, "should have raised"
     except ValueError:
         pass
+
+# ----------------------------------------------------------------------
+# Regression: floating times via ImmutableEvent must use config_tz
+# ----------------------------------------------------------------------
+
+FLOATING_ICAL = (
+    "BEGIN:VCALENDAR\r\n"
+    "VERSION:2.0\r\n"
+    "PRODID:-//Test//\r\n"
+    "BEGIN:VEVENT\r\n"
+    "DTSTART:20260101T100000\r\n"
+    "DTEND:20260101T110000\r\n"
+    "SUMMARY:Floating\r\n"
+    "UID:float-1\r\n"
+    "END:VEVENT\r\n"
+    "END:VCALENDAR\r\n"
+)
+
+
+def test_from_ical_floating_time_uses_config_tz():
+    """Floating (naive) times must be localized to config_tz, not UTC.
+
+    Regression: __post_init__ used to call _parse_vevent without
+    _config_tz, silently interpreting floating events as UTC.
+    """
+    berlin = pytz.timezone("Europe/Berlin")
+    ev = ImmutableEvent.from_ical(FLOATING_ICAL, "src1", config_tz=berlin)
+    assert ev.master_start.tzinfo is not None
+    assert ev.master_start.hour == 10  # wall-clock preserved
+    assert ev.master_start.utcoffset() == timedelta(hours=1)  # January → CET
+    assert ev.master_start.astimezone(UTC).hour == 9
+
+
+def test_from_ical_floating_time_defaults_to_utc_without_config_tz():
+    ev = ImmutableEvent.from_ical(FLOATING_ICAL, "src1")
+    assert ev.master_start.utcoffset() == timedelta(0)

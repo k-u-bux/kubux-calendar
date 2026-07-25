@@ -266,7 +266,10 @@ class ImmutableEvent:
     )
 
     def __post_init__(self):
-        object.__setattr__(self, "_cache", _parse_vevent(self.ical_data))
+        object.__setattr__(
+            self, "_cache", _parse_vevent(self.ical_data, self._config_tz)
+        )
+
 
     def is_outdated(self, threshold: int) -> bool:
         """Return True if this event's cache is older than *threshold* seconds."""

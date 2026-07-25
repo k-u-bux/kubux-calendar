@@ -756,3 +756,60 @@ def test_refresh_ics_fetch_fails(tmp_path):
     with patch("backend.sync_manager.ics_fetch", return_value=None):
         result = sm._refresh_ics("ics:Holidays", datetime.now(UTC), None, None)
     assert result["ok"] is False
+
+
+# ----------------------------------------------------------------------
+# Regression: failed refresh must not record a sync window (would make
+# is_range_covered claim the stale cache is fresh and suppress refetch)
+# ----------------------------------------------------------------------
+
+def test_on_refresh_done_no_window_on_failed_refresh():
+    cfg = _make_config()
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg)
+    sm._on_refresh_done({
+        "synced": [],
+        "sessions": {}, "calendars": {}, "sources": {},
+        "source_last_success": {}, "source_last_attempt": {},
+        "last_sync_time": None,
+        "sync_start": datetime(2025, 12, 1, tzinfo=UTC),
+        "sync_end": datetime(2026, 3, 1, tzinfo=UTC),
+    })
+    assert sm._sync_windows == []
+
+
+def test_on_refresh_done_records_window_when_synced():
+    cfg = _make_config()
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg)
+    sm._on_refresh_done({
+        "synced": ["src1"],
+        "sessions": {}, "calendars": {}, "sources": {},
+        "source_last_success": {}, "source_last_attempt": {},
+        "last_sync_time": None,
+        "sync_start": datetime(2025, 12, 1, tzinfo=UTC),
+        "sync_end": datetime(2026, 3, 1, tzinfo=UTC),
+    })
+    assert len(sm._sync_windows) == 1
+
+
+# ----------------------------------------------------------------------
+# Regression: last_sync_time of a source must not be wiped when that
+# source was not part of the refresh round's successes
+# ----------------------------------------------------------------------
+
+def test_on_refresh_done_preserves_last_sync_time_for_unsynced_source():
+    cfg = _make_config()
+    prev = datetime(2026, 1, 1, tzinfo=UTC)
+    src = CalendarSource(id="src1", name="Cal1")
+    src.last_sync_time = prev
+    sources = {"src1": src}
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources=sources, config=cfg)
+    sm._on_refresh_done({
+        "synced": ["src1"],
+        "sessions": {}, "calendars": {},
+        "sources": {"src1": {"color": "#ff0000", "read_only": False, "is_outdated": False}},
+        "source_last_success": {},  # src1 not in this round's successes
+        "source_last_attempt": {},
+        "last_sync_time": None,
+        "sync_start": None, "sync_end": None,
+    })
+    assert src.last_sync_time == prev

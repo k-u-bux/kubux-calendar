@@ -218,19 +218,18 @@ def test_update_event_read_only_rejected(tmp_path):
 # ----------------------------------------------------------------------
 
 def test_delete_event(tmp_path):
+    """Deleting a synced (clean) event enqueues a server-side delete."""
     cfg = _make_config_path(tmp_path)
     store = EventStore(cfg)
 
     src = CalendarSource(id="caldav:acc:cal1", name="Cal1", source_type="caldav")
     store._sources["caldav:acc:cal1"] = src
 
-    view = store.create_event(
-        calendar_id="caldav:acc:cal1",
-        summary="To Delete",
-        start=datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC),
-        end=datetime(2026, 1, 1, 11, 0, 0, tzinfo=UTC),
-    )
-    assert view is not None
+    # A clean event as if loaded from the server cache
+    ev = ImmutableEvent.from_ical(BASIC_ICAL, "caldav:acc:cal1")
+    store._fs.save_event(ev)
+    store._index.add(ev)
+    view = EventView(ev, src)
 
     ok = store.delete_event(view)
     assert ok is True
@@ -1008,3 +1007,36 @@ def test_apply_source_state_no_meta_not_outdated(tmp_path):
     store._sources["cal1"] = src
     store._apply_source_state()
     assert src.is_outdated is False
+
+
+# ----------------------------------------------------------------------
+# Regression: deleting an offline-created event must not enqueue a
+# server-side delete (which would retry forever against a resource
+# that never existed on the server).
+# ----------------------------------------------------------------------
+
+def test_delete_event_pending_create_short_circuits(tmp_path):
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+
+    src = CalendarSource(id="caldav:acc:cal1", name="Cal1", source_type="caldav")
+    store._sources["caldav:acc:cal1"] = src
+
+    view = store.create_event(
+        calendar_id="caldav:acc:cal1",
+        summary="Temp",
+        start=datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC),
+        end=datetime(2026, 1, 1, 11, 0, 0, tzinfo=UTC),
+    )
+    uid = view.uid
+    assert [op.operation for op in store._fs.load_pending()] == ["create"]
+
+    ok = store.delete_event(view)
+    assert ok is True
+
+    # Pending op gone — no "delete" op enqueued
+    assert store._fs.load_pending() == []
+    # Cached file removed
+    assert store._fs.load_event("caldav:acc:cal1", uid) is None
+    # Index entry removed
+    assert len(store._index) == 0

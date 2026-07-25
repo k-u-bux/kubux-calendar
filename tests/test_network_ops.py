@@ -319,13 +319,37 @@ def test_caldav_delete_event_success():
 
 
 def test_caldav_delete_event_not_found():
+    """Event already gone server-side — the delete's goal is achieved."""
     from backend.network_ops import caldav_delete_event, CalendarInfo
     cal_info = CalendarInfo(id="cal1", name="Cal1", color="", url="",
                             account_name="Personal", writable=True)
     mock_cal = MagicMock()
     mock_cal.event_by_uid.return_value = None
     cal_info._caldav_cal = mock_cal
+    assert caldav_delete_event(cal_info, "uid-1") is True
+
+
+def test_caldav_delete_event_not_found_exception():
+    """NotFoundError from the caldav lib also counts as success."""
+    from caldav.lib.error import NotFoundError
+    from backend.network_ops import caldav_delete_event, CalendarInfo
+    cal_info = CalendarInfo(id="cal1", name="Cal1", color="", url="",
+                            account_name="Personal", writable=True)
+    mock_cal = MagicMock()
+    mock_cal.event_by_uid.side_effect = NotFoundError()
+    cal_info._caldav_cal = mock_cal
+    assert caldav_delete_event(cal_info, "uid-1") is True
+
+
+def test_caldav_delete_event_other_exception_fails():
+    from backend.network_ops import caldav_delete_event, CalendarInfo
+    cal_info = CalendarInfo(id="cal1", name="Cal1", color="", url="",
+                            account_name="Personal", writable=True)
+    mock_cal = MagicMock()
+    mock_cal.event_by_uid.side_effect = ConnectionError("boom")
+    cal_info._caldav_cal = mock_cal
     assert caldav_delete_event(cal_info, "uid-1") is False
+
 
 
 def test_caldav_delete_event_no_cal():
@@ -369,3 +393,37 @@ def test_caldav_add_exdate_no_cal_returns_false():
     import pytz
     from datetime import datetime
     assert caldav_add_exdate(cal_info, "u1", datetime(2026, 1, 2, 10, 0, tzinfo=pytz.UTC)) is False
+
+
+# ----------------------------------------------------------------------
+# Regression: ics_fetch must respect the declared charset and only
+# default to UTF-8 (RFC 5545) when none is declared
+# ----------------------------------------------------------------------
+
+def test_ics_fetch_respects_declared_charset():
+    with patch("backend.network_ops.requests.get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.headers = {"Content-Type": "text/calendar; charset=iso-8859-1"}
+        mock_resp.encoding = "iso-8859-1"
+        mock_resp.text = SINGLE_EVENT_ICAL
+        mock_resp.raise_for_status = MagicMock()
+        mock_get.return_value = mock_resp
+
+        result = ics_fetch("https://example.com/cal.ics")
+        assert result == SINGLE_EVENT_ICAL
+        # Declared charset must not be overridden
+        assert mock_resp.encoding == "iso-8859-1"
+
+
+def test_ics_fetch_defaults_to_utf8_without_charset():
+    with patch("backend.network_ops.requests.get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.headers = {"Content-Type": "text/calendar"}
+        mock_resp.encoding = None
+        mock_resp.text = SINGLE_EVENT_ICAL
+        mock_resp.raise_for_status = MagicMock()
+        mock_get.return_value = mock_resp
+
+        result = ics_fetch("https://example.com/cal.ics")
+        assert result == SINGLE_EVENT_ICAL
+        assert mock_resp.encoding == "utf-8"

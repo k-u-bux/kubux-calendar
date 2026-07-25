@@ -15,6 +15,8 @@ import requests
 
 import caldav
 from caldav.elements import ical as caldav_ical
+from caldav.lib import error as caldav_error
+
 from icalendar import Calendar as ICalCalendar
 import uuid as _uuid
 
@@ -195,11 +197,17 @@ def caldav_delete_event(calendar: CalendarInfo,
             ev.delete()
             debug_log(Level.DEBUG, "caldav: delete — OK")
             return True
-        else:
-            debug_log(Level.DEBUG, "caldav: delete — event_by_uid returned None (not found)")
+        # Event not on the server — the goal of the delete is already
+        # achieved.  Returning False would retry the op forever.
+        debug_log(Level.DEBUG, "caldav: delete — event_by_uid returned None (already gone)")
+        return True
+    except caldav_error.NotFoundError:
+        debug_log(Level.DEBUG, "caldav: delete — not found on server (already gone)")
+        return True
     except Exception as e:
         debug_log(Level.ERROR, f"caldav: delete exception: {e}")
     return False
+
 
 
 def caldav_add_exdate(calendar: CalendarInfo,
@@ -250,8 +258,14 @@ def ics_fetch(url: str, timeout: int = 30) -> Optional[str]:
                      "Accept": "text/calendar"},
         )
         resp.raise_for_status()
-        resp.encoding = "utf-8"
+        # Respect the server-declared charset.  iCalendar defaults to
+        # UTF-8 (RFC 5545) when no charset is given — requests would
+        # otherwise guess ISO-8859-1 for text/* responses.
+        content_type = resp.headers.get("Content-Type", "")
+        if "charset" not in content_type.lower():
+            resp.encoding = "utf-8"
         return resp.text
+
     except Exception as e:
         debug_log(Level.ERROR, f"ics: fetch failed — {e}")
         return None
