@@ -453,6 +453,7 @@ class ImmutableEvent:
             ical_data=new_ical,
             sync_state=kwargs.get("sync_state", self.sync_state),
             caldav_href=kwargs.get("caldav_href", self.caldav_href),
+            confirmed_at=kwargs.get("confirmed_at", self.confirmed_at),
             _instance_start=kwargs.get("_instance_start", self._instance_start),
             _instance_end=kwargs.get("_instance_end", self._instance_end),
             _config_tz=self._config_tz,

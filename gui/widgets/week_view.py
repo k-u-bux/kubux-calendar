@@ -100,7 +100,8 @@ class WeekView(TimelineViewBase):
         for i, col in enumerate(self._day_columns):
             col.set_date(self._start_date + timedelta(days=i))
         self._update_headers()
-        self.refresh_events()
+        # refresh_events() is called via set_events() which follows set_date()
+        # in the navigation flow.  Avoid double-render.
 
     def get_date_range(self) -> tuple[datetime, datetime]:
         start = datetime.combine(self._start_date, dt_time.min)

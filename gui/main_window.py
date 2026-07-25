@@ -77,6 +77,11 @@ class MainWindow(QMainWindow):
         self._sync_timer_started = False
         self._last_pending_count = 0
 
+        # Debounced state save (avoids sync disk I/O on rapid navigation)
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.timeout.connect(self._save_state)
+
         # Config file watcher
         self._config_watcher = QFileSystemWatcher(self)
         config_path = Config.get_default_config_path()
@@ -569,7 +574,6 @@ class MainWindow(QMainWindow):
     def _refresh_events(self):
         """Refresh events for the current view (may trigger network fetch if needed)."""
         self._statusbar.showMessage("Loading events...")
-        QApplication.processEvents()
         
         start, end = self._calendar_widget.get_date_range()
         events = self.event_store.get_events(start, end)
@@ -698,7 +702,7 @@ class MainWindow(QMainWindow):
         self._update_date_label()
         if not getattr(self, '_initializing', False):
             self._update_display_from_cache()
-            self._save_state()
+            self._save_timer.start(500)
     
     def _on_date_changed(self, d: date):
         """Handle date change."""
@@ -706,7 +710,7 @@ class MainWindow(QMainWindow):
         # Skip refresh during initialization (data not loaded yet)
         if not getattr(self, '_initializing', False):
             self._refresh_events()
-            self._save_state()
+            self._save_timer.start(500)
     
     def _on_data_changed(self):
         """Handle data change from event store.

@@ -42,7 +42,8 @@ class DayView(TimelineViewBase):
     def set_date(self, d: date):
         self._date = d
         self._day_columns[0].set_date(d)
-        self.refresh_events()
+        # refresh_events() is called via set_events() which follows set_date()
+        # in the navigation flow.  Avoid double-render.
 
     def get_date_range(self) -> tuple[datetime, datetime]:
         start = datetime.combine(self._date, dt_time.min)

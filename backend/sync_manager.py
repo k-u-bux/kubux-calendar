@@ -734,10 +734,14 @@ class SyncManager:
 
         self._sync_running = False
 
-        # Atomically swap in the index built by the worker thread.
-        # This avoids re-reading all .ics files on the main thread.
+        # Update the shared index in-place so EventStore's reference
+        # (which points to the same object) also sees the new events.
+        # Replacing self._index with a new object would break the
+        # shared reference and leave EventStore with stale data.
         if "new_index" in result:
-            self._index = result["new_index"]
+            self._index.clear()
+            for ev in result["new_index"].all_events():
+                self._index.add(ev)
 
         self._notify_change()
         self._notify_sync_status()

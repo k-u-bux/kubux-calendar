@@ -184,10 +184,27 @@ class CalendarWidget(QWidget):
     def set_date(self, d: date):
         self._follow_state.follow_present = False
         self._current_date = d
-        self._day_view.set_date(d)
-        self._week_view.set_date(d)
-        self._month_view.set_date(d)
-        self._list_view.set_date(d)
+        # Only update the currently active view; mark others as stale.
+        if self._current_view == ViewType.DAY:
+            self._day_view.set_date(d)
+            self._week_view_stale = True
+            self._month_view_stale = True
+            self._list_view_stale = True
+        elif self._current_view == ViewType.WEEK:
+            self._week_view.set_date(d)
+            self._day_view_stale = True
+            self._month_view_stale = True
+            self._list_view_stale = True
+        elif self._current_view == ViewType.MONTH:
+            self._month_view.set_date(d)
+            self._day_view_stale = True
+            self._week_view_stale = True
+            self._list_view_stale = True
+        else:  # LIST
+            self._list_view.set_date(d)
+            self._day_view_stale = True
+            self._week_view_stale = True
+            self._month_view_stale = True
         self.date_changed.emit(d)
 
     def set_events(self, events: list[EventData]):

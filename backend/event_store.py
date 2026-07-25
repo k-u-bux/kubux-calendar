@@ -14,8 +14,15 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional, Callable
 import pytz
+from functools import lru_cache
 from icalendar import Calendar as ICalCalendar
 import recurring_ical_events
+
+
+@lru_cache(maxsize=256)
+def _parse_ical_cached(ical_data: str):
+    """Parse iCal data with LRU cache to avoid re-parsing on navigation."""
+    return ICalCalendar.from_ical(ical_data)
 
 from .config import Config
 from .event import ImmutableEvent, CalendarSource, EventView, RecurrenceRule
@@ -354,7 +361,7 @@ class EventStore:
         for ev in events:
             if ev.is_recurring:
                 try:
-                    ical = ICalCalendar.from_ical(ev.ical_data)
+                    ical = _parse_ical_cached(ev.ical_data)
                     expanded = recurring_ical_events.of(ical).between(start, end)
                     for comp in expanded:
                         dtstart_prop = comp.get("DTSTART")
@@ -829,12 +836,18 @@ class EventStore:
         return len(self._index)
 
     def get_stale_event_count(self) -> int:
-        """Count cached events whose mtime (confirmed_at) exceeds the outdate threshold."""
+        """Count indexed events whose mtime (confirmed_at) exceeds the outdate threshold.
+        
+        Uses the in-memory index so the count matches what's displayed.
+        Each master event is counted once regardless of how many instances
+        it generates (recurring events with stale masters produce many
+        stale-instance markers, but the count reflects the underlying master).
+        """
         stale = 0
-        for sid, src in self._sources.items():
-            for ev in self._fs.list_events(sid):
-                if ev.is_outdated(src.outdate_threshold):
-                    stale += 1
+        for ev in self._index.all_events():
+            src = self._sources.get(ev.source_id)
+            if src and ev.is_outdated(src.outdate_threshold):
+                stale += 1
         return stale
 
     def mark_pending(self, uid: str, operation: str, source_id: str) -> None:

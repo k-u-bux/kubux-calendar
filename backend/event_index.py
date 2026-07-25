@@ -102,6 +102,10 @@ class EventIndex:
     def __len__(self) -> int:
         return len(self._handles)
 
+    def all_events(self) -> list[ImmutableEvent]:
+        """Return all indexed events (master events, not expanded instances)."""
+        return [h.data for h in self._handles.values()]
+
     def __contains__(self, uid: str) -> bool:
         return uid in self._handles
 
