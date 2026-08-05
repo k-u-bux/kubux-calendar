@@ -963,6 +963,11 @@ class MainWindow(QMainWindow):
         if (new_start.replace(tzinfo=None) == old_start.replace(tzinfo=None) and
             new_end.replace(tzinfo=None) == old_end.replace(tzinfo=None)):
             return
+
+        # Day-column values are always local wall-clock time. Strip any
+        # tzinfo leaked from multi-day portion calculations.
+        new_start = new_start.replace(tzinfo=None)
+        new_end = new_end.replace(tzinfo=None)
         
         debug_log(Level.DEBUG, f"Event time changed: {event.summary}")
         debug_log(Level.DEBUG, f"  Old: {old_start} - {old_end}")
