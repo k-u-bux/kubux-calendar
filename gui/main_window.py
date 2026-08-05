@@ -985,15 +985,31 @@ class MainWindow(QMainWindow):
                 self._refresh_events()
                 return
         
-        # Convert local times to UTC for storage (server expects UTC)
+        # Convert local times to UTC, then to the event's own timezone
         from library.timezone_utils import local_naive_to_utc
         
         new_start_utc = local_naive_to_utc(new_start)
         new_end_utc = local_naive_to_utc(new_end)
         
+        tzid = event.immutable_event.tzid
+        if tzid and tzid != "UTC":
+            try:
+                tz = pytz.timezone(tzid)
+                new_start = new_start_utc.astimezone(tz)
+                new_end = new_end_utc.astimezone(tz)
+            except Exception:
+                new_start = new_start_utc
+                new_end = new_end_utc
+        elif tzid is None:
+            # Floating — keep naive local time (new_start/new_end already naive from signal)
+            pass
+        else:
+            new_start = new_start_utc
+            new_end = new_end_utc
+        
         # event is an EventView — mutable via dirty-tracking
-        event.start = new_start_utc
-        event.end = new_end_utc
+        event.start = new_start
+        event.end = new_end
         
         # Mark as pending BEFORE sync and refresh to show triangle
         self.event_store.mark_pending(event.uid, "update", event.source.id)
