@@ -197,15 +197,22 @@ def _rebuild_ical(ical_data: str, **updates) -> str:
 
     for key, ical_key in (("start", "DTSTART"), ("end", "DTEND")):
         if key in updates:
-            # Snapshot TZID parameter before deletion
-            old_prop = vevent.get(ical_key)
+            # Determine effective TZID:
+            # - Drag-and-drop sends UTC; use stored TZID to preserve it.
+            # - Dialog save sends the new TZ; use val's zone.
+            val = updates[key]
             tzid = None
-            if old_prop is not None and hasattr(old_prop, 'params'):
-                tzid = old_prop.params.get("TZID")
+            if isinstance(val, datetime) and val.tzinfo is not None:
+                tzname = getattr(val.tzinfo, 'zone', None)
+                if tzname and tzname != "UTC":
+                    tzid = tzname
+            if tzid is None:
+                old_prop = vevent.get(ical_key)
+                if old_prop is not None and hasattr(old_prop, 'params'):
+                    tzid = old_prop.params.get("TZID")
 
             if ical_key in vevent:
                 del vevent[ical_key]
-            val = updates[key]
             if target_all_day and isinstance(val, datetime):
                 val = val.date()
             elif tzid and isinstance(val, datetime):

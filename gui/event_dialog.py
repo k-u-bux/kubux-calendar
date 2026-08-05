@@ -403,9 +403,11 @@ class EventDialog(QWidget):
             start_naive_new = start_aware.astimezone(new_tz).replace(tzinfo=None)
             end_naive_new = end_aware.astimezone(new_tz).replace(tzinfo=None)
         else:
-            # Switching to Floating — display the UTC-equivalent time
-            start_naive_new = start_aware.astimezone(pytz.UTC).replace(tzinfo=None)
-            end_naive_new = end_aware.astimezone(pytz.UTC).replace(tzinfo=None)
+            # Switching to Floating — display local wall-clock time
+            from library.timezone_utils import get_local_timezone
+            loc = get_local_timezone()
+            start_naive_new = start_aware.astimezone(loc).replace(tzinfo=None)
+            end_naive_new = end_aware.astimezone(loc).replace(tzinfo=None)
         
         self._ignore_tz_change = True
         self._start_edit.setDateTime(QDateTime(start_naive_new))
@@ -440,8 +442,13 @@ class EventDialog(QWidget):
         
         # Apply the selected timezone
         tzid = self._get_tzid_from_combo()
-        start_dt = ensure_tz(start_naive, tzid)
-        end_dt = ensure_tz(end_naive, tzid)
+        if tzid:
+            start_dt = ensure_tz(start_naive, tzid)
+            end_dt = ensure_tz(end_naive, tzid)
+        else:
+            # Floating — keep naive
+            start_dt = start_naive
+            end_dt = end_naive
         
         recurrence = self._recurrence_widget.get_recurrence()
         
