@@ -15,7 +15,7 @@ import pytz
 from icalendar import Calendar as ICalCalendar, Event as ICalEvent
 import uuid as _uuid
 from library.log import debug_log, Level
-from library.timezone_utils import ensure_tz
+from library.timezone_utils import ensure_tz, get_local_timezone
 
 
 # Shared sync window constants (used by EventStore and SyncManager).
@@ -197,11 +197,28 @@ def _rebuild_ical(ical_data: str, **updates) -> str:
 
     for key, ical_key in (("start", "DTSTART"), ("end", "DTEND")):
         if key in updates:
+            # Snapshot TZID parameter before deletion
+            old_prop = vevent.get(ical_key)
+            tzid = None
+            if old_prop is not None and hasattr(old_prop, 'params'):
+                tzid = old_prop.params.get("TZID")
+
             if ical_key in vevent:
                 del vevent[ical_key]
             val = updates[key]
             if target_all_day and isinstance(val, datetime):
                 val = val.date()
+            elif tzid and isinstance(val, datetime):
+                try:
+                    tz = pytz.timezone(tzid)
+                    val = val.astimezone(tz).replace(tzinfo=None)
+                    vevent.add(ical_key.lower(), val, parameters={"TZID": tzid})
+                    continue
+                except Exception:
+                    pass
+            elif tzid is None and isinstance(val, datetime) and val.tzinfo is not None:
+                # Floating event — keep floating
+                val = val.astimezone(get_local_timezone()).replace(tzinfo=None)
             vevent.add(ical_key.lower(), val)
 
     if "recurrence" in updates:

@@ -656,6 +656,56 @@ def test_rebuild_ical_raises_on_no_vevent():
     except ValueError:
         pass
 
+
+def test_rebuild_ical_preserves_tzid():
+    """TZID must survive a time update (drag-and-drop used to strip it)."""
+    ical = (
+        "BEGIN:VCALENDAR\r\n"
+        "VERSION:2.0\r\n"
+        "PRODID:-//Test//\r\n"
+        "BEGIN:VEVENT\r\n"
+        "DTSTART;TZID=America/New_York:20260101T100000\r\n"
+        "DTEND;TZID=America/New_York:20260101T110000\r\n"
+        "SUMMARY:TZID Event\r\n"
+        "UID:tzid-test\r\n"
+        "END:VEVENT\r\n"
+        "END:VCALENDAR\r\n"
+    )
+    # Simulate drag: 10:00 EST = 15:00 UTC → dragged to 17:00 UTC (12:00 EST)
+    new_start = datetime(2026, 1, 1, 17, 0, 0, tzinfo=UTC)
+    new_end = datetime(2026, 1, 1, 18, 0, 0, tzinfo=UTC)
+    new_ical = _rebuild_ical(ical, start=new_start, end=new_end)
+    ev = ImmutableEvent.from_ical(new_ical, "src1")
+    assert ev.tzid == "America/New_York"
+    assert ev.start.hour == 12
+    assert ev.start_utc.hour == 17
+
+
+def test_rebuild_ical_preserves_floating():
+    """Floating events must stay floating after a time update (no TZID, no Z)."""
+    ical = (
+        "BEGIN:VCALENDAR\r\n"
+        "VERSION:2.0\r\n"
+        "PRODID:-//Test//\r\n"
+        "BEGIN:VEVENT\r\n"
+        "DTSTART:20260101T100000\r\n"
+        "DTEND:20260101T110000\r\n"
+        "SUMMARY:Floating Event\r\n"
+        "UID:float-test\r\n"
+        "END:VEVENT\r\n"
+        "END:VCALENDAR\r\n"
+    )
+    # Simulate drag: 10:00 local → 12:00 local (UTC time from handler)
+    # In winter CET (UTC+1): 10:00 local = 09:00 UTC → 12:00 local = 11:00 UTC
+    new_start = datetime(2026, 1, 1, 11, 0, 0, tzinfo=UTC)
+    new_end = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    new_ical = _rebuild_ical(ical, start=new_start, end=new_end)
+    ev = ImmutableEvent.from_ical(new_ical, "src1")
+    assert ev.tzid is None
+    # Naive — no tzinfo, wall-clock preserved as local time
+    assert ev.start.tzinfo is None
+    assert ev.start.hour == 12
+
 # ----------------------------------------------------------------------
 # Regression: floating times via ImmutableEvent must use config_tz
 # ----------------------------------------------------------------------
