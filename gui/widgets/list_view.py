@@ -232,6 +232,7 @@ class ListView(QWidget):
         self._content_layout.addStretch()  # Keep events at top
 
         self._scroll.setWidget(self._content)
+        self._content.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         main_layout.addWidget(self._scroll)
 
         # Connect scroll to detect visible range
