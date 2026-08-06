@@ -617,7 +617,8 @@ class MainWindow(QMainWindow):
         return tuple(
             (e.uid, e.start, e.end, e.summary, e.location, e.description,
              e.all_day, e.calendar_name, e.calendar_color, e.read_only,
-             e.is_recurring, e.sync_status, e.pending_operation, e.is_outdated)
+             e.is_recurring, e.sync_status, e.pending_operation, e.is_outdated,
+             e.confirmed_at)
             for e in events
         )
 

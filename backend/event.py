@@ -621,6 +621,11 @@ class EventView:
         return self._event.is_outdated(self._source.outdate_threshold)
 
     @property
+    def confirmed_at(self) -> Optional[datetime]:
+        """File mtime from last persistence, forwarded from ImmutableEvent."""
+        return self._event.confirmed_at
+
+    @property
     def pending_operation(self):
         _map = {
             "pending_create": "create",
