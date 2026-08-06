@@ -102,6 +102,7 @@ class CalendarWidget(QWidget):
         self._list_view.event_clicked.connect(self.event_clicked.emit)
         self._list_view.event_double_clicked.connect(self.event_double_clicked.emit)
         self._list_view.visible_range_changed.connect(self.visible_range_changed.emit)
+        self._list_view.visible_range_changed.connect(self._on_list_visible_range_changed)
 
         self._stack.addWidget(self._day_view)
         self._stack.addWidget(self._week_view)
@@ -110,6 +111,16 @@ class CalendarWidget(QWidget):
 
         layout.addWidget(self._stack)
         self.set_view(self._current_view)
+
+    def _on_list_visible_range_changed(self, start: datetime, end: datetime):
+        """Silently track the list view position in _current_date.
+
+        Keeps persisted state and the fetch range (±90 days around
+        _current_date) aligned with where the user actually scrolled to.
+        Silent on purpose: no date_changed signal, no refresh loop.
+        """
+        if self._current_view == ViewType.LIST and start:
+            self._current_date = start.date()
 
     def set_view(self, view_type: ViewType):
         self._follow_state.follow_present = False
@@ -167,13 +178,18 @@ class CalendarWidget(QWidget):
             # Start of month
             return datetime.combine(self._current_date.replace(day=1), dt_time.min)
         else:  # LIST
-            # Use tracked scroll datetime if available (more reliable than checking visible widgets)
-            if self._list_view._last_scroll_datetime:
-                return self._list_view._last_scroll_datetime
+            # Prefer the live anchor (top visible event) - it reflects where
+            # the user actually is in the list.
+            anchor = self._list_view.get_anchor_datetime()
+            if anchor:
+                return anchor
             # Fallback to first visible event datetime
             first_visible = self._list_view.get_first_visible_datetime()
             if first_visible:
                 return first_visible
+            # Fallback to tracked scroll datetime
+            if self._list_view._last_scroll_datetime:
+                return self._list_view._last_scroll_datetime
             # Final fallback: current datetime
             return datetime.now()
 
@@ -229,6 +245,14 @@ class CalendarWidget(QWidget):
     def get_list_first_visible_datetime(self) -> Optional[datetime]:
         """Get the datetime of the first visible event in list view."""
         return self._list_view.get_first_visible_datetime()
+
+    def get_list_anchor_datetime(self) -> Optional[datetime]:
+        """Get the list view's position anchor (first visible event).
+
+        Unlike get_first_visible_datetime(), the anchor survives transient
+        states (mid-rebuild, empty viewport) where no widget is visible.
+        """
+        return self._list_view.get_anchor_datetime()
 
     def scroll_list_to_datetime(self, target_dt: datetime):
         """Scroll list view to position events at or after target_dt at top."""

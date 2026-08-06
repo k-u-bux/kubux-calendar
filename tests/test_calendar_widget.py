@@ -158,3 +158,48 @@ def test_get_reference_datetime_month(qapp):
     cw.set_date(date(2026, 3, 15))
     ref = cw.get_reference_datetime()
     assert ref.date() == date(2026, 3, 1)
+
+def test_get_reference_datetime_list_uses_anchor(qapp):
+    """List view reference datetime comes from the top visible event (anchor)."""
+    from datetime import datetime
+    cw = _make_cal()
+    cw.set_view(ViewType.LIST)
+    anchor = datetime(2026, 2, 10, 9, 0)
+    cw._list_view._anchor_datetime = anchor
+    assert cw.get_reference_datetime() == anchor
+
+
+def test_get_reference_datetime_list_anchor_beats_last_scroll(qapp):
+    """The live anchor takes priority over the tracked scroll target."""
+    from datetime import datetime
+    cw = _make_cal()
+    cw.set_view(ViewType.LIST)
+    cw._list_view._anchor_datetime = datetime(2026, 2, 10, 9, 0)
+    cw._list_view._last_scroll_datetime = datetime(2026, 5, 1, 9, 0)
+    assert cw.get_reference_datetime() == datetime(2026, 2, 10, 9, 0)
+
+
+def test_list_scroll_updates_current_date_silently(qapp):
+    """Scrolling the list view updates _current_date without date_changed."""
+    from datetime import datetime
+    cw = _make_cal()
+    cw.set_view(ViewType.LIST)
+    cw.set_date(date(2026, 1, 1))
+
+    seen = []
+    cw.date_changed.connect(lambda d: seen.append(d))
+
+    cw._list_view.visible_range_changed.emit(datetime(2026, 3, 10, 9, 0), datetime(2026, 3, 12, 9, 0))
+    assert cw.get_current_date() == date(2026, 3, 10)
+    assert seen == []  # silent - no signal
+
+
+def test_list_visible_range_ignored_in_other_views(qapp):
+    """The tracking handler must not fire when list view is inactive."""
+    from datetime import datetime
+    cw = _make_cal()
+    cw.set_view(ViewType.WEEK)
+    cw.set_date(date(2026, 1, 5))
+
+    cw._list_view.visible_range_changed.emit(datetime(2026, 3, 10, 9, 0), datetime(2026, 3, 12, 9, 0))
+    assert cw.get_current_date() == date(2026, 1, 5)

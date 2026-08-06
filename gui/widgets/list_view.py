@@ -211,6 +211,8 @@ class ListView(QWidget):
         self._sorted_events: list[EventData] = []  # Keep sorted list for navigation
         self._pending_scroll_datetime: Optional[datetime] = None  # Scroll target applied after events load
         self._last_scroll_datetime: Optional[datetime] = None  # Track last successful scroll target
+        self._anchor_datetime: Optional[datetime] = None  # First visible event - live position anchor
+        self._rebuilding = False  # True while a rebuild is in progress (anchor updates suspended)
         self._batch_generation = 0  # Incremented on each _refresh_display to invalidate old batch timers
         self._setup_ui()
 
@@ -239,10 +241,20 @@ class ListView(QWidget):
         self._scroll.verticalScrollBar().valueChanged.connect(self._on_scroll)
 
     def _on_scroll(self):
-        """Handle scroll event to update visible range."""
+        """Handle scroll event to update visible range and position anchor."""
+        # Ignore scroll events caused by a rebuild in progress - they would
+        # clobber the anchor we are about to restore to, and the transient
+        # visible range is meaningless to listeners.
+        if self._rebuilding:
+            return
         visible_range = self.get_visible_date_range()
         if visible_range[0] and visible_range[1]:
+            self._anchor_datetime = visible_range[0]
             self.visible_range_changed.emit(visible_range[0], visible_range[1])
+
+    def get_anchor_datetime(self) -> Optional[datetime]:
+        """Get the live position anchor (start of first visible event)."""
+        return self._anchor_datetime
 
     def set_date(self, d: date):
         """Set the current date (used for navigation context)."""
@@ -258,6 +270,7 @@ class ListView(QWidget):
         # Increment generation to invalidate any pending batch timers from previous refresh
         self._batch_generation += 1
         current_generation = self._batch_generation
+        self._rebuilding = True
 
         # Clear existing widgets
         for widget in self._event_widgets:
@@ -317,11 +330,23 @@ class ListView(QWidget):
 
     def _finalize_display(self):
         """Called after all widgets are created."""
+        generation = self._batch_generation
+
         # Apply pending scroll if set (after events are loaded)
         if self._pending_scroll_datetime:
             target_dt = self._pending_scroll_datetime
             self._pending_scroll_datetime = None  # Clear before applying
             QTimer.singleShot(50, lambda: self.scroll_to_datetime(target_dt))
+            # Lift the rebuild guard after the deferred scroll (50+50ms) landed
+            QTimer.singleShot(150, lambda: self._clear_rebuilding(generation))
+        elif self._anchor_datetime:
+            # No explicit target: restore the pre-rebuild position so that
+            # syncs / auto-refreshes / style refreshes don't move the view.
+            anchor_dt = self._anchor_datetime
+            QTimer.singleShot(50, lambda: self.scroll_to_datetime(anchor_dt))
+            QTimer.singleShot(150, lambda: self._clear_rebuilding(generation))
+        else:
+            self._rebuilding = False
 
         # Emit visible range after layout is complete
         def _emit_visible_range():
@@ -329,6 +354,11 @@ class ListView(QWidget):
             if visible_range[0] and visible_range[1]:
                 self.visible_range_changed.emit(visible_range[0], visible_range[1])
         QTimer.singleShot(100, _emit_visible_range)
+
+    def _clear_rebuilding(self, generation: int):
+        """Lift the rebuild guard unless a newer rebuild started meanwhile."""
+        if generation == self._batch_generation:
+            self._rebuilding = False
 
     def get_visible_date_range(self) -> tuple[Optional[datetime], Optional[datetime]]:
         """Get the date range of currently visible events."""
@@ -370,47 +400,64 @@ class ListView(QWidget):
         if not self._event_widgets:
             return
 
-        # Find the first event at or after target_dt
-        target_widget = None
-        for widget in self._event_widgets:
-            event_start = to_local_datetime(widget.event_data.start)
-            # Remove timezone info for comparison
-            event_start_naive = event_start.replace(tzinfo=None) if event_start.tzinfo else event_start
+        # Defer to ensure layout is complete; re-find the target widget by
+        # event datetime at execution time (guards against widget deletion
+        # and against being called mid-rebuild with a partial widget list).
+        def _scroll_to_widget():
             target_naive = target_dt.replace(tzinfo=None) if target_dt.tzinfo else target_dt
-            if event_start_naive >= target_naive:
-                target_widget = widget
-                break
+            chosen = None
+            for widget in self._event_widgets:
+                try:
+                    event_start = to_local_datetime(widget.event_data.start)
+                    event_start_naive = event_start.replace(tzinfo=None) if event_start.tzinfo else event_start
+                    if event_start_naive >= target_naive:
+                        chosen = widget
+                        break
+                except RuntimeError:
+                    # Widget was deleted, skip it
+                    continue
+            # Fallback: no event at or after target -> scroll to last event
+            if chosen is None and self._event_widgets:
+                chosen = self._event_widgets[-1]
+            if chosen is not None:
+                try:
+                    widget_pos = chosen.mapTo(self._content, chosen.rect().topLeft())
+                    # Offset by the layout spacing (4px): a larger margin would
+                    # leave a sliver of the previous event visible, making it
+                    # the "first visible" event and corrupting the anchor.
+                    self._scroll.verticalScrollBar().setValue(max(0, widget_pos.y() - 4))
+                except RuntimeError:
+                    pass
+        QTimer.singleShot(50, _scroll_to_widget)
 
-        # If no event at or after target, use the last event
-        if target_widget is None and self._event_widgets:
-            target_widget = self._event_widgets[-1]
-
-        if target_widget:
-            # Store the target datetime instead of widget reference (widget may be deleted)
-            target_event_start = target_dt
-
-            # Scroll so the target widget is at the top
-            # Defer to ensure layout is complete
-            def _scroll_to_widget():
-                # Re-find the widget by event datetime (guards against widget deletion)
-                for widget in self._event_widgets:
-                    try:
-                        event_start = to_local_datetime(widget.event_data.start)
-                        event_start_naive = event_start.replace(tzinfo=None) if event_start.tzinfo else event_start
-                        target_naive = target_event_start.replace(tzinfo=None) if target_event_start.tzinfo else target_event_start
-                        if event_start_naive >= target_naive:
-                            widget_pos = widget.mapTo(self._content, widget.rect().topLeft())
-                            self._scroll.verticalScrollBar().setValue(max(0, widget_pos.y() - 8))
-                            return
-                    except RuntimeError:
-                        # Widget was deleted, skip it
-                        continue
-            QTimer.singleShot(50, _scroll_to_widget)
+    @staticmethod
+    def _add_months(d: date, months: int) -> date:
+        """Shift a date by whole months, clamping the day to month length."""
+        import calendar
+        m = d.month - 1 + months
+        y = d.year + m // 12
+        m = m % 12 + 1
+        day = min(d.day, calendar.monthrange(y, m)[1])
+        return date(y, m, day)
 
     def get_date_range(self) -> tuple[datetime, datetime]:
-        """Get the date range for fetching events (±3 months from current date)."""
-        start = datetime.combine(self._current_date - timedelta(days=90), dt_time.min)
-        end = datetime.combine(self._current_date + timedelta(days=90), dt_time.max)
+        """Get the date range for fetching events.
+
+        Asymmetric around the shown entries: -4 months from the first shown
+        entry, +8 months from the last shown entry.  Falls back to ±90 days
+        around the current date when nothing is shown yet (startup).
+        """
+        first_visible, last_visible = self.get_visible_date_range()
+        first = first_visible or self._anchor_datetime
+        last = last_visible or first
+
+        if first is None:
+            start = datetime.combine(self._current_date - timedelta(days=90), dt_time.min)
+            end = datetime.combine(self._current_date + timedelta(days=90), dt_time.max)
+            return start, end
+
+        start = datetime.combine(self._add_months(first.date(), -4), dt_time.min)
+        end = datetime.combine(self._add_months(last.date(), 8), dt_time.max)
         return start, end
 
     def get_scroll_position(self) -> int:

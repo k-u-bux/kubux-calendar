@@ -76,6 +76,7 @@ class MainWindow(QMainWindow):
         # Starting it now would race with CalDAV session setup.
         self._sync_timer_started = False
         self._last_pending_count = 0
+        self._last_display_signature = None  # Signature of last displayed event set
 
         # Debounced state save (avoids sync disk I/O on rapid navigation)
         self._save_timer = QTimer(self)
@@ -124,6 +125,10 @@ class MainWindow(QMainWindow):
             self.event_store = EventStore(config)
         self.event_store.set_on_change_callback(self._on_data_changed)
         self.event_store.set_on_sync_status_callback(self._on_sync_status_changed)
+
+        # UI is rebuilt below - invalidate the display signature so the
+        # change-detection skip doesn't leave the fresh views empty.
+        self._last_display_signature = None
 
         # Rebuild UI widgets
         self._setup_ui()
@@ -398,8 +403,20 @@ class MainWindow(QMainWindow):
         # Restore scroll position (defer to after layout and data load)
         scroll_pos = self._ui_state.get("scroll_position", 0)
         list_top_datetime_str = self._ui_state.get("list_top_datetime")
-        
+
         debug_log(Level.DEBUG, f"_load_state: view_type={view_type}, scroll_pos={scroll_pos}, list_dt={list_top_datetime_str}")
+
+        # In list view, seed the saved position immediately: this replaces the
+        # pending scroll target that set_view() captured from the previous
+        # (default week) view, so the first rebuild already lands correctly.
+        if view_type == ViewType.LIST and list_top_datetime_str:
+            try:
+                list_top_dt = datetime.fromisoformat(list_top_datetime_str)
+                lv = self._calendar_widget._list_view
+                lv._pending_scroll_datetime = list_top_dt
+                lv._anchor_datetime = list_top_dt
+            except ValueError:
+                pass
         
         # Follow-present mode
         self._pending_restore_follow_present = self._ui_state.get("follow_present", False)
@@ -431,8 +448,11 @@ class MainWindow(QMainWindow):
         
         # Scroll position - save separately for list view and day/week views
         if view_type == ViewType.LIST:
-            # For list view, save the datetime of the first visible event
-            first_visible_dt = self._calendar_widget.get_list_first_visible_datetime()
+            # For list view, save the position anchor (first visible event).
+            # The anchor survives transient states (mid-rebuild) where no
+            # widget is visible; fall back to the live visible check.
+            first_visible_dt = (self._calendar_widget.get_list_anchor_datetime()
+                                or self._calendar_widget.get_list_first_visible_datetime())
             if first_visible_dt:
                 self._ui_state["list_top_datetime"] = first_visible_dt.isoformat()
                 debug_log(Level.DEBUG, f"_save_state: list_top_datetime={first_visible_dt.isoformat()}")
@@ -560,6 +580,13 @@ class MainWindow(QMainWindow):
                 # Scroll to saved datetime
                 try:
                     list_top_dt = datetime.fromisoformat(list_dt_str)
+                    lv = self._calendar_widget._list_view
+                    # Make this restore authoritative: override the pending
+                    # scroll target captured by set_view() (week-start of the
+                    # default view) and pre-seed the anchor so later rebuilds
+                    # (e.g. sync completion) restore to the right position.
+                    lv._pending_scroll_datetime = list_top_dt
+                    lv._anchor_datetime = list_top_dt
                     self._calendar_widget.scroll_list_to_datetime(list_top_dt)
                 except:
                     # Fallback: scroll to upcoming if datetime invalid
@@ -577,23 +604,48 @@ class MainWindow(QMainWindow):
         
         start, end = self._calendar_widget.get_date_range()
         events = self.event_store.get_events(start, end)
+        self._last_display_signature = self._events_signature(events)
         self._calendar_widget.set_events(events)
-        
+
         self._statusbar.showMessage(f"Loaded {len(events)} events", 3000)
     
+    @staticmethod
+    def _events_signature(events) -> tuple:
+        """Cheap content signature of an event list, for change detection.
+
+        Includes is_outdated so that events crossing the staleness threshold
+        (time-dependent) still trigger a rebuild.
+        """
+        return tuple(
+            (e.uid, e.start, e.end, e.summary, e.location, e.description,
+             e.all_day, e.calendar_name, e.calendar_color, e.read_only,
+             e.is_recurring, e.sync_status, e.pending_operation, e.is_outdated)
+            for e in events
+        )
+
     def _update_display_from_cache(self):
         """Update display from cached events only (no network fetch).
-        
+
         Used during initial load to display events from repository without
         triggering network access.
+
+        Skips the rebuild entirely when the event data hasn't changed since
+        the last display update (avoids resetting the list view scroll
+        position on every auto-refresh tick).
         """
-        self._statusbar.showMessage("Displaying events...")
-        
         start, end = self._calendar_widget.get_date_range()
         # Use get_events_from_cache() which only returns cached data, no network
         events = self.event_store.get_events_from_cache(start, end)
+
+        signature = self._events_signature(events)
+        if signature == self._last_display_signature:
+            debug_log(Level.DEBUG, "_update_display_from_cache: unchanged, skipping rebuild")
+            return
+        self._last_display_signature = signature
+
+        self._statusbar.showMessage("Displaying events...")
         self._calendar_widget.set_events(events)
-        
+
         debug_log(Level.DEBUG, f"_update_display_from_cache: {len(events)} events")
         self._statusbar.showMessage(f"Loaded {len(events)} events from cache", 3000)
     
@@ -727,21 +779,12 @@ class MainWindow(QMainWindow):
             self._sync_timer.start(self._current_sync_interval * 1000)
             debug_log(Level.DEBUG, f"Sync timer started ({self._current_sync_interval}s interval)")
 
-        # Capture current list view position BEFORE updating
-        current_list_dt = None
-        if self._calendar_widget.get_current_view() == ViewType.LIST:
-            current_list_dt = self._calendar_widget.get_list_first_visible_datetime()
-            debug_log(Level.DEBUG, f"_on_data_changed: captured list_dt={current_list_dt}")
-        
+        # Note: no list-view scroll capture/restore needed here - ListView
+        # preserves its position anchor internally across rebuilds.
         self._update_display_from_cache()
         self._sidebar.refresh()
         self._sidebar.update_tooltips()
         self._update_sync_status()
-        
-        # Restore list view position AFTER update
-        if current_list_dt:
-            debug_log(Level.DEBUG, f"_on_data_changed: restoring list_dt={current_list_dt}")
-            QTimer.singleShot(50, lambda: self._calendar_widget.scroll_list_to_datetime(current_list_dt))
     
     def _on_sync_status_changed(self, pending_count: int, last_sync_time):
         """Handle sync status change from event store (sync queue callback)."""
@@ -852,7 +895,8 @@ class MainWindow(QMainWindow):
             current_date = self._calendar_widget.get_current_date()
             current_list_dt = None
             if current_view == ViewType.LIST:
-                current_list_dt = self._calendar_widget.get_list_first_visible_datetime()
+                current_list_dt = (self._calendar_widget.get_list_anchor_datetime()
+                                   or self._calendar_widget.get_list_first_visible_datetime())
             
             debug_log(Level.DEBUG, f"_load_pending_config: captured scroll_pos={current_scroll_pos}, view={current_view}")
             
