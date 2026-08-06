@@ -580,13 +580,11 @@ class MainWindow(QMainWindow):
                 # Scroll to saved datetime
                 try:
                     list_top_dt = datetime.fromisoformat(list_dt_str)
-                    lv = self._calendar_widget._list_view
-                    # Make this restore authoritative: override the pending
-                    # scroll target captured by set_view() (week-start of the
-                    # default view) and pre-seed the anchor so later rebuilds
-                    # (e.g. sync completion) restore to the right position.
-                    lv._pending_scroll_datetime = list_top_dt
-                    lv._anchor_datetime = list_top_dt
+                    # Keep the anchor pointing at the restored position so
+                    # later rebuilds (e.g. sync completion) stay there.
+                    # (The pending scroll target was already seeded in
+                    # _load_state - no need to set it again here.)
+                    self._calendar_widget._list_view._anchor_datetime = list_top_dt
                     self._calendar_widget.scroll_list_to_datetime(list_top_dt)
                 except:
                     # Fallback: scroll to upcoming if datetime invalid

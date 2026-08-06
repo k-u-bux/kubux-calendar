@@ -271,6 +271,10 @@ class ListView(QWidget):
         self._batch_generation += 1
         current_generation = self._batch_generation
         self._rebuilding = True
+        # Freeze painting: the rebuild collapses and re-grows the content and
+        # the restore scroll only lands ~100ms later.  Without this the user
+        # sees the list flash to the top (far past) and jump back.
+        self._scroll.setUpdatesEnabled(False)
 
         # Clear existing widgets
         for widget in self._event_widgets:
@@ -347,6 +351,7 @@ class ListView(QWidget):
             QTimer.singleShot(150, lambda: self._clear_rebuilding(generation))
         else:
             self._rebuilding = False
+            self._scroll.setUpdatesEnabled(True)
 
         # Emit visible range after layout is complete
         def _emit_visible_range():
@@ -359,6 +364,7 @@ class ListView(QWidget):
         """Lift the rebuild guard unless a newer rebuild started meanwhile."""
         if generation == self._batch_generation:
             self._rebuilding = False
+            self._scroll.setUpdatesEnabled(True)
 
     def get_visible_date_range(self) -> tuple[Optional[datetime], Optional[datetime]]:
         """Get the date range of currently visible events."""
