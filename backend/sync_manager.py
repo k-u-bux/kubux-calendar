@@ -963,12 +963,30 @@ class SyncManager:
             self._last_sync_time = result["last_sync_time"]
 
         # Queue a refresh of the affected sources so the server data is
-        # read back onto disk.  The refresh result is compared against
-        # the pending events in _confirm_pending_uids.
+        # read back onto disk.  The refresh window is anchored at the
+        # pending event's time range — not now — so the server fetch
+        # actually covers the event's position and the cache gets populated.
         if refresh_sources:
             for sid in refresh_sources:
-                debug_log(Level.DEBUG, f"sync: queueing confirmation refresh for {sid}")
-                self._enqueue_refresh(sid, None, None)
+                # Find the widest time range among pending events for this source
+                w_start = None
+                w_end = None
+                for uid in self._awaiting_confirmation.get(sid, set()):
+                    pev = self._fs.load_pending_event(sid, uid)
+                    if pev is not None:
+                        ev_start = pev.start.replace(tzinfo=None) if pev.start.tzinfo else pev.start
+                        ev_end = pev.end.replace(tzinfo=None) if pev.end.tzinfo else pev.end
+                        if w_start is None or ev_start < w_start:
+                            w_start = ev_start
+                        if w_end is None or ev_end > w_end:
+                            w_end = ev_end
+                # Widen by 1 day each side for safety
+                if w_start is not None:
+                    w_start -= timedelta(days=1)
+                if w_end is not None:
+                    w_end += timedelta(days=1)
+                debug_log(Level.DEBUG, f"sync: queueing confirmation refresh for {sid} window={w_start}..{w_end}")
+                self._enqueue_refresh(sid, w_start, w_end)
 
         self._notify_change()
         self._notify_sync_status()
