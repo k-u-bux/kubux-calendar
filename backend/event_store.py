@@ -516,9 +516,6 @@ class EventStore:
                 if self._visibility.get(e.source_id, True)
             ]
 
-        # Filter out pending-delete from cache view.
-        cached = [e for e in cached if e.uid not in pending_delete_uids]
-
         # Expand recurrences and time-filter.
         instances = self._expand_instances(cached, start, end)
         cached_map: dict[str, ImmutableEvent] = {
@@ -572,6 +569,8 @@ class EventStore:
             view = EventView(ev, src)
             if ev.uid in pending_uids:
                 view._set_pending_sync_state("update")
+            elif ev.uid in pending_delete_uids:
+                view._set_pending_sync_state("delete")
             views.append(view)
 
         return views
