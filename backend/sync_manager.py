@@ -90,7 +90,11 @@ class SyncManager:
         # is the op removed (see _confirm_pending_uids).  UIDs in this
         # structure are skipped by sync_pending_in_background so the timer
         # does not re-PUT the same change while awaiting confirmation.
+        # A uid that remains unconfirmed for > CONFIRMATION_TTL seconds
+        # will be re-PUT (see _do_sync_pending).
         self._awaiting_confirmation: dict[str, set[str]] = {}
+        self._confirmation_attempt_time: dict[str, datetime] = {}
+        self._CONFIRMATION_TTL = 300  # 5 minutes before re-PUT
 
     # ------------------------------------------------------------------
     # State transfer (for EventStore.clone)
@@ -829,28 +833,50 @@ class SyncManager:
         calendars_snapshot = dict(self._calendars)
         sessions_snapshot = dict(self._sessions)
         sources_snapshot = dict(self._sources)
+        awaiting_snapshot = {
+            sid: set(uids) for sid, uids in self._awaiting_confirmation.items()
+        }
+        attempt_time_snapshot = dict(self._confirmation_attempt_time)
         dispatch_task(self._on_sync_pending_done, self._do_sync_pending,
-                      calendars_snapshot, sessions_snapshot, sources_snapshot)
+                      calendars_snapshot, sessions_snapshot, sources_snapshot,
+                      awaiting_snapshot, attempt_time_snapshot)
 
     def _do_sync_pending(
         self,
         calendars: dict[str, CalendarInfo],
         sessions: dict[str, DAVSession],
         sources: dict[str, CalendarSource],
+        awaiting_uids_snapshot: dict[str, set[str]],
+        attempt_time_snapshot: dict[str, datetime],
     ) -> dict:
         """Runs in worker thread. Returns result dict — no shared state mutation.
 
         Ops that are awaiting read-back confirmation are skipped (they are
         still in pending.json, but sync has already PUT them; a refresh is
-        in flight to confirm).
+        in flight to confirm).  If a uid has been awaiting > CONFIRMATION_TTL
+        it is re-PUT anyway (the confirmation refresh may never have come).
         """
+        now = datetime.now()
         ops = self._fs.load_pending()
-        # Skip any op already awaiting confirmation — do not re-PUT.
-        ops = [
-            op for op in ops
-            if op.uid not in self._awaiting_confirmation.get(op.source_id, set())
-        ]
         result = {"success": 0, "failed": 0, "done_uids": [], "last_sync_time": None}
+
+        filtered: list[PendingOp] = []
+        for op in ops:
+            awaiting = awaiting_uids_snapshot.get(op.source_id, set())
+            if op.uid not in awaiting:
+                filtered.append(op)
+                continue
+            # Check if this uid has been waiting too long — re-PUT it
+            attempt_time = attempt_time_snapshot.get(op.uid)
+            if attempt_time and (now - attempt_time).total_seconds() > self._CONFIRMATION_TTL:
+                debug_log(Level.DEBUG, f"sync: uid={op.uid} has been awaiting confirmation > {self._CONFIRMATION_TTL}s — re-PUT")
+                filtered.append(op)
+            else:
+                result["skipped_uids"] = result.get("skipped_uids", [])
+                result["skipped_uids"].append(op.uid)
+                debug_log(Level.DEBUG, f"sync: skipping uid={op.uid} — awaiting confirmation")
+
+        result = {"success": 0, "failed": 0, "done_uids": [], "skipped_uids": result.get("skipped_uids", []), "last_sync_time": None}
 
         debug_log(Level.DEBUG, f"sync: {len(ops)} pending ops to process")
         debug_log(Level.DEBUG, f"sync: calendars keys: {list(calendars.keys())}")
@@ -935,6 +961,7 @@ class SyncManager:
             op = by_uid.get(uid)
             if op is None:
                 continue
+            self._confirmation_attempt_time[uid] = datetime.now()
             debug_log(Level.DEBUG, f"sync: PUT succeeded for uid={uid} op={op.operation} source_id={op.source_id} — awaiting read-back confirmation")
             if op.operation == "delete":
                 # Delete is confirmed by absence: after the refresh removes
@@ -1026,6 +1053,7 @@ class SyncManager:
                 if cached is None:
                     debug_log(Level.DEBUG, f"sync: deletion confirmed for uid={op.uid} — absent from server")
                     self._awaiting_confirmation[op.source_id].discard(op.uid)
+                    self._confirmation_attempt_time.pop(op.uid, None)
                     confirmed_any = True
                     continue  # drop op
                 else:
@@ -1046,6 +1074,7 @@ class SyncManager:
                 if op.ical_data == cached_ev.ical_data:
                     debug_log(Level.DEBUG, f"sync: PUT confirmed for uid={op.uid} — server data matches pending edit")
                     self._awaiting_confirmation[op.source_id].discard(op.uid)
+                    self._confirmation_attempt_time.pop(op.uid, None)
                     confirmed_any = True
                     continue  # drop op (confirmed)
                 else:

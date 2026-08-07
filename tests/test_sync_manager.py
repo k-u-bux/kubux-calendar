@@ -711,7 +711,7 @@ def test_do_sync_pending_success(tmp_path):
     sm = SyncManager(fs=fs, index=idx, sources=sources, config=cfg)
     fs.add_pending(PendingOp(uid="u1", source_id="src1", operation="create"))
     with patch.object(sm, "_sync_one", return_value=True):
-        result = sm._do_sync_pending({}, {}, sources)
+        result = sm._do_sync_pending({}, {}, sources, {}, {})
     assert result["success"] == 1
     assert result["done_uids"] == ["u1"]
 
@@ -724,7 +724,7 @@ def test_do_sync_pending_failure_counts(tmp_path):
     sm = SyncManager(fs=fs, index=idx, sources=sources, config=cfg)
     fs.add_pending(PendingOp(uid="u1", source_id="src1", operation="delete"))
     with patch.object(sm, "_sync_one", return_value=False):
-        result = sm._do_sync_pending({}, {}, sources)
+        result = sm._do_sync_pending({}, {}, sources, {}, {})
     assert result["success"] == 0
     assert result["failed"] == 1
     assert result["done_uids"] == []
