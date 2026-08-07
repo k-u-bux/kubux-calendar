@@ -20,7 +20,7 @@ from typing import Optional, Callable
 import pytz
 
 from library.color_utils import get_unused_color
-from .event import ImmutableEvent, CalendarSource, SYNC_WINDOW_PAST_DAYS, SYNC_WINDOW_FUTURE_DAYS
+from .event import ImmutableEvent, CalendarSource, SYNC_WINDOW_PAST_DAYS, SYNC_WINDOW_FUTURE_DAYS, ical_events_match
 from .event_fs import EventFS, SourceMeta, PendingOp
 from .event_index import EventIndex
 from .network_ops import (
@@ -1071,7 +1071,7 @@ class SyncManager:
                     debug_log(Level.DEBUG, f"sync: uid={op.uid} not yet in cache — server may not have returned it (outside window?); op remains pending")
                     remaining_ops.append(op)
                     continue
-                if op.ical_data == cached_ev.ical_data:
+                if ical_events_match(op.ical_data, cached_ev.ical_data):
                     debug_log(Level.DEBUG, f"sync: PUT confirmed for uid={op.uid} — server data matches pending edit")
                     self._awaiting_confirmation[op.source_id].discard(op.uid)
                     self._confirmation_attempt_time.pop(op.uid, None)

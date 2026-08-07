@@ -24,6 +24,38 @@ SYNC_WINDOW_PAST_DAYS = 120
 SYNC_WINDOW_FUTURE_DAYS = 240
 
 
+# iCal properties that carry the actual event data we care about
+# when comparing a pending edit against the server's read-back.
+_ICAL_SEMANTIC_KEYS = frozenset({
+    "DTSTART", "DTEND", "SUMMARY", "DESCRIPTION", "LOCATION",
+    "RRULE", "EXDATE", "UID", "STATUS", "TRANSP",
+})
+
+
+def ical_events_match(a: str, b: str) -> bool:
+    """Return True if two iCalendar texts contain the same event data.
+
+    Compares only semantically significant properties (DTSTART, DTEND,
+    SUMMARY, etc.) instead of raw text, because CalDAV servers may
+    reformat the iCal (add ``X-*`` props, reorder lines, change the
+    PRODID, etc.) without altering the semantic content.
+    """
+    try:
+        ca = ICalCalendar.from_ical(a)
+        cb = ICalCalendar.from_ical(b)
+        va = [c for c in ca.walk() if c.name == "VEVENT"]
+        vb = [c for c in cb.walk() if c.name == "VEVENT"]
+        if not va or not vb:
+            return a == b  # fallback
+        va, vb = va[0], vb[0]
+        for key in _ICAL_SEMANTIC_KEYS:
+            if va.get(key) != vb.get(key):
+                return False
+        return True
+    except Exception:
+        return a == b  # fallback
+
+
 # ==================== Recurrence Rule ====================
 
 @dataclass

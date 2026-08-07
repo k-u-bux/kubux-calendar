@@ -28,6 +28,7 @@ from .config import Config
 from .event import (
     ImmutableEvent, CalendarSource, EventView, RecurrenceRule,
     SYNC_WINDOW_PAST_DAYS, SYNC_WINDOW_FUTURE_DAYS,
+    ical_events_match,
 )
 from .event_fs import EventFS, SourceMeta, PendingOp
 from .event_index import EventIndex
@@ -541,7 +542,7 @@ class EventStore:
 
             if pev is not None and cev is not None:
                 # Both exist — check if server has caught up.
-                if op and op.ical_data == cev.ical_data:
+                if op and ical_events_match(op.ical_data, cev.ical_data):
                     # Confirmed! Drop the pending op, show cached.
                     self._fs.remove_pending(uid)
                     final.append(cev)
