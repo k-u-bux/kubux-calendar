@@ -5,18 +5,14 @@ Directory layout::
 
     {base}/
     ├── cache/{source_id}/{uuid}.ics       — server-mirror cache
-    ├── pending_events/{source_id}/{uuid}.ics  — local edits not yet confirmed
     ├── sources/{source_id}.json           — per-source metadata
-    └── pending.json                       — pending sync operations
+    └── pending.json                       — pending sync operations + iCal data
 
-The cache/ directory is a disposable mirror of server state: written only by
-replace_source() during a refresh.  Local edits (drags, dialog saves) store
-their iCal data in pending_events/ alongside a PendingOp.  When get_events()
-builds the display, it overlays pending_events on top of cache.
-
-A pending change is *confirmed* when a subsequent refresh returns matching
-iCal text from the server — at that point the pending file and PendingOp are
-removed, and the cache (now identical) takes over.
+``pending.json`` is the single source of truth for pending edits.
+Each entry carries the full iCalendar text for create/update ops.
+When get_events() builds the display, it merges pending events on
+top of the cache.  When a refresh returns matching iCal text, the
+pending entry is removed (confirmed).
 """
 
 import json
@@ -119,18 +115,30 @@ class SourceMeta:
 # ==================== Pending Operations ====================
 
 class PendingOp:
-    """One pending sync operation."""
-    __slots__ = ("uid", "source_id", "operation", "instance_start")
+    """One pending sync operation.
+
+    *ical_data* carries the full iCalendar text for create/update ops.
+    ``sync_queue.json`` is the single source of truth — no separate
+    pending_events/ directory.
+    """
+    __slots__ = ("uid", "source_id", "operation", "instance_start", "ical_data")
 
     def __init__(self, uid: str, source_id: str, operation: str,
-                 instance_start: Optional[datetime] = None):
+                 instance_start: Optional[datetime] = None,
+                 ical_data: str = ""):
         self.uid = uid
         self.source_id = source_id
         self.operation = operation          # create, update, delete, delete_instance
         self.instance_start = instance_start  # only for delete_instance
+        self.ical_data = ical_data           # iCal payload (empty for deletes)
 
     def to_dict(self) -> dict:
-        d: dict = {"uid": self.uid, "source_id": self.source_id, "operation": self.operation}
+        d: dict = {
+            "uid": self.uid,
+            "source_id": self.source_id,
+            "operation": self.operation,
+            "ical_data": self.ical_data,
+        }
         if self.instance_start:
             d["instance_start"] = self.instance_start.isoformat()
         return d
@@ -140,8 +148,11 @@ class PendingOp:
         inst = None
         if d.get("instance_start"):
             inst = datetime.fromisoformat(d["instance_start"])
-        return cls(uid=d["uid"], source_id=d["source_id"],
-                   operation=d["operation"], instance_start=inst)
+        return cls(
+            uid=d["uid"], source_id=d["source_id"],
+            operation=d["operation"], instance_start=inst,
+            ical_data=d.get("ical_data", ""),
+        )
 
 
 # ==================== EventFS ====================
@@ -157,7 +168,6 @@ class EventFS:
     def __init__(self, base: Optional[Path] = None, config_tz: Optional[pytz.BaseTzInfo] = None):
         self.base = Path(base) if base else _default_base()
         self._cache_dir = self.base / "cache"
-        self._pending_events_dir = self.base / "pending_events"
         self._sources_dir = self.base / "sources"
         self._pending_file = self.base / "pending.json"
         self._config_tz = config_tz
@@ -166,12 +176,6 @@ class EventFS:
 
     def _source_dir(self, source_id: str) -> Path:
         return self._cache_dir / _safe_filename(source_id)
-
-    def _pending_event_dir(self, source_id: str) -> Path:
-        return self._pending_events_dir / _safe_filename(source_id)
-
-    def _pending_event_path(self, source_id: str, uid: str) -> Path:
-        return self._pending_event_dir(source_id) / f"{_safe_filename(uid)}.ics"
 
     def _event_path(self, source_id: str, uid: str) -> Path:
         return self._source_dir(source_id) / f"{_safe_filename(uid)}.ics"
@@ -213,75 +217,6 @@ class EventFS:
             path.unlink(missing_ok=True)
         except OSError:
             pass
-
-    # === Pending Events (local edits not yet confirmed on server) ==========
-
-    def save_pending_event(self, event: ImmutableEvent) -> None:
-        """Store a local edit that hasn't been confirmed on the server yet."""
-        path = self._pending_event_path(event.source_id, event.uid)
-        _atomic_write(path, event.ical_data)
-
-    def load_pending_event(self, source_id: str, uid: str) -> Optional[ImmutableEvent]:
-        """Load a pending event, or *None*."""
-        path = self._pending_event_path(source_id, uid)
-        if not path.exists():
-            return None
-        try:
-            ical_data = path.read_text(encoding="utf-8")
-            return ImmutableEvent.from_ical(
-                ical_data, source_id, config_tz=self._config_tz,
-            )
-        except Exception as e:
-            debug_log(Level.WARN, f"event_fs: load_pending_event failed — {e}")
-            return None
-
-    def delete_pending_event(self, source_id: str, uid: str) -> None:
-        """Remove a pending event file (confirmed on server)."""
-        path = self._pending_event_path(source_id, uid)
-        try:
-            path.unlink(missing_ok=True)
-        except OSError:
-            pass
-
-    def list_all_pending_events(self) -> dict[str, ImmutableEvent]:
-        """Return all pending events as {uid: ImmutableEvent}.
-
-        Used by get_events() to overlay pending edits on cache.
-        """
-        result: dict[str, ImmutableEvent] = {}
-        if not self._pending_events_dir.is_dir():
-            return result
-        for source_dir in self._pending_events_dir.iterdir():
-            if not source_dir.is_dir():
-                continue
-            # source_dir.name is hex-encoded source_id
-            source_id = bytes.fromhex(source_dir.name).decode("utf-8")
-            for p in source_dir.glob("*.ics"):
-                try:
-                    ical_data = p.read_text(encoding="utf-8")
-                    ev = ImmutableEvent.from_ical(
-                        ical_data, source_id, config_tz=self._config_tz,
-                    )
-                    result[ev.uid] = ev
-                except Exception as e:
-                    debug_log(Level.DEBUG, f"event_fs: list_all_pending_events — skipping {p.name}: {e}")
-                    continue
-        return result
-
-    def list_pending_ids_for_source(self, source_id: str) -> set[str]:
-        """Return the set of UIDs with pending ops for *source_id*."""
-        result: set[str] = set()
-        src_dir = self._pending_event_dir(source_id)
-        if not src_dir.is_dir():
-            return result
-        for p in src_dir.glob("*.ics"):
-            uid_stem = p.stem
-            try:
-                uid = bytes.fromhex(uid_stem).decode("utf-8")
-                result.add(uid)
-            except Exception:
-                pass
-        return result
 
     def list_events(self, source_id: str) -> list[ImmutableEvent]:
         """Load all cached events for a source."""

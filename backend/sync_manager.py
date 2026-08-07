@@ -894,13 +894,10 @@ class SyncManager:
         debug_log(Level.DEBUG, f"sync: session OK for {src.account_name}")
 
         if op.operation in ("create", "update"):
-            # Local edits live in pending_events/, not cache.  The cache is
-            # a pure server mirror and may not (yet) contain the edit.
-            ev = self._fs.load_pending_event(source_id, op.uid)
-            if ev is None:
-                debug_log(Level.WARN, f"sync: pending event file missing for {op.uid} — cannot sync")
+            if not op.ical_data:
+                debug_log(Level.WARN, f"sync: pending op for {op.uid} has no ical_data — cannot sync")
                 return False
-            return caldav_save_event(cal_info, ev.ical_data)
+            return caldav_save_event(cal_info, op.ical_data)
 
         elif op.operation == "delete":
             return caldav_delete_event(cal_info, op.uid)
@@ -972,14 +969,20 @@ class SyncManager:
                 w_start = None
                 w_end = None
                 for uid in self._awaiting_confirmation.get(sid, set()):
-                    pev = self._fs.load_pending_event(sid, uid)
-                    if pev is not None:
-                        ev_start = pev.start.replace(tzinfo=None) if pev.start.tzinfo else pev.start
-                        ev_end = pev.end.replace(tzinfo=None) if pev.end.tzinfo else pev.end
-                        if w_start is None or ev_start < w_start:
-                            w_start = ev_start
-                        if w_end is None or ev_end > w_end:
-                            w_end = ev_end
+                    op = by_uid.get(uid)
+                    if op and op.ical_data:
+                        try:
+                            pev = ImmutableEvent.from_ical(
+                                op.ical_data, op.source_id, config_tz=self._config_tz,
+                            )
+                            ev_start = pev.start.replace(tzinfo=None) if pev.start.tzinfo else pev.start
+                            ev_end = pev.end.replace(tzinfo=None) if pev.end.tzinfo else pev.end
+                            if w_start is None or ev_start < w_start:
+                                w_start = ev_start
+                            if w_end is None or ev_end > w_end:
+                                w_end = ev_end
+                        except Exception:
+                            pass
                 # Widen by 1 day each side for safety
                 if w_start is not None:
                     w_start -= timedelta(days=1)
@@ -1022,7 +1025,6 @@ class SyncManager:
                 cached = self._fs.load_event(op.source_id, op.uid)
                 if cached is None:
                     debug_log(Level.DEBUG, f"sync: deletion confirmed for uid={op.uid} — absent from server")
-                    self._fs.delete_pending_event(op.source_id, op.uid)
                     self._awaiting_confirmation[op.source_id].discard(op.uid)
                     confirmed_any = True
                     continue  # drop op
@@ -1032,19 +1034,17 @@ class SyncManager:
                     continue
             else:
                 # create / update — compare pending vs confirmed cache.
-                pending_ev = self._fs.load_pending_event(op.source_id, op.uid)
                 cached_ev = self._fs.load_event(op.source_id, op.uid)
-                if pending_ev is None:
-                    debug_log(Level.WARN, f"sync: pending event file missing for uid={op.uid} — op remains pending")
+                if not op.ical_data:
+                    debug_log(Level.WARN, f"sync: pending op for uid={op.uid} has no ical_data — op remains pending")
                     remaining_ops.append(op)
                     continue
                 if cached_ev is None:
                     debug_log(Level.DEBUG, f"sync: uid={op.uid} not yet in cache — server may not have returned it (outside window?); op remains pending")
                     remaining_ops.append(op)
                     continue
-                if pending_ev.ical_data == cached_ev.ical_data:
+                if op.ical_data == cached_ev.ical_data:
                     debug_log(Level.DEBUG, f"sync: PUT confirmed for uid={op.uid} — server data matches pending edit")
-                    self._fs.delete_pending_event(op.source_id, op.uid)
                     self._awaiting_confirmation[op.source_id].discard(op.uid)
                     confirmed_any = True
                     continue  # drop op (confirmed)

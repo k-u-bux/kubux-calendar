@@ -458,15 +458,14 @@ class EventStore:
         """
         Merge events from two sources and mark those that differ from cache.
 
-        - **pending_events/** — local edits not yet confirmed on the server.
+        - **pending.json** — local edits (ical_data embedded) not yet confirmed.
         - **events/** (via index) — server-mirror cache.
 
         For UIDs present in **both**: if the iCal text matches, the pending
-        state is resolved (pending file + pending.json op are dropped).
-        If they differ, the pending version wins and gets the pending mark.
+        op is removed (confirmed).  If they differ, the pending version wins
+        and gets the pending mark.
 
-        For UIDs only in **pending_events/**: shown with pending mark.
-
+        For UIDs only in **pending.json**: shown with pending mark.
         For UIDs only in **cache/**: shown clean.
         """
         if start.tzinfo is None:
@@ -474,15 +473,23 @@ class EventStore:
         if end.tzinfo is None:
             end = end.replace(tzinfo=pytz.UTC)
 
-        # 1) Collect all pending event files on disk.
-        pending_by_uid: dict[str, ImmutableEvent] = self._fs.list_all_pending_events()
-
-        # Filter pending events to time range + calendar visibility early.
+        # 1) Parse pending ops into {uid: ImmutableEvent} for create/update.
+        all_ops = self._fs.load_pending()
         pending_delete_uids: set[str] = set()
-        for op in self._fs.load_pending():
+        pending_by_uid: dict[str, ImmutableEvent] = {}
+        for op in all_ops:
             if op.operation in ("delete", "delete_instance"):
                 pending_delete_uids.add(op.uid)
+            elif op.ical_data:
+                try:
+                    ev = ImmutableEvent.from_ical(
+                        op.ical_data, op.source_id, config_tz=pytz.UTC,
+                    )
+                    pending_by_uid[op.uid] = ev
+                except Exception as e:
+                    debug_log(Level.WARN, f"store: _build_event_views — failed to parse pending ical for {op.uid}: {e}")
 
+        # Filter pending events to time range + calendar visibility early.
         pev_filtered: dict[str, ImmutableEvent] = {}
         for uid, pev in pending_by_uid.items():
             if uid in pending_delete_uids:
@@ -518,21 +525,24 @@ class EventStore:
             if ev.start < end and ev.end > start
         }
 
-        # 3) Merge: pending_events wins for display.
+        # Build lookup: op_by_uid[uid] -> PendingOp (for ical_data comparison)
+        op_by_uid = {op.uid: op for op in all_ops if op.ical_data}
+
+        # 3) Merge: pending wins for display.
         #    Auto-resolve when both sides agree (same ical_data).
-        seen: set[str] = set()
         final: list[ImmutableEvent] = []
         pending_uids: set[str] = set()  # UIDs that should show the pending mark
 
-        for uid in sorted(set(list(pev_filtered.keys()) + list(cached_map.keys()))):
+        all_uids = sorted(set(list(pev_filtered.keys()) + list(cached_map.keys())))
+        for uid in all_uids:
             pev = pev_filtered.get(uid)
             cev = cached_map.get(uid)
+            op = op_by_uid.get(uid)
 
             if pev is not None and cev is not None:
                 # Both exist — check if server has caught up.
-                if pev.ical_data == cev.ical_data:
-                    # Confirmed! Drop pending file + op, show cached.
-                    self._fs.delete_pending_event(cev.source_id, uid)
+                if op and op.ical_data == cev.ical_data:
+                    # Confirmed! Drop the pending op, show cached.
                     self._fs.remove_pending(uid)
                     final.append(cev)
                 else:
@@ -540,16 +550,14 @@ class EventStore:
                     final.append(pev)
                     pending_uids.add(uid)
             elif pev is not None:
-                # Only in pending_events.
+                # Only in pending.
                 final.append(pev)
                 pending_uids.add(uid)
-            else:
+            elif cev is not None:
                 # Only in cache.
                 final.append(cev)
 
-            seen.add(uid)
-
-        # 4) Wrap in EventView, flag pending_events with the triangle marker.
+        # 4) Wrap in EventView, flag pending with the triangle marker.
         views: list[EventView] = []
         for ev in final:
             src = self._sources.get(ev.source_id)
@@ -629,9 +637,11 @@ class EventStore:
             config_tz=self._config_tz,
         )
 
-        # Store in pending_events (not the server cache).
-        self._fs.save_pending_event(ev)
-        self._fs.add_pending(PendingOp(uid=ev.uid, source_id=calendar_id, operation="create"))
+        # Store in pending.json (single source of truth).
+        self._fs.add_pending(PendingOp(
+            uid=ev.uid, source_id=calendar_id, operation="create",
+            ical_data=ev.ical_data,
+        ))
         self._notify_change()
         self._notify_sync_status()
         self.sync_pending_in_background()
@@ -648,9 +658,11 @@ class EventStore:
         # Flush dirty fields into a new ImmutableEvent
         new_ev = event.flush_updates()
 
-        # Store in pending_events (not the server cache).
-        self._fs.save_pending_event(new_ev)
-        self._fs.add_pending(PendingOp(uid=new_ev.uid, source_id=new_ev.source_id, operation="update"))
+        # Store in pending.json (single source of truth).
+        self._fs.add_pending(PendingOp(
+            uid=new_ev.uid, source_id=new_ev.source_id, operation="update",
+            ical_data=new_ev.ical_data,
+        ))
         self._notify_change()
         self._notify_sync_status()
         self.sync_pending_in_background()
