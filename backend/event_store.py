@@ -455,109 +455,114 @@ class EventStore:
         calendar_ids: Optional[list[str]] = None,
         visible_only: bool = True,
     ) -> list[EventView]:
-        """Query index, load from FS, expand recurrences, wrap in EventView.
-
-        The cache contains only server-confirmed data.  Pending edits
-        (local changes not yet confirmed on the server) are stored in
-        pending_events/ and overlaid on top of cache here.
         """
-        # Ensure start/end are tz-aware (GUI passes naive datetimes)
+        Merge events from two sources and mark those that differ from cache.
+
+        - **pending_events/** — local edits not yet confirmed on the server.
+        - **events/** (via index) — server-mirror cache.
+
+        For UIDs present in **both**: if the iCal text matches, the pending
+        state is resolved (pending file + pending.json op are dropped).
+        If they differ, the pending version wins and gets the pending mark.
+
+        For UIDs only in **pending_events/**: shown with pending mark.
+
+        For UIDs only in **cache/**: shown clean.
+        """
         if start.tzinfo is None:
             start = start.replace(tzinfo=pytz.UTC)
         if end.tzinfo is None:
             end = end.replace(tzinfo=pytz.UTC)
 
-        # Load pending events overlay before querying the index.
-        pending_events = self._fs.list_all_pending_events()
+        # 1) Collect all pending event files on disk.
+        pending_by_uid: dict[str, ImmutableEvent] = self._fs.list_all_pending_events()
 
-        # Build set of UIDs that have pending ops
-        pending_ops = self._fs.load_pending()
-        pending_update_uids = {
-            op.uid for op in pending_ops
-            if op.operation in ("update", "create")
-        }
-        pending_delete_uids = {
-            op.uid for op in pending_ops
-            if op.operation in ("delete", "delete_instance")
-        }
+        # Filter pending events to time range + calendar visibility early.
+        pending_delete_uids: set[str] = set()
+        for op in self._fs.load_pending():
+            if op.operation in ("delete", "delete_instance"):
+                pending_delete_uids.add(op.uid)
 
-        # Get candidate master events from index
-        candidates = self._index.query_range(start, end)
-        debug_log(Level.DEBUG, f"store: query_range returned {len(candidates)} candidates")
+        pev_filtered: dict[str, ImmutableEvent] = {}
+        for uid, pev in pending_by_uid.items():
+            if uid in pending_delete_uids:
+                continue
+            if not (pev.start < end and pev.end > start):
+                continue
+            src = self._sources.get(pev.source_id)
+            if src is None:
+                continue
+            if visible_only and not self._visibility.get(src.id, True):
+                continue
+            if calendar_ids is not None and pev.source_id not in calendar_ids:
+                continue
+            pev_filtered[uid] = pev
 
-        # Filter by calendar
+        # 2) Collect cached events from the index.
+        cached = self._index.query_range(start, end)
         if calendar_ids is not None:
-            candidates = [e for e in candidates if e.source_id in calendar_ids]
-            debug_log(Level.DEBUG, f"store: after calendar_ids filter: {len(candidates)}")
+            cached = [e for e in cached if e.source_id in calendar_ids]
         elif visible_only:
-            before = len(candidates)
-            candidates = [
-                e for e in candidates
+            cached = [
+                e for e in cached
                 if self._visibility.get(e.source_id, True)
             ]
-            debug_log(Level.DEBUG, f"store: after visible_only filter: {len(candidates)} (was {before})")
 
-        # Remove events with pending_delete from display
-        candidates = [e for e in candidates if e.uid not in pending_delete_uids]
+        # Filter out pending-delete from cache view.
+        cached = [e for e in cached if e.uid not in pending_delete_uids]
 
-        # Expand recurrences
-        instances = self._expand_instances(candidates, start, end)
-        debug_log(Level.DEBUG, f"store: after _expand_instances: {len(instances)}")
-
-        # Filter to time range (recurrence expansion may include out-of-range)
-        before = len(instances)
-        filtered = [
-            ev for ev in instances
+        # Expand recurrences and time-filter.
+        instances = self._expand_instances(cached, start, end)
+        cached_map: dict[str, ImmutableEvent] = {
+            ev.uid: ev for ev in instances
             if ev.start < end and ev.end > start
-        ]
-        debug_log(Level.DEBUG, f"store: after time-range filter: {len(filtered)} (was {before})")
+        }
 
-        # Overlay pending edits on top of cached events.
+        # 3) Merge: pending_events wins for display.
+        #    Auto-resolve when both sides agree (same ical_data).
+        seen: set[str] = set()
         final: list[ImmutableEvent] = []
-        replaced_uids: set[str] = set()
-        for ev in filtered:
-            if ev.uid in pending_update_uids and ev.uid in pending_events:
-                final.append(pending_events[ev.uid])
-                replaced_uids.add(ev.uid)
-            else:
-                final.append(ev)
+        pending_uids: set[str] = set()  # UIDs that should show the pending mark
 
-        # Also include pending events that don't exist in cache yet
-        # (newly created events on server hasn't read them back yet).
-        for uid, pev in pending_events.items():
-            if uid in replaced_uids or uid in pending_delete_uids:
-                continue
-            if uid not in pending_update_uids:
-                continue
-            if pev.start < end and pev.end > start:
-                src = self._sources.get(pev.source_id)
-                if src and visible_only and not self._visibility.get(src.id, True):
-                    continue
+        for uid in sorted(set(list(pev_filtered.keys()) + list(cached_map.keys()))):
+            pev = pev_filtered.get(uid)
+            cev = cached_map.get(uid)
+
+            if pev is not None and cev is not None:
+                # Both exist — check if server has caught up.
+                if pev.ical_data == cev.ical_data:
+                    # Confirmed! Drop pending file + op, show cached.
+                    self._fs.delete_pending_event(cev.source_id, uid)
+                    self._fs.remove_pending(uid)
+                    final.append(cev)
+                else:
+                    # Pending differs — show pending version, mark.
+                    final.append(pev)
+                    pending_uids.add(uid)
+            elif pev is not None:
+                # Only in pending_events.
                 final.append(pev)
+                pending_uids.add(uid)
+            else:
+                # Only in cache.
+                final.append(cev)
 
-        # Build EventView wrappers — and re-apply pending sync state
-        # that was lost when reading iCal from disk (sync_state is not
-        # stored in the iCal payload).
-        op_for_uid = {op.uid: op for op in pending_ops}
+            seen.add(uid)
 
+        # 4) Wrap in EventView, flag pending_events with the triangle marker.
         views: list[EventView] = []
         for ev in final:
             src = self._sources.get(ev.source_id)
             if src is None:
-                debug_log(Level.DEBUG, f"store: skipping event {ev.uid} — source {ev.source_id} not found")
                 continue
             if src.id in self._user_colors:
                 src.color = self._user_colors[src.id]
             elif src.id in self._auto_colors:
                 src.color = self._auto_colors[src.id]
+
             view = EventView(ev, src)
-
-            # Bug fix: re-apply pending sync state so the triangle indicator
-            # appears on events from pending_events/ (sync_state lost in iCal).
-            op = op_for_uid.get(ev.uid)
-            if op and op.operation in ("create", "update"):
-                view._set_pending_sync_state(op.operation)
-
+            if ev.uid in pending_uids:
+                view._set_pending_sync_state("update")
             views.append(view)
 
         return views
