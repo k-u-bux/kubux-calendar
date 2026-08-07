@@ -455,12 +455,31 @@ class EventStore:
         calendar_ids: Optional[list[str]] = None,
         visible_only: bool = True,
     ) -> list[EventView]:
-        """Query index, load from FS, expand recurrences, wrap in EventView."""
+        """Query index, load from FS, expand recurrences, wrap in EventView.
+
+        The cache contains only server-confirmed data.  Pending edits
+        (local changes not yet confirmed on the server) are stored in
+        pending_events/ and overlaid on top of cache here.
+        """
         # Ensure start/end are tz-aware (GUI passes naive datetimes)
         if start.tzinfo is None:
             start = start.replace(tzinfo=pytz.UTC)
         if end.tzinfo is None:
             end = end.replace(tzinfo=pytz.UTC)
+
+        # Load pending events overlay before querying the index.
+        pending_events = self._fs.list_all_pending_events()
+
+        # Build set of UIDs that have pending ops
+        pending_ops = self._fs.load_pending()
+        pending_update_uids = {
+            op.uid for op in pending_ops
+            if op.operation in ("update", "create")
+        }
+        pending_delete_uids = {
+            op.uid for op in pending_ops
+            if op.operation in ("delete", "delete_instance")
+        }
 
         # Get candidate master events from index
         candidates = self._index.query_range(start, end)
@@ -478,6 +497,9 @@ class EventStore:
             ]
             debug_log(Level.DEBUG, f"store: after visible_only filter: {len(candidates)} (was {before})")
 
+        # Remove events with pending_delete from display
+        candidates = [e for e in candidates if e.uid not in pending_delete_uids]
+
         # Expand recurrences
         instances = self._expand_instances(candidates, start, end)
         debug_log(Level.DEBUG, f"store: after _expand_instances: {len(instances)}")
@@ -490,13 +512,36 @@ class EventStore:
         ]
         debug_log(Level.DEBUG, f"store: after time-range filter: {len(filtered)} (was {before})")
 
-        # Build EventView wrappers
-        # NOTE: color override is applied here (harmless dict lookup).
-        # Outdated status is NOT set here — that would trigger lazy
-        # SyncManager creation during a read operation (see _apply_source_state
-        # which runs at lifecycle boundaries instead).
-        views: list[EventView] = []
+        # Overlay pending edits on top of cached events.
+        final: list[ImmutableEvent] = []
+        replaced_uids: set[str] = set()
         for ev in filtered:
+            if ev.uid in pending_update_uids and ev.uid in pending_events:
+                final.append(pending_events[ev.uid])
+                replaced_uids.add(ev.uid)
+            else:
+                final.append(ev)
+
+        # Also include pending events that don't exist in cache yet
+        # (newly created events on server hasn't read them back yet).
+        for uid, pev in pending_events.items():
+            if uid in replaced_uids or uid in pending_delete_uids:
+                continue
+            if uid not in pending_update_uids:
+                continue
+            if pev.start < end and pev.end > start:
+                src = self._sources.get(pev.source_id)
+                if src and visible_only and not self._visibility.get(src.id, True):
+                    continue
+                final.append(pev)
+
+        # Build EventView wrappers — and re-apply pending sync state
+        # that was lost when reading iCal from disk (sync_state is not
+        # stored in the iCal payload).
+        op_for_uid = {op.uid: op for op in pending_ops}
+
+        views: list[EventView] = []
+        for ev in final:
             src = self._sources.get(ev.source_id)
             if src is None:
                 debug_log(Level.DEBUG, f"store: skipping event {ev.uid} — source {ev.source_id} not found")
@@ -505,7 +550,15 @@ class EventStore:
                 src.color = self._user_colors[src.id]
             elif src.id in self._auto_colors:
                 src.color = self._auto_colors[src.id]
-            views.append(EventView(ev, src))
+            view = EventView(ev, src)
+
+            # Bug fix: re-apply pending sync state so the triangle indicator
+            # appears on events from pending_events/ (sync_state lost in iCal).
+            op = op_for_uid.get(ev.uid)
+            if op and op.operation in ("create", "update"):
+                view._set_pending_sync_state(op.operation)
+
+            views.append(view)
 
         return views
 
@@ -571,11 +624,12 @@ class EventStore:
             config_tz=self._config_tz,
         )
 
-        self._fs.save_event(ev)
+        # Store in pending_events (not the server cache).
+        self._fs.save_pending_event(ev)
         self._fs.add_pending(PendingOp(uid=ev.uid, source_id=calendar_id, operation="create"))
-        self._index.add(ev)
         self._notify_change()
         self._notify_sync_status()
+        self.sync_pending_in_background()
         return EventView(ev, src)
 
     def update_event(self, event: EventView) -> bool:
@@ -589,13 +643,12 @@ class EventStore:
         # Flush dirty fields into a new ImmutableEvent
         new_ev = event.flush_updates()
 
-        # Sync state is now pending_update (set by flush_updates)
-        self._fs.save_event(new_ev)
+        # Store in pending_events (not the server cache).
+        self._fs.save_pending_event(new_ev)
         self._fs.add_pending(PendingOp(uid=new_ev.uid, source_id=new_ev.source_id, operation="update"))
-        self._index.remove(new_ev.uid)
-        self._index.add(new_ev)
         self._notify_change()
         self._notify_sync_status()
+        self.sync_pending_in_background()
         return True
 
     def move_event(self, event: EventView, new_calendar_id: str) -> Optional[EventView]:

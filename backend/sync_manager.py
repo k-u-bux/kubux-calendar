@@ -84,6 +84,14 @@ class SyncManager:
         self._pending_refresh: Optional[tuple] = None
         self._sync_running: bool = False
 
+        # UIDs whose PUT succeeded but have not yet been *confirmed* by a
+        # read-back.  Mapping source_id → set[uid].  The pending op stays
+        # in pending.json until a refresh returns matching data; only then
+        # is the op removed (see _confirm_pending_uids).  UIDs in this
+        # structure are skipped by sync_pending_in_background so the timer
+        # does not re-PUT the same change while awaiting confirmation.
+        self._awaiting_confirmation: dict[str, set[str]] = {}
+
     # ------------------------------------------------------------------
     # State transfer (for EventStore.clone)
     # ------------------------------------------------------------------
@@ -780,6 +788,11 @@ class SyncManager:
             for ev in result["new_index"].all_events():
                 self._index.add(ev)
 
+        # New server data is now on disk.  Confirm any pending ops that
+        # were awaiting a read-back — if the server data matches the
+        # pending edit, the op is dropped.
+        self._confirm_pending_uids()
+
         self._notify_change()
         self._notify_sync_status()
 
@@ -825,11 +838,21 @@ class SyncManager:
         sessions: dict[str, DAVSession],
         sources: dict[str, CalendarSource],
     ) -> dict:
-        """Runs in worker thread. Returns result dict — no shared state mutation."""
+        """Runs in worker thread. Returns result dict — no shared state mutation.
+
+        Ops that are awaiting read-back confirmation are skipped (they are
+        still in pending.json, but sync has already PUT them; a refresh is
+        in flight to confirm).
+        """
         ops = self._fs.load_pending()
+        # Skip any op already awaiting confirmation — do not re-PUT.
+        ops = [
+            op for op in ops
+            if op.uid not in self._awaiting_confirmation.get(op.source_id, set())
+        ]
         result = {"success": 0, "failed": 0, "done_uids": [], "last_sync_time": None}
 
-        debug_log(Level.DEBUG, f"sync: {len(ops)} pending ops")
+        debug_log(Level.DEBUG, f"sync: {len(ops)} pending ops to process")
         debug_log(Level.DEBUG, f"sync: calendars keys: {list(calendars.keys())}")
         debug_log(Level.DEBUG, f"sync: sessions keys: {list(sessions.keys())}")
 
@@ -870,15 +893,12 @@ class SyncManager:
             return False
         debug_log(Level.DEBUG, f"sync: session OK for {src.account_name}")
 
-        if op.operation == "create":
-            ev = self._fs.load_event(source_id, op.uid)
+        if op.operation in ("create", "update"):
+            # Local edits live in pending_events/, not cache.  The cache is
+            # a pure server mirror and may not (yet) contain the edit.
+            ev = self._fs.load_pending_event(source_id, op.uid)
             if ev is None:
-                return False
-            return caldav_save_event(cal_info, ev.ical_data)
-
-        elif op.operation == "update":
-            ev = self._fs.load_event(source_id, op.uid)
-            if ev is None:
+                debug_log(Level.WARN, f"sync: pending event file missing for {op.uid} — cannot sync")
                 return False
             return caldav_save_event(cal_info, ev.ical_data)
 
@@ -894,26 +914,134 @@ class SyncManager:
         return False
 
     def _on_sync_pending_done(self, result: dict):
-        """Main-thread callback — applies worker results to shared state."""
-        ops_before = {o.uid: o for o in self._fs.load_pending()}
+        """Main-thread callback — applies worker results to shared state.
 
-        for op in ops_before.values():
-            uid = op.uid
-            if uid in result.get("done_uids", []):
-                debug_log(Level.DEBUG, f"sync: success for uid={uid} op={op.operation} source_id={op.source_id}")
-                self._fs.remove_pending(uid)
-                # For deletes, also erase the cached .ics file from disk
-                if op.operation == "delete":
-                    debug_log(Level.DEBUG, f"sync: deleting .ics for {uid} from disk")
-                    self._fs.delete_event(op.source_id, uid)
+        PUT success is NOT treated as confirmation.  The pending op stays
+        on disk; its uid is added to _awaiting_confirmation and a refresh
+        is queued so the server data can be read back and compared.
+        Only when _confirm_pending_uids() sees matching data in the
+        refreshed cache is the pending op removed and the pending event
+        file deleted.
+        """
+        done_uids = result.get("done_uids", [])
+        if not done_uids:
+            if result.get("success", 0) == 0 and result.get("failed", 0) > 0:
+                # Nothing succeeded — let the retry timer handle it.
+                pass
+            return
+
+        ops = self._fs.load_pending()
+        by_uid = {o.uid: o for o in ops}
+        refresh_sources: set[str] = set()
+
+        for uid in done_uids:
+            op = by_uid.get(uid)
+            if op is None:
+                continue
+            debug_log(Level.DEBUG, f"sync: PUT succeeded for uid={uid} op={op.operation} source_id={op.source_id} — awaiting read-back confirmation")
+            if op.operation == "delete":
+                # Delete is confirmed by absence: after the refresh removes
+                # the cached file (inside sync window), the op is dropped
+                # by _confirm_pending_uids.  Nothing to re-PUT.
+                if op.source_id not in self._awaiting_confirmation:
+                    self._awaiting_confirmation[op.source_id] = set()
+                self._awaiting_confirmation[op.source_id].add(uid)
+                refresh_sources.add(op.source_id)
+            elif op.operation == "delete_instance":
+                # Same treatment: EXDATE needs a read-back too.
+                if op.source_id not in self._awaiting_confirmation:
+                    self._awaiting_confirmation[op.source_id] = set()
+                self._awaiting_confirmation[op.source_id].add(uid)
+                refresh_sources.add(op.source_id)
+            else:  # create / update
+                if op.source_id not in self._awaiting_confirmation:
+                    self._awaiting_confirmation[op.source_id] = set()
+                self._awaiting_confirmation[op.source_id].add(uid)
+                refresh_sources.add(op.source_id)
 
         if result.get("last_sync_time"):
             self._last_sync_time = result["last_sync_time"]
 
-        self._rebuild_index()
-        if result.get("success", 0) > 0:
-            self._notify_change()
-            self._notify_sync_status()
+        # Queue a refresh of the affected sources so the server data is
+        # read back onto disk.  The refresh result is compared against
+        # the pending events in _confirm_pending_uids.
+        if refresh_sources:
+            for sid in refresh_sources:
+                debug_log(Level.DEBUG, f"sync: queueing confirmation refresh for {sid}")
+                self._enqueue_refresh(sid, None, None)
+
+        self._notify_change()
+        self._notify_sync_status()
+
+    def _confirm_pending_uids(self) -> None:
+        """Drop pending ops whose change has been confirmed by a refresh.
+
+        For each uid in _awaiting_confirmation, compare the refreshed cache
+        version (on disk) with the pending_events version.  If they carry
+        the same iCal text, the server has the new data — remove the op and
+        the pending file.  For deletes, confirmation is the *absence* of
+        the event in the window (the refresh already removed it from cache).
+        """
+        if not self._awaiting_confirmation:
+            return
+
+        # Re-read pending ops once
+        ops = self._fs.load_pending()
+        remaining_ops: list[PendingOp] = []
+        confirmed_any = False
+
+        for op in ops:
+            awaiting = self._awaiting_confirmation.get(op.source_id, set())
+            if op.uid not in awaiting:
+                remaining_ops.append(op)
+                continue
+
+            # Was the change confirmed by the refresh?
+            if op.operation in ("delete", "delete_instance"):
+                # Deletion is confirmed when the event no longer appears in
+                # cache.  replace_source() already removed it from cache if
+                # the server no longer returns it (inside the sync window).
+                cached = self._fs.load_event(op.source_id, op.uid)
+                if cached is None:
+                    debug_log(Level.DEBUG, f"sync: deletion confirmed for uid={op.uid} — absent from server")
+                    self._fs.delete_pending_event(op.source_id, op.uid)
+                    self._awaiting_confirmation[op.source_id].discard(op.uid)
+                    confirmed_any = True
+                    continue  # drop op
+                else:
+                    debug_log(Level.WARN, f"sync: deletion NOT confirmed for uid={op.uid} — still present in cache; op remains pending")
+                    remaining_ops.append(op)
+                    continue
+            else:
+                # create / update — compare pending vs confirmed cache.
+                pending_ev = self._fs.load_pending_event(op.source_id, op.uid)
+                cached_ev = self._fs.load_event(op.source_id, op.uid)
+                if pending_ev is None:
+                    debug_log(Level.WARN, f"sync: pending event file missing for uid={op.uid} — op remains pending")
+                    remaining_ops.append(op)
+                    continue
+                if cached_ev is None:
+                    debug_log(Level.DEBUG, f"sync: uid={op.uid} not yet in cache — server may not have returned it (outside window?); op remains pending")
+                    remaining_ops.append(op)
+                    continue
+                if pending_ev.ical_data == cached_ev.ical_data:
+                    debug_log(Level.DEBUG, f"sync: PUT confirmed for uid={op.uid} — server data matches pending edit")
+                    self._fs.delete_pending_event(op.source_id, op.uid)
+                    self._awaiting_confirmation[op.source_id].discard(op.uid)
+                    confirmed_any = True
+                    continue  # drop op (confirmed)
+                else:
+                    debug_log(Level.WARN, f"sync: PUT NOT confirmed for uid={op.uid} — server data differs from pending edit; op remains pending")
+                    remaining_ops.append(op)
+                    continue
+
+        # Clean up empty confirmation sets
+        for sid in list(self._awaiting_confirmation.keys()):
+            if not self._awaiting_confirmation[sid]:
+                del self._awaiting_confirmation[sid]
+
+        if confirmed_any:
+            self._fs.save_pending(list(remaining_ops))
 
     # ------------------------------------------------------------------
     # Index rebuild

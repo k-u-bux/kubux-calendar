@@ -232,11 +232,19 @@ def test_replace_source(tmp_path):
     assert events[0].uid == "test-uid-002"
 
 
-def test_replace_source_preserves_pending(tmp_path):
+def test_replace_source_overwrites_pending_cache(tmp_path):
+    """The cache is a pure server mirror.
+
+    A pending event's *cache* version is overwritten by server data; the
+    pending edit itself lives in pending_events/ and is overlaid by the
+    store at display time.  If the server no longer returns the event
+    (deleted remotely), its cached .ics is removed.
+    """
     fs = EventFS(base=tmp_path)
     ev_pending = ImmutableEvent.from_ical(BASIC_ICAL, "src1")
     ev_pending = ev_pending.with_updates(sync_state="pending_create")
     fs.save_event(ev_pending)
+    fs.save_pending_event(ev_pending)
     fs.add_pending(PendingOp(uid="test-uid-001", source_id="src1", operation="create"))
 
     ev_new = ImmutableEvent.from_ical(
@@ -245,10 +253,16 @@ def test_replace_source_preserves_pending(tmp_path):
     fs.replace_source("src1", [ev_new],
                       datetime(2025, 1, 1, tzinfo=UTC),
                       datetime(2027, 1, 1, tzinfo=UTC))
+    # Cache reflects the server — the event no longer exists there.
     events = fs.list_events("src1")
     uids = {e.uid for e in events}
-    assert "test-uid-001" in uids  # pending event preserved
+    assert "test-uid-001" not in uids  # deleted from cache (server mirror)
     assert "test-uid-002" in uids
+
+    # The pending edit is preserved in pending_events/ for display.
+    pending = fs.load_pending_event("src1", "test-uid-001")
+    assert pending is not None
+    assert pending.uid == "test-uid-001"
 
 
 def test_replace_source_with_pending_but_not_on_disk(tmp_path):

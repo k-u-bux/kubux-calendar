@@ -367,7 +367,14 @@ def test_on_connect_all_done_updates_existing_source():
 # _on_sync_pending_done
 # ----------------------------------------------------------------------
 
-def test_on_sync_pending_done_removes_successful(tmp_path):
+def test_on_sync_pending_done_keeps_pending_for_confirmation(tmp_path):
+    """PUT success is not confirmation.
+
+    After a successful delete PUT, the pending op stays in pending.json
+    marked as awaiting confirmation.  A later refresh that reads back the
+    server state confirms the deletion (event absent from cache), and only
+    then is the op removed.
+    """
     cfg = _make_config()
     fs = EventFS(base=tmp_path)
     idx = EventIndex()
@@ -383,8 +390,18 @@ def test_on_sync_pending_done_removes_successful(tmp_path):
     result = {"success": 1, "failed": 0, "done_uids": ["uid-1"], "last_sync_time": datetime.now()}
     sm._on_sync_pending_done(result)
 
+    # Op is still pending (awaiting read-back confirmation)
+    assert len(fs.load_pending()) == 1
+    assert fs.load_pending()[0].uid == "uid-1"
+    assert "uid-1" in sm._awaiting_confirmation.get("src1", set())
+
+    # Now a refresh runs; server no longer returns the event → cache is
+    # purged of it.  The pending delete is confirmed and dropped.
+    fs.delete_event("src1", "uid-1")  # what replace_source does when the server omits it
+    sm._confirm_pending_uids()
+
     assert len(fs.load_pending()) == 0
-    assert fs.load_event("src1", "uid-1") is None  # deleted from disk
+    assert "uid-1" not in sm._awaiting_confirmation.get("src1", set())
 
 
 # ----------------------------------------------------------------------
@@ -590,10 +607,10 @@ def test_sync_one_missing_session():
 
 
 def test_sync_one_create_missing_event():
-    """If the event is not in FS, create returns False."""
+    """If the pending event is not in pending_events/, create returns False."""
     cfg = _make_config()
     fs = MagicMock()
-    fs.load_event.return_value = None
+    fs.load_pending_event.return_value = None
     sm = SyncManager(fs=fs, index=MagicMock(), sources={}, config=cfg)
     cal_info = MagicMock()
     session = MagicMock()

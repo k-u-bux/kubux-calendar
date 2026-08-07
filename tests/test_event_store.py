@@ -76,19 +76,25 @@ def test_create_event(tmp_path):
     assert view.sync_status == "pending"
     assert view.pending_operation == "create"
 
-    # Check it was saved to FS
-    events = store._fs.list_events("caldav:acc:cal1")
-    assert len(events) == 1
-    assert events[0].summary == "New Event"
+    # Check it was saved to pending_events (not the server cache)
+    assert store._fs.list_events("caldav:acc:cal1") == []
+    pending = store._fs.load_pending_event("caldav:acc:cal1", view.uid)
+    assert pending is not None
+    assert pending.summary == "New Event"
 
-    # Check it's in the index
-    assert len(store._index) == 1
-    results = store._index.query_range(
+    # The index is server-cache only — newly created events are not in it.
+    # _build_event_views overlays pending events on top of index results,
+    # so the event still appears in queries.
+    assert len(store._index) == 0
+
+    # Verify _build_event_views picks it up from pending_events
+    views = store._build_event_views(
         datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC),
         datetime(2026, 1, 2, 0, 0, 0, tzinfo=UTC),
     )
-    assert len(results) == 1
-    assert results[0].source_id == "caldav:acc:cal1"
+    assert len(views) == 1
+    assert views[0].uid == view.uid
+    assert views[0].source.id == "caldav:acc:cal1"
 
 
 def test_create_event_read_only_rejected(tmp_path):
@@ -153,10 +159,10 @@ def test_create_event_with_recurrence_object(tmp_path):
         recurrence=rrule,
     )
     assert view is not None
-    # The event should have recurrence info
-    events = store._fs.list_events("caldav:acc:cal1")
-    assert len(events) == 1
-    assert events[0].is_recurring is True
+    # The event should have recurrence info (stored in pending_events)
+    pending = store._fs.load_pending_event("caldav:acc:cal1", view.uid)
+    assert pending is not None
+    assert pending.is_recurring is True
 
 
 # ----------------------------------------------------------------------
@@ -184,16 +190,20 @@ def test_update_event(tmp_path):
     ok = store.update_event(view)
     assert ok is True
 
-    # Check FS — the updated event is there
-    events = store._fs.list_events("caldav:acc:cal1")
-    summaries = {e.summary for e in events}
-    assert "Updated" in summaries
+    # Check pending_events — the updated event is there
+    pending = store._fs.load_pending_event("caldav:acc:cal1", view.uid)
+    assert pending is not None
+    assert pending.summary == "Updated"
 
-    # sync_state is in-memory only (not in ical_data on disk).
-    # Check the index for the pending_update state.
+    # The cache (events/ directory) is empty — the event was never synced.
+    # The index is server-cache only — update preserves the old cached
+    # version and writes the new version to pending_events.
+    # _build_event_views overlays the pending version on top.
+    cached = store._fs.list_events("caldav:acc:cal1")
+    assert len(cached) == 0
+
     indexed = store._index.get(view.uid)
-    assert indexed is not None
-    assert indexed.sync_state == "pending_update"
+    assert indexed is None  # never entered the index (server cache)
 
 
 def test_update_event_read_only_rejected(tmp_path):
