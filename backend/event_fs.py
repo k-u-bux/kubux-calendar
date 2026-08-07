@@ -118,7 +118,7 @@ class PendingOp:
     """One pending sync operation.
 
     *ical_data* carries the full iCalendar text for create/update ops.
-    ``sync_queue.json`` is the single source of truth — no separate
+    ``pending.json`` is the single source of truth — no separate
     pending_events/ directory.
     """
     __slots__ = ("uid", "source_id", "operation", "instance_start", "ical_data")
