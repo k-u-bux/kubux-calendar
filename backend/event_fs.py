@@ -293,9 +293,19 @@ class EventFS:
                 except Exception as e:
                     debug_log(Level.ERROR, f"event_fs: replace_source — failed to parse {p.name}: {e}")
 
+        # Re-read pending ops right before writing — a drag or edit on the
+        # main thread may have added a pending op *after* the initial read
+        # at the top of this method.  Without this re-check, the server
+        # response (which hasn't received the local edit yet) would
+        # overwrite the locally-edited .ics file with stale data.
+        write_pending_uids: set[str] = set()
+        for op in self.load_pending():
+            if op.source_id == source_id:
+                write_pending_uids.add(op.uid)
+
         # Write new/updated events (skip pending ones)
         for ev in events:
-            if ev.uid not in pending_uids:
+            if ev.uid not in write_pending_uids:
                 self.save_event(ev)
 
     def purge_source(self, source_id: str) -> None:
