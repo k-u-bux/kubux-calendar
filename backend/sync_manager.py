@@ -1089,6 +1089,16 @@ class SyncManager:
 
         if confirmed_any:
             self._fs.save_pending(list(remaining_ops))
+            # Reset sync_state for confirmed events in the in-memory index
+            # so the next _build_event_views() call does not mark them
+            # as pending — the pending op is gone, the marker must vanish.
+            remaining_uids = {o.uid for o in remaining_ops}
+            for op in ops:
+                if op.uid not in remaining_uids:
+                    ev = self._index.get(op.uid)
+                    if ev and ev.sync_state != "clean":
+                        updated = ev.with_updates(sync_state="clean")
+                        self._index.add(updated)
 
     # ------------------------------------------------------------------
     # Index rebuild
