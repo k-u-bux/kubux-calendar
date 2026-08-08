@@ -67,6 +67,18 @@ class EventIndex:
             new.add(ev)
         return new
 
+    def replace_with(self, other: 'EventIndex') -> None:
+        """Swap internal state with *other* in O(1).
+
+        The shared EventIndex object keeps its identity (EventStore holds
+        a reference to it), but its tree, handles, and recurring dict are
+        replaced with *other*'s.  *other* receives this index's previous
+        state (typically discarded by the caller).
+        """
+        self._tree, other._tree = other._tree, self._tree
+        self._handles, other._handles = other._handles, self._handles
+        self._recurring, other._recurring = other._recurring, self._recurring
+
     # === Queries ============================================================
 
     def query_range(self, start: datetime, end: datetime) -> list[ImmutableEvent]:

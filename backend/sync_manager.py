@@ -783,14 +783,12 @@ class SyncManager:
 
         self._sync_running = False
 
-        # Update the shared index in-place so EventStore's reference
-        # (which points to the same object) also sees the new events.
-        # Replacing self._index with a new object would break the
-        # shared reference and leave EventStore with stale data.
+        # Swap the worker-built index into the shared EventIndex in O(1).
+        # EventStore holds a reference to the same object, so we must
+        # preserve its identity — replace_with() swaps internal state
+        # instead of replacing the object.
         if "new_index" in result:
-            self._index.clear()
-            for ev in result["new_index"].all_events():
-                self._index.add(ev)
+            self._index.replace_with(result["new_index"])
 
         # New server data is now on disk.  Confirm any pending ops that
         # were awaiting a read-back — if the server data matches the
@@ -1099,36 +1097,6 @@ class SyncManager:
                     if ev and ev.sync_state != "clean":
                         updated = ev.with_updates(sync_state="clean")
                         self._index.add(updated)
-
-    # ------------------------------------------------------------------
-    # Index rebuild
-    # ------------------------------------------------------------------
-
-    def _rebuild_index(self) -> None:
-        """Reload all events from filesystem into the in-memory index."""
-        self._index.clear()
-        # Build uid→op lookup once instead of re-parsing pending.json per event
-        state_map = {
-            "create": "pending_create",
-            "update": "pending_update",
-            "delete": "pending_delete",
-            "delete_instance": "pending_delete_instance",
-        }
-        pending_by_uid: dict[str, str] = {}
-        for op in self._fs.load_pending():
-            pending_by_uid[op.uid] = state_map.get(op.operation, "clean")
-        total = 0
-        for source_id in self._sources:
-            count = 0
-            for ev in self._fs.list_events(source_id):
-                pending_op = pending_by_uid.get(ev.uid)
-                if pending_op and pending_op != ev.sync_state:
-                    ev = ev.with_updates(sync_state=pending_op)
-                self._index.add(ev)
-                count += 1
-            debug_log(Level.DEBUG, f"sync: _rebuild_index — source {source_id}: {count} events")
-            total += count
-        debug_log(Level.DEBUG, f"sync: _rebuild_index — total: {total} events across {len(self._sources)} sources")
 
     # ------------------------------------------------------------------
     # Helper — reconnect missing CalDAV clients

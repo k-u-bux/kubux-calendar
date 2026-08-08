@@ -124,6 +124,54 @@ def test_copy():
     assert len(idx2) == 1
 
 
+def test_replace_with_swaps_state():
+    idx1 = EventIndex()
+    idx2 = EventIndex()
+    ev1 = _make_event("u1", "src1", 10, 12)
+    ev2 = _make_event("u2", "src1", 14, 16)
+    idx1.add(ev1)
+    idx2.add(ev2)
+
+    idx1.replace_with(idx2)
+
+    # idx1 now has idx2's events
+    assert len(idx1) == 1
+    assert "u2" in idx1
+    assert "u1" not in idx1
+    # idx2 now has idx1's old events (swap is bidirectional)
+    assert len(idx2) == 1
+    assert "u1" in idx2
+    assert "u2" not in idx2
+
+
+def test_replace_with_preserves_identity():
+    idx1 = EventIndex()
+    idx2 = EventIndex()
+    ev = _make_event("u1", "src1", 10, 12)
+    idx2.add(ev)
+
+    original_id = id(idx1)
+    idx1.replace_with(idx2)
+    assert id(idx1) == original_id
+    assert "u1" in idx1
+
+
+def test_replace_with_recurring():
+    idx1 = EventIndex()
+    idx2 = EventIndex()
+    ev = _make_event("u-recur", "src1", 0, 1, recurring=True)
+    idx2.add(ev)
+
+    idx1.replace_with(idx2)
+
+    # Recurring events are swapped too
+    start = datetime(2026, 6, 1, 0, 0, 0, tzinfo=UTC)
+    end = datetime(2026, 6, 1, 23, 0, 0, tzinfo=UTC)
+    results = idx1.query_range(start, end)
+    assert len(results) == 1
+    assert results[0].uid == "u-recur"
+
+
 def test_query_point():
     idx = EventIndex()
     idx.add(_make_event("u1", "src1", 10, 12))

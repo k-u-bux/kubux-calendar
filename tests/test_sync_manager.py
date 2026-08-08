@@ -230,65 +230,35 @@ def test_register_ics():
 
 
 # ----------------------------------------------------------------------
-# _rebuild_index
+# _on_refresh_done — index swap
 # ----------------------------------------------------------------------
 
-def test_rebuild_index(tmp_path):
+def test_on_refresh_done_swaps_index_in_place():
+    """_on_refresh_done must swap the worker's index into the shared
+    EventIndex object without replacing its identity."""
     cfg = _make_config()
-    fs = EventFS(base=tmp_path)
     idx = EventIndex()
-    sources = {"src1": CalendarSource(id="src1", name="Cal1")}
+    sm = SyncManager(fs=MagicMock(), index=idx, sources={}, config=cfg)
 
+    # Worker builds a fresh index with an event
+    new_index = EventIndex()
     ev = ImmutableEvent.from_ical(BASIC_ICAL, "src1", config_tz=UTC)
-    fs.save_event(ev)
+    new_index.add(ev)
 
-    sm = SyncManager(fs=fs, index=idx, sources=sources, config=cfg)
-    sm._rebuild_index()
+    original_id = id(idx)
+    sm._on_refresh_done({
+        "synced": ["src1"],
+        "sessions": {}, "calendars": {}, "sources": {},
+        "source_last_success": {}, "source_last_attempt": {},
+        "last_sync_time": None,
+        "sync_start": None, "sync_end": None,
+        "new_index": new_index,
+    })
 
-    assert len(idx) == 1
+    # Shared index now has the worker's event, identity preserved
+    assert id(idx) == original_id
     assert "uid-1" in idx
-
-
-def test_rebuild_index_with_pending_ops(tmp_path):
-    cfg = _make_config()
-    fs = EventFS(base=tmp_path)
-    idx = EventIndex()
-    sources = {"src1": CalendarSource(id="src1", name="Cal1")}
-
-    ev = ImmutableEvent.from_ical(BASIC_ICAL, "src1", config_tz=UTC)
-    fs.save_event(ev)
-    fs.add_pending(PendingOp(uid="uid-1", source_id="src1", operation="update"))
-
-    sm = SyncManager(fs=fs, index=idx, sources=sources, config=cfg)
-    sm._rebuild_index()
-
     assert len(idx) == 1
-    indexed = idx.get("uid-1")
-    assert indexed is not None
-    assert indexed.sync_state == "pending_update"
-
-
-def test_rebuild_index_clears_before_rebuild(tmp_path):
-    cfg = _make_config()
-    fs = EventFS(base=tmp_path)
-    idx = EventIndex()
-    sources = {"src1": CalendarSource(id="src1", name="Cal1")}
-
-    # Add a stale event directly to index
-    old_ev = ImmutableEvent.from_ical(
-        BASIC_ICAL.replace("UID:uid-1", "UID:stale"), "src1", config_tz=UTC
-    )
-    idx.add(old_ev)
-
-    # Save a different event to disk
-    ev = ImmutableEvent.from_ical(BASIC_ICAL, "src1", config_tz=UTC)
-    fs.save_event(ev)
-
-    sm = SyncManager(fs=fs, index=idx, sources=sources, config=cfg)
-    sm._rebuild_index()
-
-    assert "uid-1" in idx
-    assert "stale" not in idx
 
 
 # ----------------------------------------------------------------------
