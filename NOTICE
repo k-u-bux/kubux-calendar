@@ -1,6 +1,27 @@
 Kubux Calendar
-Copyright 2025 [Kai-Uwe Bux]
+Copyright 2025 Kai-Uwe Bux
 
 This product includes software developed by Kai-Uwe Bux.
+
 This software was created with assistance from AI tools.
 (Toy project to learn Python and vibe coding)
+
+This product is licensed under the Apache License, Version 2.0.
+See the LICENSE file for the full license text.
+
+Third-party notices:
+
+AI-generated code was reviewed for potential license conflicts as part of a
+license audit. No third-party code was intentionally reproduced. Runtime
+dependencies and their licenses:
+
+- PySide6                  LGPL-3.0-only
+- caldav                   Apache-2.0
+- icalendar                BSD-2-Clause
+- pytz                     MIT
+- python-dateutil          Apache-2.0
+- recurring-ical-events    MIT
+- requests                 Apache-2.0
+
+All dependencies are permissive and compatible with distributing this
+product under the Apache License, Version 2.0.

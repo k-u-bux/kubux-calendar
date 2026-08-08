@@ -64,7 +64,7 @@
 
           meta = with pkgs.lib; {
             description = "Kubux Calendar: A PySide6 desktop client for Nextcloud CalDAV and ICS feeds.";
-            license = licenses.gpl3Only; # Using a common FLOSS license as a placeholder
+            license = licenses.asl20; # Apache License 2.0
             platforms = platforms.linux;
           };
         };
