@@ -26,7 +26,7 @@ def _parse_ical_cached(ical_data: str):
 
 from .config import Config
 from .event import (
-    ImmutableEvent, CalendarSource, EventView, RecurrenceRule,
+    ImmutableEvent, CalendarSource, EventView,
     SYNC_WINDOW_PAST_DAYS, SYNC_WINDOW_FUTURE_DAYS,
     ical_events_match,
 )
@@ -612,20 +612,6 @@ class EventStore:
         if not src or src.read_only or src.source_type != "caldav":
             return None
 
-        # Convert RecurrenceRule if needed
-        rrule = None
-        if recurrence:
-            if hasattr(recurrence, 'frequency'):
-                rrule = RecurrenceRule(
-                    frequency=recurrence.frequency,
-                    interval=getattr(recurrence, 'interval', 1),
-                    count=getattr(recurrence, 'count', None),
-                    until=getattr(recurrence, 'until', None),
-                    by_day=getattr(recurrence, 'by_day', None),
-                )
-            elif isinstance(recurrence, RecurrenceRule):
-                rrule = recurrence
-
         ev = ImmutableEvent.create_new(
             source_id=calendar_id,
             summary=summary,
@@ -634,7 +620,7 @@ class EventStore:
             description=description,
             location=location,
             all_day=all_day,
-            recurrence=rrule,
+            recurrence=recurrence,
             config_tz=self._config_tz,
         )
 

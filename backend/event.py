@@ -204,6 +204,24 @@ def _wrap_as_vcalendar(vevent: ICalEvent) -> str:
     return cal.to_ical().decode("utf-8")
 
 
+def _recurrence_to_rrule_dict(rule) -> dict:
+    """Map a RecurrenceRule (or duck-typed equivalent) to iCal RRULE params.
+
+    Only non-default fields are emitted, matching the iCal convention of
+    omitting INTERVAL=1 and absent COUNT/UNTIL/BYDAY.
+    """
+    rd = {"freq": rule.frequency}
+    if rule.interval and rule.interval > 1:
+        rd["interval"] = rule.interval
+    if rule.count:
+        rd["count"] = rule.count
+    if rule.until:
+        rd["until"] = rule.until
+    if rule.by_day:
+        rd["byday"] = rule.by_day
+    return rd
+
+
 def _rebuild_ical(ical_data: str, **updates) -> str:
     """Return new iCalendar text with *updates* applied to the VEVENT."""
     vevent = _extract_vevent(ical_data)
@@ -247,16 +265,7 @@ def _rebuild_ical(ical_data: str, **updates) -> str:
             del vevent["RRULE"]
         rule = updates["recurrence"]
         if rule is not None:
-            rd = {"freq": rule.frequency}
-            if rule.interval and rule.interval > 1:
-                rd["interval"] = rule.interval
-            if rule.count:
-                rd["count"] = rule.count
-            if rule.until:
-                rd["until"] = rule.until
-            if rule.by_day:
-                rd["byday"] = rule.by_day
-            vevent.add("rrule", rd)
+            vevent.add("rrule", _recurrence_to_rrule_dict(rule))
 
     if "LAST-MODIFIED" in vevent:
         del vevent["LAST-MODIFIED"]
@@ -452,16 +461,7 @@ class ImmutableEvent:
             vevent.add("dtend", end)
 
         if recurrence:
-            rd = {"freq": recurrence.frequency}
-            if recurrence.interval and recurrence.interval > 1:
-                rd["interval"] = recurrence.interval
-            if recurrence.count:
-                rd["count"] = recurrence.count
-            if recurrence.until:
-                rd["until"] = recurrence.until
-            if recurrence.by_day:
-                rd["byday"] = recurrence.by_day
-            vevent.add("rrule", rd)
+            vevent.add("rrule", _recurrence_to_rrule_dict(recurrence))
 
         ev = cls(
             uid=uid,
