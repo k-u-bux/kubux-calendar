@@ -514,7 +514,9 @@ def test_refresh_due_in_background_dispatches():
     sources = {"src1": CalendarSource(id="src1", name="Cal1")}
     sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources=sources, config=cfg)
     with patch('backend.sync_manager.dispatch_task') as mock:
-        sm.refresh_due_in_background()
+        sm.refresh_due_in_background(
+            datetime(2026, 1, 1), datetime(2026, 2, 1)
+        )
         mock.assert_called_once()
 
 
@@ -525,7 +527,9 @@ def test_refresh_due_in_background_no_due():
     sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources=sources, config=cfg)
     sm._source_last_attempt["src1"] = datetime.now()  # just synced
     with patch('backend.sync_manager.dispatch_task') as mock:
-        sm.refresh_due_in_background()
+        sm.refresh_due_in_background(
+            datetime(2026, 1, 1), datetime(2026, 2, 1)
+        )
         mock.assert_not_called()
 
 
@@ -647,7 +651,10 @@ def test_do_connect_all_caldav(tmp_path):
         mock_cal.writable = True
         mock_list.return_value = [mock_cal]
         mock_fetch.return_value = [(BASIC_ICAL, "/cal/ev1.ics")]
-        result = sm._do_connect_all()
+        result = sm._do_connect_all(
+            datetime(2025, 1, 1, tzinfo=UTC),
+            datetime(2026, 6, 1, tzinfo=UTC),
+        )
 
     sid = "caldav:Personal:cal1"
     assert sid in result["calendars"]
@@ -662,11 +669,13 @@ def test_do_connect_all_no_accounts(tmp_path):
     fs = EventFS(base=tmp_path)
     idx = EventIndex()
     sm = SyncManager(fs=fs, index=idx, sources={}, config=cfg)
-    result = sm._do_connect_all()
+    start = datetime(2025, 1, 1, tzinfo=UTC)
+    end = datetime(2026, 6, 1, tzinfo=UTC)
+    result = sm._do_connect_all(start, end)
     assert result["sessions"] == {}
     assert result["calendars"] == {}
-    assert result["sync_start"] is not None
-    assert result["sync_end"] is not None
+    assert result["sync_start"] == start
+    assert result["sync_end"] == end
 
 
 # ----------------------------------------------------------------------
@@ -727,7 +736,10 @@ def test_refresh_ics_ok(tmp_path):
     sm.register_ics("ics:Holidays", "https://example.com/h.ics")
     with patch("backend.sync_manager.ics_fetch", return_value=ICS_ICAL), \
          patch("backend.sync_manager.ics_parse_events", return_value=[ICS_ICAL]):
-        result = sm._refresh_ics("ics:Holidays", datetime.now(UTC), None, None)
+        result = sm._refresh_ics(
+            "ics:Holidays", datetime.now(UTC),
+            datetime(2025, 1, 1, tzinfo=UTC), datetime(2026, 6, 1, tzinfo=UTC),
+        )
     assert result["ok"] is True
     events = fs.list_events("ics:Holidays")
     assert len(events) == 1
@@ -741,7 +753,10 @@ def test_refresh_ics_fetch_fails(tmp_path):
     sm = SyncManager(fs=fs, index=idx, sources=sources, config=cfg)
     sm.register_ics("ics:Holidays", "https://example.com/h.ics")
     with patch("backend.sync_manager.ics_fetch", return_value=None):
-        result = sm._refresh_ics("ics:Holidays", datetime.now(UTC), None, None)
+        result = sm._refresh_ics(
+            "ics:Holidays", datetime.now(UTC),
+            datetime(2025, 1, 1, tzinfo=UTC), datetime(2026, 6, 1, tzinfo=UTC),
+        )
     assert result["ok"] is False
 
 
@@ -825,23 +840,6 @@ def test_enqueue_refresh_merges_windows_union():
     assert source_id is None
     assert w_start == past_start   # union keeps the far-past start
     assert w_end == now_end        # and the latest end
-
-
-def test_enqueue_refresh_none_window_resolves_to_default():
-    """A None window becomes now +/- SYNC_WINDOW_* before merging."""
-    from backend.event import SYNC_WINDOW_PAST_DAYS, SYNC_WINDOW_FUTURE_DAYS
-    cfg = _make_config()
-    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg)
-    sm._sync_running = True
-
-    past_start = datetime(2026, 1, 1)
-    past_end = datetime(2026, 2, 1)
-    sm._enqueue_refresh(None, past_start, past_end)
-    sm._enqueue_refresh(None)  # due-timer style request, no window
-
-    source_id, w_start, w_end = sm._pending_refresh
-    assert w_start == past_start  # past window survived the None-window enqueue
-    assert w_end >= datetime.now() + timedelta(days=SYNC_WINDOW_FUTURE_DAYS - 1)
 
 
 def test_enqueue_refresh_all_sources_wins_over_specific_source():

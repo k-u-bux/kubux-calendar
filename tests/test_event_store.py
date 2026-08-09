@@ -1076,19 +1076,18 @@ def test_sync_window_anchored_at_viewport(tmp_path):
     assert w_end == v_end + timedelta(days=SYNC_WINDOW_FUTURE_DAYS)
 
 
-def test_sync_window_fallback_to_now_before_viewport(tmp_path):
-    """No viewport yet — window is now +/- SYNC_WINDOW_*."""
+def test_sync_window_default_viewport_before_viewport(tmp_path):
+    """Before the GUI sets a viewport, the window is anchored at the
+    default viewport (now +/- 90 days), widened by SYNC_WINDOW_*."""
     from backend.event import SYNC_WINDOW_PAST_DAYS, SYNC_WINDOW_FUTURE_DAYS
     cfg = _make_config_path(tmp_path)
     store = EventStore(cfg)
 
-    before = datetime.now()
+    v_start, v_end = store._viewport
     w_start, w_end = store._sync_window()
-    after = datetime.now()
 
-    assert before - timedelta(days=SYNC_WINDOW_PAST_DAYS) <= w_start
-    assert w_start <= after - timedelta(days=SYNC_WINDOW_PAST_DAYS - 1)
-    assert w_end >= before + timedelta(days=SYNC_WINDOW_FUTURE_DAYS - 1)
+    assert w_start == v_start - timedelta(days=SYNC_WINDOW_PAST_DAYS)
+    assert w_end == v_end + timedelta(days=SYNC_WINDOW_FUTURE_DAYS)
 
 
 def test_refresh_in_background_uses_viewport_window(tmp_path):

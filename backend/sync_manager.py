@@ -248,8 +248,8 @@ class SyncManager:
 
     def connect_all_in_background(
         self,
-        sync_start: Optional[datetime] = None,
-        sync_end: Optional[datetime] = None,
+        sync_start: datetime,
+        sync_end: datetime,
     ) -> None:
         """Connect to every configured CalDAV account, in background.
 
@@ -263,15 +263,11 @@ class SyncManager:
 
     def _do_connect_all(
         self,
-        sync_start: Optional[datetime] = None,
-        sync_end: Optional[datetime] = None,
+        sync_start: datetime,
+        sync_end: datetime,
     ) -> dict:
         """Runs in worker thread.  Connects, discovers calendars, returns metadata."""
         now = datetime.now()
-        if sync_start is None:
-            sync_start = now - timedelta(days=SYNC_WINDOW_PAST_DAYS)
-        if sync_end is None:
-            sync_end = now + timedelta(days=SYNC_WINDOW_FUTURE_DAYS)
 
         result: dict = {
             "sessions": {},
@@ -404,9 +400,9 @@ class SyncManager:
 
     def _enqueue_refresh(
         self,
-        source_id: Optional[str] = None,
-        sync_start: Optional[datetime] = None,
-        sync_end: Optional[datetime] = None,
+        source_id: Optional[str],
+        sync_start: datetime,
+        sync_end: datetime,
     ) -> None:
         """Queue a refresh request.  Dispatches if idle.
 
@@ -418,13 +414,6 @@ class SyncManager:
         far into the past) from being silently discarded when the
         auto-refresh timer or Reload enqueues shortly after.
         """
-        if sync_start is None or sync_end is None:
-            now = datetime.now()
-            if sync_start is None:
-                sync_start = now - timedelta(days=SYNC_WINDOW_PAST_DAYS)
-            if sync_end is None:
-                sync_end = now + timedelta(days=SYNC_WINDOW_FUTURE_DAYS)
-
         if self._pending_refresh is not None:
             p_source, p_start, p_end = self._pending_refresh
             # source_id=None (all sources) supersedes a specific source
@@ -452,9 +441,9 @@ class SyncManager:
 
     def refresh_in_background(
         self,
-        source_id: Optional[str] = None,
-        sync_start: Optional[datetime] = None,
-        sync_end: Optional[datetime] = None,
+        source_id: Optional[str],
+        sync_start: datetime,
+        sync_end: datetime,
     ) -> None:
         """Refresh one or all sources.  Queued if another sync is running."""
         debug_log(Level.DEBUG, f"sync: refresh_in_background (source_id={source_id})")
@@ -462,8 +451,8 @@ class SyncManager:
 
     def refresh_due_in_background(
         self,
-        sync_start: Optional[datetime] = None,
-        sync_end: Optional[datetime] = None,
+        sync_start: datetime,
+        sync_end: datetime,
     ) -> None:
         """Refresh sources that are due.  Queued if another sync is running."""
         due = self.get_sources_needing_refresh()
@@ -479,16 +468,12 @@ class SyncManager:
 
     def _do_refresh(
         self,
-        source_id: Optional[str] = None,
-        sync_start: Optional[datetime] = None,
-        sync_end: Optional[datetime] = None,
+        source_id: Optional[str],
+        sync_start: datetime,
+        sync_end: datetime,
     ) -> dict:
         """Runs in worker thread.  Returns result dict — no shared state mutation."""
         now = datetime.now()
-        if sync_start is None:
-            sync_start = now - timedelta(days=SYNC_WINDOW_PAST_DAYS)
-        if sync_end is None:
-            sync_end = now + timedelta(days=SYNC_WINDOW_FUTURE_DAYS)
 
         result: dict = {
             "synced": [],
@@ -634,8 +619,8 @@ class SyncManager:
         cal_info: CalendarInfo,
         session: DAVSession,
         now: datetime,
-        sync_start: Optional[datetime] = None,
-        sync_end: Optional[datetime] = None,
+        sync_start: datetime,
+        sync_end: datetime,
     ) -> dict:
         """Fetch events for a single CalDAV source. Returns result dict — no shared state mutation."""
         result: dict = {"ok": False}
@@ -644,11 +629,6 @@ class SyncManager:
             return result
         if session is None:
             return result
-
-        if sync_start is None:
-            sync_start = now - timedelta(days=SYNC_WINDOW_PAST_DAYS)
-        if sync_end is None:
-            sync_end = now + timedelta(days=SYNC_WINDOW_FUTURE_DAYS)
 
         debug_log(Level.DEBUG, f"sync: fetching {source_id} in window {sync_start}..{sync_end}...")
         raw_events = caldav_fetch_events(cal_info, sync_start, sync_end)

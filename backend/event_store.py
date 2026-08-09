@@ -74,7 +74,13 @@ class EventStore:
 
         # Current viewport (set whenever the GUI queries events).
         # All sync windows are anchored here, not at `now`.
-        self._viewport: Optional[tuple[datetime, datetime]] = None
+        # Defaults to a window around now so the pre-viewport startup
+        # fetch (no cached data) still gets a sensible range.
+        now = datetime.now()
+        self._viewport: tuple[datetime, datetime] = (
+            now - timedelta(days=90),
+            now + timedelta(days=90),
+        )
 
         # Callbacks
         self._on_change_callback: Optional[Callable[[], None]] = None
@@ -88,19 +94,14 @@ class EventStore:
         """Return the sync window anchored at the current viewport.
 
         The window is ``viewport_start - SYNC_WINDOW_PAST_DAYS`` ..
-        ``viewport_end + SYNC_WINDOW_FUTURE_DAYS``.  Before any viewport
-        is known (startup), falls back to ``now +/- SYNC_WINDOW_*_DAYS``.
+        ``viewport_end + SYNC_WINDOW_FUTURE_DAYS``.  The viewport is
+        always set (defaulted at construction), so there is no
+        ``now``-centered fallback.
         """
-        if self._viewport is not None:
-            v_start, v_end = self._viewport
-            return (
-                v_start - timedelta(days=SYNC_WINDOW_PAST_DAYS),
-                v_end + timedelta(days=SYNC_WINDOW_FUTURE_DAYS),
-            )
-        now = datetime.now()
+        v_start, v_end = self._viewport
         return (
-            now - timedelta(days=SYNC_WINDOW_PAST_DAYS),
-            now + timedelta(days=SYNC_WINDOW_FUTURE_DAYS),
+            v_start - timedelta(days=SYNC_WINDOW_PAST_DAYS),
+            v_end + timedelta(days=SYNC_WINDOW_FUTURE_DAYS),
         )
 
 
