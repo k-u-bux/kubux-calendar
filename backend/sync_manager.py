@@ -838,7 +838,7 @@ class SyncManager:
         """
         now = datetime.now()
         ops = self._fs.load_pending()
-        result = {"success": 0, "failed": 0, "done_uids": [], "last_sync_time": None}
+        result = {"success": 0, "failed": 0, "done_uids": [], "skipped_uids": [], "last_sync_time": None}
 
         filtered: list[PendingOp] = []
         for op in ops:
@@ -852,17 +852,14 @@ class SyncManager:
                 debug_log(Level.DEBUG, f"sync: uid={op.uid} has been awaiting confirmation > {self._CONFIRMATION_TTL}s — re-PUT")
                 filtered.append(op)
             else:
-                result["skipped_uids"] = result.get("skipped_uids", [])
                 result["skipped_uids"].append(op.uid)
                 debug_log(Level.DEBUG, f"sync: skipping uid={op.uid} — awaiting confirmation")
-
-        result = {"success": 0, "failed": 0, "done_uids": [], "skipped_uids": result.get("skipped_uids", []), "last_sync_time": None}
 
         debug_log(Level.DEBUG, f"sync: {len(ops)} pending ops to process")
         debug_log(Level.DEBUG, f"sync: calendars keys: {list(calendars.keys())}")
         debug_log(Level.DEBUG, f"sync: sessions keys: {list(sessions.keys())}")
 
-        for op in ops:
+        for op in filtered:
             debug_log(Level.DEBUG, f"sync: processing op={op.operation} uid={op.uid} source_id={op.source_id}")
             ok = self._sync_one(op, calendars, sessions, sources)
             if ok:

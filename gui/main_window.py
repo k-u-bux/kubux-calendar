@@ -125,6 +125,7 @@ class MainWindow(QMainWindow):
             self.event_store = EventStore(config)
         self.event_store.set_on_change_callback(self._on_data_changed)
         self.event_store.set_on_sync_status_callback(self._on_sync_status_changed)
+        self.event_store.set_ui_state_provider(lambda: self._ui_state)
 
         # UI is rebuilt below - invalidate the display signature so the
         # change-detection skip doesn't leave the fresh views empty.
