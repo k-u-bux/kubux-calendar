@@ -721,8 +721,13 @@ class EventStore:
             return True
 
         debug_log(Level.DEBUG, f"store: delete uid={uid} source_id={source_id}")
+        # Carry the event's ical_data so the confirmation refresh window
+        # can be derived from the deleted event's actual date (a delete op
+        # with no ical_data yields a None window and the delete never
+        # confirms by absence).
         self._fs.add_pending(PendingOp(
-            uid=event.uid, source_id=event.source.id, operation="delete"
+            uid=event.uid, source_id=event.source.id, operation="delete",
+            ical_data=event.immutable_event.ical_data,
         ))
 
         event._set_pending_sync_state("delete")

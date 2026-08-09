@@ -467,9 +467,17 @@ class SyncManager:
             # source_id=None (all sources) supersedes a specific source
             if p_source is None:
                 source_id = None
-            # Union of both windows
-            sync_start = min(p_start, sync_start)
-            sync_end = max(p_end, sync_end)
+            # Union of both windows — None-safe: a pending refresh may carry
+            # None bounds (e.g. a delete op has no ical_data to derive a
+            # window from).  Keep whichever bound is not None.
+            if p_start is not None and sync_start is not None:
+                sync_start = min(p_start, sync_start)
+            elif p_start is not None:
+                sync_start = p_start
+            if p_end is not None and sync_end is not None:
+                sync_end = max(p_end, sync_end)
+            elif p_end is not None:
+                sync_end = p_end
 
         self._pending_refresh = (source_id, sync_start, sync_end)
         self._dispatch_next_if_idle()
