@@ -522,12 +522,14 @@ class EventStore:
                 if self._visibility.get(e.source_id, True)
             ]
 
-        # Expand recurrences and time-filter.
+        # Expand recurrences and time-filter.  Recurring events share a uid,
+        # so keep every expanded occurrence per uid — a plain dict keyed by
+        # uid would collapse all instances of a recurring event to one.
         instances = self._expand_instances(cached, start, end)
-        cached_map: dict[str, ImmutableEvent] = {
-            ev.uid: ev for ev in instances
-            if ev.start < end and ev.end > start
-        }
+        cached_by_uid: dict[str, list[ImmutableEvent]] = {}
+        for ev in instances:
+            if ev.start < end and ev.end > start:
+                cached_by_uid.setdefault(ev.uid, []).append(ev)
 
         # Build lookup: op_by_uid[uid] -> PendingOp (for ical_data comparison)
         op_by_uid = {op.uid: op for op in all_ops if op.ical_data}
@@ -537,18 +539,20 @@ class EventStore:
         final: list[ImmutableEvent] = []
         pending_uids: set[str] = set()  # UIDs that should show the pending mark
 
-        all_uids = sorted(set(list(pev_filtered.keys()) + list(cached_map.keys())))
+        all_uids = sorted(set(list(pev_filtered.keys()) + list(cached_by_uid.keys())))
         for uid in all_uids:
             pev = pev_filtered.get(uid)
-            cev = cached_map.get(uid)
+            cevs = cached_by_uid.get(uid, [])
             op = op_by_uid.get(uid)
 
-            if pev is not None and cev is not None:
-                # Both exist — check if server has caught up.
-                if op and ical_events_match(op.ical_data, cev.ical_data):
+            if pev is not None and cevs:
+                # Both exist — check if server has caught up.  Every expanded
+                # instance of a recurring event shares the same master
+                # ical_data, so a confirmed read-back matches all of them.
+                if op and all(ical_events_match(op.ical_data, cev.ical_data) for cev in cevs):
                     # Confirmed! Drop the pending op, show cached.
                     self._fs.remove_pending(uid)
-                    final.append(cev)
+                    final.extend(cevs)
                 else:
                     # Pending differs — show pending version, mark.
                     final.append(pev)
@@ -557,9 +561,9 @@ class EventStore:
                 # Only in pending.
                 final.append(pev)
                 pending_uids.add(uid)
-            elif cev is not None:
+            elif cevs:
                 # Only in cache.
-                final.append(cev)
+                final.extend(cevs)
 
         # 4) Wrap in EventView, flag pending with the triangle marker.
         views: list[EventView] = []
