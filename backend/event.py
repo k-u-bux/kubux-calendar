@@ -719,9 +719,6 @@ class EventView:
             ical_data=new_ical,
             sync_state=sync_state,
             caldav_href=self._event.caldav_href,
-            confirmed_at=self._event.confirmed_at,
-            _instance_start=self._event._instance_start,
-            _instance_end=self._event._instance_end,
             _config_tz=self._event._config_tz,
         )
         # Reset dirty
@@ -736,9 +733,6 @@ class EventView:
         new = ImmutableEvent(
             uid=orig.uid, source_id=orig.source_id, ical_data=orig.ical_data,
             sync_state=new_state, caldav_href=orig.caldav_href,
-            confirmed_at=orig.confirmed_at,
-            _instance_start=orig._instance_start,
-            _instance_end=orig._instance_end,
             _config_tz=orig._config_tz,
         )
         self._event = new

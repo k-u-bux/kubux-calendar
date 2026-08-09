@@ -6,59 +6,20 @@ All event times are stored in UTC and converted to local time for display.
 """
 
 from datetime import datetime, timedelta, date
-import os
 import time as _time
-from pathlib import Path
 import pytz
 from typing import Optional, Union
 from library.log import debug_log, Level
 
 
 def _system_timezone_name() -> str:
-    """Detect the system timezone as an IANA name, or 'UTC' as last resort.
-
-    ``time.tzname`` yields abbreviations (e.g. ``CET``, ``CST``), which
-    pytz cannot resolve to a zone.  We therefore prefer the IANA name
-    from ``/etc/localtime`` (via ``time.tzset``/``TZ``), falling back to
-    the ``TZ`` environment variable, then to a best-effort abbreviation
-    match, and finally to UTC.
-    """
+    """Detect system timezone via pytz, or 'UTC' as last resort."""
     result = "UTC"
     try:
-        # 1) TZ env var (e.g. "Europe/Amsterdam" or ":Europe/Amsterdam")
-        tz_env = os.environ.get("TZ")
-        if tz_env:
-            candidate = tz_env.lstrip(":")
-            pytz.timezone(candidate)  # raises if invalid
-            result = candidate
-            debug_log(Level.INFO, f"local timezone: {result} (from TZ env)")
-            return result
-    except Exception:
-        pass
-
-    try:
-        # 2) /etc/localtime symlink → IANA zone name
-        localtime = Path("/etc/localtime")
-        if localtime.is_symlink():
-            target = os.path.realpath(localtime)
-            # e.g. /usr/share/zoneinfo/Europe/Amsterdam
-            marker = "/zoneinfo/"
-            idx = target.find(marker)
-            if idx != -1:
-                candidate = target[idx + len(marker):]
-                pytz.timezone(candidate)  # validate
-                result = candidate
-                debug_log(Level.INFO, f"local timezone: {result} (from /etc/localtime)")
-                return result
-    except Exception:
-        pass
-
-    try:
-        # 3) Best-effort: abbreviation may still resolve (e.g. "UTC")
         result = str(pytz.timezone(_time.tzname[0]))
     except Exception:
-        debug_log(Level.WARN, "timezone info not found, using UTC")
-    debug_log(Level.INFO, f"local timezone: {result}")
+        debug_log( Level.WARN, "timezone info not found, using UTC")
+    debug_log( Level.INFO, f"local timezone: {result}")
     return result
 
 

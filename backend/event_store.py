@@ -85,9 +85,6 @@ class EventStore:
         # Callbacks
         self._on_change_callback: Optional[Callable[[], None]] = None
         self._on_sync_status_callback: Optional[Callable[[int, Optional[datetime]], None]] = None
-        # UI-state provider — registered by the GUI so the store can persist
-        # UI state without importing the GUI module (avoids a reverse dependency).
-        self._ui_state_provider: Optional[Callable[[], dict]] = None
 
     # ------------------------------------------------------------------
     # Viewport-anchored sync window
@@ -119,14 +116,6 @@ class EventStore:
         self, callback: Callable[[int, Optional[datetime]], None]
     ) -> None:
         self._on_sync_status_callback = callback
-
-    def set_ui_state_provider(self, provider: Callable[[], dict]) -> None:
-        """Register a callable that returns the current UI state dict.
-
-        Called by the GUI so :meth:`_save_state` can persist UI state without
-        importing the GUI module (removes the backend→GUI reverse dependency).
-        """
-        self._ui_state_provider = provider
 
     def _cleanup_orphaned_state(self) -> None:
         """Remove visibility/color state for sources that no longer exist."""
@@ -491,21 +480,13 @@ class EventStore:
         if end.tzinfo is None:
             end = end.replace(tzinfo=pytz.UTC)
 
-        # 1) Parse pending ops.  Recurring events share a uid, so deletes
-        #    are tracked per-occurrence:
-        #      - full-series delete: key (uid, None)
-        #      - single-instance delete (delete_instance): key (uid, start_utc)
-        #    Pending create/update carry their embedded ical_data.
+        # 1) Parse pending ops into {uid: ImmutableEvent} for create/update.
         all_ops = self._fs.load_pending()
-        pending_delete_keys: dict[tuple, PendingOp] = {}
+        pending_delete_uids: set[str] = set()
         pending_by_uid: dict[str, ImmutableEvent] = {}
         for op in all_ops:
-            if op.operation == "delete":
-                pending_delete_keys[(op.uid, None)] = op
-            elif op.operation == "delete_instance" and op.instance_start:
-                istart = op.instance_start
-                start_utc = istart.astimezone(pytz.UTC) if istart.tzinfo else istart
-                pending_delete_keys[(op.uid, start_utc)] = op
+            if op.operation in ("delete", "delete_instance"):
+                pending_delete_uids.add(op.uid)
             elif op.ical_data:
                 try:
                     ev = ImmutableEvent.from_ical(
@@ -516,10 +497,9 @@ class EventStore:
                     debug_log(Level.WARN, f"store: _build_event_views — failed to parse pending ical for {op.uid}: {e}")
 
         # Filter pending events to time range + calendar visibility early.
-        # A full-series delete supersedes any pending edit for the same uid.
-        pev_filtered: dict[tuple, ImmutableEvent] = {}
+        pev_filtered: dict[str, ImmutableEvent] = {}
         for uid, pev in pending_by_uid.items():
-            if (uid, None) in pending_delete_keys:
+            if uid in pending_delete_uids:
                 continue
             if not (pev.start < end and pev.end > start):
                 continue
@@ -530,8 +510,7 @@ class EventStore:
                 continue
             if calendar_ids is not None and pev.source_id not in calendar_ids:
                 continue
-            pstart = pev.start
-            pev_filtered[(uid, pstart.astimezone(pytz.UTC) if pstart.tzinfo else pstart)] = pev
+            pev_filtered[uid] = pev
 
         # 2) Collect cached events from the index.
         cached = self._index.query_range(start, end)
@@ -543,17 +522,12 @@ class EventStore:
                 if self._visibility.get(e.source_id, True)
             ]
 
-        # Expand recurrences and time-filter.  Every distinct occurrence is
-        # kept — recurring events share a uid, so instances are keyed by
-        # (uid, start), NOT uid alone.  Otherwise all occurrences of a
-        # recurring event collapse to a single display entry.
+        # Expand recurrences and time-filter.
         instances = self._expand_instances(cached, start, end)
-        cached_map: dict[tuple, ImmutableEvent] = {}
-        for ev in instances:
-            if not (ev.start < end and ev.end > start):
-                continue
-            ev_start = ev.start
-            cached_map[(ev.uid, ev_start.astimezone(pytz.UTC) if ev_start.tzinfo else ev_start)] = ev
+        cached_map: dict[str, ImmutableEvent] = {
+            ev.uid: ev for ev in instances
+            if ev.start < end and ev.end > start
+        }
 
         # Build lookup: op_by_uid[uid] -> PendingOp (for ical_data comparison)
         op_by_uid = {op.uid: op for op in all_ops if op.ical_data}
@@ -561,16 +535,12 @@ class EventStore:
         # 3) Merge: pending wins for display.
         #    Auto-resolve when both sides agree (same ical_data).
         final: list[ImmutableEvent] = []
-        pending_keys: set[tuple] = set()  # keys that should show the pending mark
+        pending_uids: set[str] = set()  # UIDs that should show the pending mark
 
-        all_keys = sorted(
-            set(list(pev_filtered.keys()) + list(cached_map.keys())),
-            key=lambda k: (k[0], str(k[1])),
-        )
-        for key in all_keys:
-            uid = key[0]
-            pev = pev_filtered.get(key)
-            cev = cached_map.get(key)
+        all_uids = sorted(set(list(pev_filtered.keys()) + list(cached_map.keys())))
+        for uid in all_uids:
+            pev = pev_filtered.get(uid)
+            cev = cached_map.get(uid)
             op = op_by_uid.get(uid)
 
             if pev is not None and cev is not None:
@@ -582,11 +552,11 @@ class EventStore:
                 else:
                     # Pending differs — show pending version, mark.
                     final.append(pev)
-                    pending_keys.add(key)
+                    pending_uids.add(uid)
             elif pev is not None:
                 # Only in pending.
                 final.append(pev)
-                pending_keys.add(key)
+                pending_uids.add(uid)
             elif cev is not None:
                 # Only in cache.
                 final.append(cev)
@@ -599,17 +569,11 @@ class EventStore:
                 continue
             src.color = self._resolve_source_color(src.id, src.color)
 
-            ev_start = ev.start
-            key = (ev.uid, ev_start.astimezone(pytz.UTC) if ev_start.tzinfo else ev_start)
             view = EventView(ev, src)
-            if key in pending_keys:
+            if ev.uid in pending_uids:
                 view._set_pending_sync_state("update")
-            elif (ev.uid, None) in pending_delete_keys:
-                # Full-series delete — every occurrence is moribund.
+            elif ev.uid in pending_delete_uids:
                 view._set_pending_sync_state("delete")
-            elif key in pending_delete_keys:
-                # Single-instance delete — this occurrence is moribund.
-                view._set_pending_sync_state("delete_instance")
             views.append(view)
 
         return views
@@ -801,7 +765,9 @@ class EventStore:
     def _save_state(self) -> None:
         try:
             self._state_file.parent.mkdir(parents=True, exist_ok=True)
-            ui_state = self._ui_state_provider() if self._ui_state_provider else {}
+            # Import here to avoid circular import at module level.
+            from gui.main_window import main_window
+            ui_state = main_window._ui_state if main_window is not None else {}
             with open(self._state_file, 'w') as f:
                 json.dump(
                     {
