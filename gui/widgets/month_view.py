@@ -263,20 +263,10 @@ class MonthView(QWidget):
 
     def _find_target_day_cell(self, global_pos) -> Optional[date]:
         """Find which MonthDayCell is under the global position."""
-        from PySide6.QtWidgets import QApplication
+        from .widget_utils import find_ancestor_widget
 
-        widget_at_pos = QApplication.widgetAt(global_pos)
-        if widget_at_pos is None:
-            return None
-
-        # Walk up the widget tree to find a MonthDayCell
-        current = widget_at_pos
-        while current is not None:
-            if isinstance(current, MonthDayCell):
-                return current._date
-            current = current.parentWidget()
-
-        return None
+        cell = find_ancestor_widget(global_pos, MonthDayCell)
+        return cell._date if cell is not None else None
 
     def _on_drag_finished(self, event: EventData, mode: DragMode, global_pos):
         """Handle drag completion - change only the date, keep original time."""

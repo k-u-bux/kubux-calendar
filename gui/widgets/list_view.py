@@ -20,6 +20,8 @@ from .event_widget import (
     get_text_font,
     get_contrasting_text_color,
     lighten_color,
+    build_event_stylesheet,
+    paint_indicator_triangles,
 )
 from library.timezone_utils import to_local_datetime
 
@@ -124,26 +126,12 @@ class ListEventWidget(QFrame):
         """Apply color styling based on the event's calendar color."""
         bg_color = self.event_data.calendar_color
         text_color = get_contrasting_text_color(bg_color)
-        border_color = bg_color
         bg_lighter = lighten_color(bg_color, 0.4)
 
-        self.setStyleSheet(f"""
-            ListEventWidget {{
-                background-color: {bg_lighter};
-                border: 2px solid {border_color};
-                border-left: 4px solid {border_color};
-                border-radius: 4px;
-                color: {text_color};
-            }}
-            ListEventWidget:hover {{
-                background-color: {lighten_color(bg_color, 0.2)};
-            }}
-            QLabel {{
-                color: {text_color};
-                background: transparent;
-                border: none;
-            }}
-        """)
+        self.setStyleSheet(build_event_stylesheet(
+            "ListEventWidget", bg_color, text_color,
+            bg_lighter=bg_lighter,
+        ))
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
@@ -159,40 +147,13 @@ class ListEventWidget(QFrame):
         """Draw indicator triangles for recurring and read-only events."""
         super().paintEvent(event)
 
-        if not self.event_data.is_recurring and not self.event_data.read_only:
-            return
-
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        fm = QFontMetrics(self.font())
-        triangle_size = fm.height() // 2
-
-        w = self.width()
-        h = self.height()
-
-        bg_color = lighten_color(self.event_data.calendar_color, 0.4)
-        triangle_color = get_contrasting_text_color(bg_color)
-
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QBrush(QColor(triangle_color)))
-
-        if self.event_data.is_recurring:
-            recurring_points = QPolygonF([
-                QPointF(0, h),
-                QPointF(triangle_size, h),
-                QPointF(0, h - triangle_size)
-            ])
-            painter.drawPolygon(recurring_points)
-
-        if self.event_data.read_only:
-            readonly_points = QPolygonF([
-                QPointF(w, h),
-                QPointF(w - triangle_size, h),
-                QPointF(w, h - triangle_size)
-            ])
-            painter.drawPolygon(readonly_points)
-
+        paint_indicator_triangles(
+            self, painter,
+            is_recurring=self.event_data.is_recurring,
+            read_only=self.event_data.read_only,
+            bg_color=lighten_color(self.event_data.calendar_color, 0.4),
+        )
         painter.end()
 
 

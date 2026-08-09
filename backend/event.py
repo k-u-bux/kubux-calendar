@@ -24,6 +24,18 @@ SYNC_WINDOW_PAST_DAYS = 120
 SYNC_WINDOW_FUTURE_DAYS = 240
 
 
+# Pending-operation ↔ sync-state mapping (single source of truth).
+# Used by EventView._set_pending_sync_state, EventView.pending_operation,
+# and SyncManager._do_refresh.
+PENDING_OP_TO_STATE = {
+    "create": "pending_create",
+    "update": "pending_update",
+    "delete": "pending_delete",
+    "delete_instance": "pending_delete_instance",
+}
+STATE_TO_PENDING_OP = {v: k for k, v in PENDING_OP_TO_STATE.items()}
+
+
 # iCal properties that carry the actual event data we care about
 # when comparing a pending edit against the server's read-back.
 _ICAL_SEMANTIC_KEYS = frozenset({
@@ -659,13 +671,7 @@ class EventView:
 
     @property
     def pending_operation(self):
-        _map = {
-            "pending_create": "create",
-            "pending_update": "update",
-            "pending_delete": "delete",
-            "pending_delete_instance": "delete_instance",
-        }
-        return self._dirty.get("pending_operation", _map.get(self._event.sync_state))
+        return self._dirty.get("pending_operation", STATE_TO_PENDING_OP.get(self._event.sync_state))
 
     @pending_operation.setter
     def pending_operation(self, value):
@@ -722,13 +728,7 @@ class EventView:
 
     def _set_pending_sync_state(self, op: str):
         """Mark this event view with a pending sync state."""
-        state_map = {
-            "create": "pending_create",
-            "update": "pending_update",
-            "delete": "pending_delete",
-            "delete_instance": "pending_delete_instance",
-        }
-        new_state = state_map.get(op, "clean")
+        new_state = PENDING_OP_TO_STATE.get(op, "clean")
         orig = self._event
         new = ImmutableEvent(
             uid=orig.uid, source_id=orig.source_id, ical_data=orig.ical_data,

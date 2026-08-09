@@ -20,7 +20,11 @@ from typing import Optional, Callable
 import pytz
 
 from library.color_utils import get_unused_color
-from .event import ImmutableEvent, CalendarSource, SYNC_WINDOW_PAST_DAYS, SYNC_WINDOW_FUTURE_DAYS, ical_events_match
+from .event import (
+    ImmutableEvent, CalendarSource,
+    SYNC_WINDOW_PAST_DAYS, SYNC_WINDOW_FUTURE_DAYS,
+    ical_events_match, PENDING_OP_TO_STATE,
+)
 from .event_fs import EventFS, SourceMeta, PendingOp
 from .event_index import EventIndex
 from .network_ops import (
@@ -620,15 +624,9 @@ class SyncManager:
         # Build a fresh index in the worker thread — reading .ics files
         # from disk is expensive and must not block the GUI.
         new_index = EventIndex()
-        state_map = {
-            "create": "pending_create",
-            "update": "pending_update",
-            "delete": "pending_delete",
-            "delete_instance": "pending_delete_instance",
-        }
         pending_by_uid: dict[str, str] = {}
         for op in self._fs.load_pending():
-            pending_by_uid[op.uid] = state_map.get(op.operation, "clean")
+            pending_by_uid[op.uid] = PENDING_OP_TO_STATE.get(op.operation, "clean")
         for source_id in self._sources:
             for ev in self._fs.list_events(source_id):
                 pending_op = pending_by_uid.get(ev.uid)

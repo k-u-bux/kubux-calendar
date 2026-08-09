@@ -76,6 +76,127 @@ def lighten_color(hex_color: str, factor: float = 0.3) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
+def paint_indicator_triangles(
+    widget,
+    painter: QPainter,
+    *,
+    is_recurring: bool,
+    read_only: bool,
+    has_pending_sync: bool = False,
+    is_outdated: bool = False,
+    bg_color: str,
+) -> None:
+    """Draw the corner indicator triangles/squares for an event widget.
+
+    Shared by EventWidget and ListEventWidget.  Draws:
+      - upper-right: black triangle for pending sync, or black square for outdated
+      - bottom-left: recurring triangle
+      - bottom-right: read-only triangle
+    """
+    if not is_recurring and not read_only and not has_pending_sync and not is_outdated:
+        return
+
+    painter.setRenderHint(QPainter.Antialiasing)
+
+    fm = QFontMetrics(widget.font())
+    triangle_size = fm.height() // 2
+
+    w = widget.width()
+    h = widget.height()
+
+    triangle_color = get_contrasting_text_color(bg_color)
+
+    painter.setPen(Qt.NoPen)
+
+    # Sync pending indicator triangle in upper-right corner (black)
+    if has_pending_sync:
+        painter.setBrush(QBrush(QColor("#000000")))
+        sync_points = QPolygonF([
+            QPointF(w, 0),                              # Top-right corner
+            QPointF(w - triangle_size, 0),              # Left along top
+            QPointF(w, triangle_size)                   # Down along right edge
+        ])
+        painter.drawPolygon(sync_points)
+    elif is_outdated:
+        # Outdated indicator square in upper-right corner (black)
+        painter.setBrush(QBrush(QColor("#000000")))
+        square_size = triangle_size * 0.7  # Slightly smaller than triangle
+        margin = 2
+        painter.drawRect(int(w - square_size - margin), margin, int(square_size), int(square_size))
+
+    painter.setBrush(QBrush(QColor(triangle_color)))
+
+    # Recurring indicator triangle in bottom-left corner
+    if is_recurring:
+        recurring_points = QPolygonF([
+            QPointF(0, h),                              # Bottom-left corner
+            QPointF(triangle_size, h),                  # Right along bottom
+            QPointF(0, h - triangle_size)               # Up along left edge
+        ])
+        painter.drawPolygon(recurring_points)
+
+    # Read-only indicator triangle in bottom-right corner
+    if read_only:
+        readonly_points = QPolygonF([
+            QPointF(w, h),                              # Bottom-right corner
+            QPointF(w - triangle_size, h),              # Left along bottom
+            QPointF(w, h - triangle_size)               # Up along right edge
+        ])
+        painter.drawPolygon(readonly_points)
+
+
+def build_event_stylesheet(
+    widget_class: str,
+    bg_color: str,
+    text_color: str,
+    *,
+    bg_lighter: str = None,
+    border_color: str = None,
+    border: bool = True,
+    radius: int = 4,
+    hover_factor: float = 0.2,
+    padding: str = None,
+    label_border: bool = True,
+    label_padding: str = None,
+) -> str:
+    """Build the event-widget stylesheet.
+
+    Shared by EventWidget, ListEventWidget and AllDayEventWidget.  The
+    parameters reproduce each widget's original CSS exactly, so there is
+    no visual regression.  *bg_lighter* defaults to the base color
+    (all-day events use the un-lightened color).
+    """
+    if bg_lighter is None:
+        bg_lighter = bg_color
+    if border_color is None:
+        border_color = bg_color
+
+    lines = []
+    lines.append(f"{widget_class} {{")
+    lines.append(f"    background-color: {bg_lighter};")
+    if border:
+        lines.append(f"    border: 2px solid {border_color};")
+        lines.append(f"    border-left: 4px solid {border_color};")
+    lines.append(f"    border-radius: {radius}px;")
+    lines.append(f"    color: {text_color};")
+    if padding:
+        lines.append(f"    padding: {padding};")
+    lines.append("}")
+    lines.append(f"{widget_class}:hover {{")
+    lines.append(f"    background-color: {lighten_color(bg_color, hover_factor)};")
+    lines.append("}")
+    lines.append("QLabel {")
+    lines.append(f"    color: {text_color};")
+    lines.append("    background: transparent;")
+    if label_border:
+        lines.append("    border: none;")
+    if label_padding:
+        lines.append(f"    padding: {label_padding};")
+        lines.append("    margin: 0px;")
+    lines.append("}")
+    return "\n".join(lines)
+
+
 class EventWidget(QFrame):
     """
     Widget representing a single event in the calendar view.
@@ -267,11 +388,13 @@ class EventWidget(QFrame):
         """Apply color styling based on the event's calendar color."""
         bg_color = self.event_data.calendar_color
         text_color = get_contrasting_text_color(bg_color)
-        border_color = bg_color
-
-        # Lighten background slightly for better readability
         bg_lighter = lighten_color(bg_color, 0.4)
-        
+
+        self.setStyleSheet(build_event_stylesheet(
+            "EventWidget", bg_color, text_color,
+            bg_lighter=bg_lighter, label_padding="0px",
+        ))
+
         # Check if event is pending delete (moribund)
         # For EventInstance, pending_operation is on the underlying event
         pending_op = getattr(self.event_data, 'pending_operation', None)
@@ -279,26 +402,6 @@ class EventWidget(QFrame):
             pending_op = getattr(self.event_data.event, 'pending_operation', None)
         is_pending_delete = pending_op == "delete"
 
-        self.setStyleSheet(f"""
-            EventWidget {{
-                background-color: {bg_lighter};
-                border: 2px solid {border_color};
-                border-left: 4px solid {border_color};
-                border-radius: 4px;
-                color: {text_color};
-            }}
-            EventWidget:hover {{
-                background-color: {lighten_color(bg_color, 0.2)};
-            }}
-            QLabel {{
-                color: {text_color};
-                background: transparent;
-                border: none;
-                padding: 0px;
-                margin: 0px;
-            }}
-        """)
-        
         # Apply opacity effect for pending delete (moribund events)
         if is_pending_delete:
             opacity_effect = QGraphicsOpacityEffect(self)
@@ -353,70 +456,20 @@ class EventWidget(QFrame):
     def paintEvent(self, event) -> None:
         """Override paintEvent to draw indicator triangles/squares for recurring, read-only, sync status, and outdated."""
         super().paintEvent(event)
-        
-        # Determine if we need to draw any indicators
-        # sync_status: "" = not tracked, "pending" = waiting for sync, "syncing" = in progress, "synced" = done, "failed" = error
+
+        # sync_status: "" = not tracked, "pending" = waiting for sync,
+        # "syncing" = in progress, "synced" = done, "failed" = error
         has_pending_sync = self.event_data.sync_status in ("pending", "syncing", "failed")
-        
-        # Per-event staleness based on file mtime
-        is_outdated = self.event_data.is_outdated
-        
-        if not self.event_data.is_recurring and not self.event_data.read_only and not has_pending_sync and not is_outdated:
-            return
-        
+
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        
-        # Calculate triangle size based on font height (half a line)
-        fm = QFontMetrics(self.font())
-        triangle_size = fm.height() // 2
-        
-        w = self.width()
-        h = self.height()
-        
-        # Determine triangle color based on background luminance
-        bg_color = lighten_color(self.event_data.calendar_color, 0.4)
-        triangle_color = get_contrasting_text_color(bg_color)
-        
-        painter.setPen(Qt.NoPen)
-        
-        # Draw sync pending indicator triangle in upper-right corner (black)
-        if has_pending_sync:
-            painter.setBrush(QBrush(QColor("#000000")))
-            sync_points = QPolygonF([
-                QPointF(w, 0),                              # Top-right corner
-                QPointF(w - triangle_size, 0),              # Left along top
-                QPointF(w, triangle_size)                   # Down along right edge
-            ])
-            painter.drawPolygon(sync_points)
-        elif is_outdated:
-            # Draw outdated indicator square in upper-right corner (black)
-            # Square indicates unconfirmed data (source hasn't synced within threshold)
-            painter.setBrush(QBrush(QColor("#000000")))
-            square_size = triangle_size * 0.7  # Slightly smaller than triangle
-            margin = 2
-            painter.drawRect(int(w - square_size - margin), margin, int(square_size), int(square_size))
-        
-        painter.setBrush(QBrush(QColor(triangle_color)))
-        
-        # Draw recurring indicator triangle in bottom-left corner
-        if self.event_data.is_recurring:
-            recurring_points = QPolygonF([
-                QPointF(0, h),                              # Bottom-left corner
-                QPointF(triangle_size, h),                  # Right along bottom
-                QPointF(0, h - triangle_size)               # Up along left edge
-            ])
-            painter.drawPolygon(recurring_points)
-        
-        # Draw read-only indicator triangle in bottom-right corner
-        if self.event_data.read_only:
-            readonly_points = QPolygonF([
-                QPointF(w, h),                              # Bottom-right corner
-                QPointF(w - triangle_size, h),              # Left along bottom
-                QPointF(w, h - triangle_size)               # Up along right edge
-            ])
-            painter.drawPolygon(readonly_points)
-        
+        paint_indicator_triangles(
+            self, painter,
+            is_recurring=self.event_data.is_recurring,
+            read_only=self.event_data.read_only,
+            has_pending_sync=has_pending_sync,
+            is_outdated=self.event_data.is_outdated,
+            bg_color=lighten_color(self.event_data.calendar_color, 0.4),
+        )
         painter.end()
 
 
@@ -575,19 +628,9 @@ class AllDayEventWidget(EventWidget):
         """Apply styling for all-day events."""
         bg_color = self.event_data.calendar_color
         text_color = get_contrasting_text_color(bg_color)
-        
-        self.setStyleSheet(f"""
-            AllDayEventWidget {{
-                background-color: {bg_color};
-                border-radius: 3px;
-                color: {text_color};
-                padding: 2px 6px;
-            }}
-            AllDayEventWidget:hover {{
-                background-color: {lighten_color(bg_color, -0.1)};
-            }}
-            QLabel {{
-                color: {text_color};
-                background: transparent;
-            }}
-        """)
+
+        self.setStyleSheet(build_event_stylesheet(
+            "AllDayEventWidget", bg_color, text_color,
+            border=False, radius=3, hover_factor=-0.1,
+            padding="2px 6px", label_border=False,
+        ))

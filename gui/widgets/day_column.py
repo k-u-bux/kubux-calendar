@@ -318,23 +318,16 @@ class DayColumnWidget(QWidget):
             QToolTip.showText(global_pos, time_str, self)
 
     def _find_target_day_column(self, global_pos) -> tuple[date, int]:
-        from PySide6.QtWidgets import QApplication
+        from .widget_utils import find_ancestor_widget
 
         target_date = self._date
         local_pos = self.mapFromGlobal(global_pos)
         local_y = local_pos.y()
 
-        widget_at_pos = QApplication.widgetAt(global_pos)
-        if widget_at_pos is None:
-            return (target_date, local_y)
-
-        current = widget_at_pos
-        while current is not None:
-            if isinstance(current, DayColumnWidget):
-                target_date = current._date
-                local_y = current.mapFromGlobal(global_pos).y()
-                break
-            current = current.parentWidget()
+        target = find_ancestor_widget(global_pos, DayColumnWidget)
+        if target is not None:
+            target_date = target._date
+            local_y = target.mapFromGlobal(global_pos).y()
 
         return (target_date, local_y)
 

@@ -170,7 +170,7 @@ class EventStore:
             src = CalendarSource(
                 id=meta.source_id,
                 name=meta.name,
-                color=self._user_colors.get(meta.source_id, self._auto_colors.get(meta.source_id, meta.color)),
+                color=self._resolve_source_color(meta.source_id, meta.color),
                 account_name=meta.account_name,
                 read_only=meta.read_only,
                 source_type=meta.source_type,
@@ -250,6 +250,15 @@ class EventStore:
         if any_changed:
             self._save_state()
 
+    def _resolve_source_color(self, source_id: str, fallback=None) -> Optional[str]:
+        """Resolve a source's effective color: user-picked wins, then
+        auto-assigned, then the given fallback."""
+        if source_id in self._user_colors:
+            return self._user_colors[source_id]
+        if source_id in self._auto_colors:
+            return self._auto_colors[source_id]
+        return fallback
+
     def _apply_source_state(self) -> None:
         """Apply color overrides, outdated status, and per-source threshold.
 
@@ -259,10 +268,7 @@ class EventStore:
         know about yet (pre-initialization).
         """
         for sid, src in self._sources.items():
-            if sid in self._user_colors:
-                src.color = self._user_colors[sid]
-            elif sid in self._auto_colors:
-                src.color = self._auto_colors[sid]
+            src.color = self._resolve_source_color(sid, src.color)
             # Set per-source outdate threshold from config
             src.outdate_threshold = self._source_outdate_threshold(sid)
             if self._sync_manager is not None:
@@ -561,10 +567,7 @@ class EventStore:
             src = self._sources.get(ev.source_id)
             if src is None:
                 continue
-            if src.id in self._user_colors:
-                src.color = self._user_colors[src.id]
-            elif src.id in self._auto_colors:
-                src.color = self._auto_colors[src.id]
+            src.color = self._resolve_source_color(src.id, src.color)
 
             view = EventView(ev, src)
             if ev.uid in pending_uids:
