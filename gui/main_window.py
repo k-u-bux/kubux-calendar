@@ -35,7 +35,6 @@ from .widgets.config_state import (
 )
 from .sidebar import CalendarSidebar
 from .event_dialog import EventDialog
-from .state_file import load_state_file, save_state_sections
 from library.log import debug_log, Level
 
 
@@ -356,20 +355,24 @@ class MainWindow(QMainWindow):
     
     def _load_ui_state(self):
         """Load UI state from the JSON state file."""
-        state = load_state_file(self._state_file)
-        try:
-            self._ui_state = state.get('ui', {})
-        except Exception as e:
-            debug_log(Level.ERROR, f"Error loading UI state: {e}")
+        if self._state_file.exists():
+            try:
+                with open(self._state_file, 'r') as f:
+                    state = json.load(f)
+                    self._ui_state = state.get('ui', {})
+            except Exception as e:
+                debug_log(Level.ERROR, f"Error loading UI state: {e}")
+                self._ui_state = {}
+        else:
             self._ui_state = {}
-
+    
     def _save_ui_state(self):
         """Save UI state to the JSON state file.
 
-        Writes only the GUI's ``ui`` section; the event-store sections
-        are preserved by the merge in save_state_sections().
+        Delegates to EventStore._save_state() which writes the complete
+        file including both UI and event-store sections.
         """
-        save_state_sections(self._state_file, {'ui': self._ui_state})
+        self.event_store._save_state()
     
     def _load_state(self):
         """Load persisted application state from JSON."""

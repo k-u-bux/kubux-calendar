@@ -33,11 +33,13 @@ from .event import (
 from .event_fs import EventFS, SourceMeta, PendingOp
 from .event_index import EventIndex
 from .sync_manager import SyncManager
+from .network_ops import (
+    caldav_connect, caldav_list_calendars, DAVSession, CalendarInfo,
+)
 from library.task_dispatch import dispatch_task
 from library.timezone_utils import ensure_tz
 from library.log import debug_log, Level
 from library.color_utils import get_unused_color
-from gui.state_file import load_state_file, save_state_sections
 
 
 class EventStore:
@@ -58,8 +60,10 @@ class EventStore:
         self._sources: dict[str, CalendarSource] = {}
         self._sync_manager: Optional[SyncManager] = None
 
-        # Registrations for ICS subscription URLs (config-derived).
-        # CalDAV runtime state (sessions, calendars) lives in SyncManager.
+        # CalDAV runtime state (used by sync operations)
+        self._accounts: list[dict] = []
+        self._caldav_calendars: dict[str, CalendarInfo] = {}
+        self._sessions: dict[str, DAVSession] = {}
         self._ics_urls: dict[str, str] = {}
 
         # State persistence (visibility, colors)
@@ -320,10 +324,6 @@ class EventStore:
                 on_change=self._notify_change,
                 on_sync_status=self._notify_sync_status,
             )
-            # Register ICS subscription URLs with the fresh manager.  Done
-            # here so every SyncManager is configured exactly once.
-            for sid, url in self._ics_urls.items():
-                self._sync_manager.register_ics(sid, url)
         return self._sync_manager
 
     # ------------------------------------------------------------------
@@ -752,25 +752,34 @@ class EventStore:
     # ------------------------------------------------------------------
 
     def _load_state(self) -> None:
-        state = load_state_file(self._state_file)
-        try:
-            self._visibility = state.get('visibility', {})
-            self._user_colors = state.get('user-assigned-colors', {})
-            self._auto_colors = state.get('auto-assigned-colors', {})
-        except Exception as e:
-            debug_log(Level.WARN, f"store: _load_state failed — {e}")
+        if self._state_file.exists():
+            try:
+                with open(self._state_file, 'r') as f:
+                    state = json.load(f)
+                    self._visibility = state.get('visibility', {})
+                    self._user_colors = state.get('user-assigned-colors', {})
+                    self._auto_colors = state.get('auto-assigned-colors', {})
+            except Exception as e:
+                debug_log(Level.WARN, f"store: _load_state failed — {e}")
 
     def _save_state(self) -> None:
-        # EventStore owns only its own sections.  The GUI's `ui` section is
-        # written by MainWindow via gui/state_file.save_state_sections().
-        save_state_sections(
-            self._state_file,
-            {
-                'visibility': self._visibility,
-                'user-assigned-colors': self._user_colors,
-                'auto-assigned-colors': self._auto_colors,
-            },
-        )
+        try:
+            self._state_file.parent.mkdir(parents=True, exist_ok=True)
+            # Import here to avoid circular import at module level.
+            from gui.main_window import main_window
+            ui_state = main_window._ui_state if main_window is not None else {}
+            with open(self._state_file, 'w') as f:
+                json.dump(
+                    {
+                        'ui': ui_state,
+                        'visibility': self._visibility,
+                        'user-assigned-colors': self._user_colors,
+                        'auto-assigned-colors': self._auto_colors,
+                    },
+                    f, indent=2,
+                )
+        except Exception as e:
+            debug_log(Level.WARN, f"store: _save_state failed — {e}")
 
     # ------------------------------------------------------------------
     # Sync operations (background)
@@ -789,8 +798,11 @@ class EventStore:
         """
         if sync_start is None or sync_end is None:
             sync_start, sync_end = self._sync_window()
-        sm = self._ensure_sync_manager()
-        sm.connect_all_in_background(sync_start, sync_end)
+        self._ensure_sync_manager()
+        # Register ICS URLs
+        for sid, url in self._ics_urls.items():
+            self._sync_manager.register_ics(sid, url)
+        self._sync_manager.connect_all_in_background(sync_start, sync_end)
 
     def refresh_in_background(
         self,
@@ -807,6 +819,8 @@ class EventStore:
         if sync_start is None or sync_end is None:
             sync_start, sync_end = self._sync_window()
         sm = self._ensure_sync_manager()
+        for sid, url in self._ics_urls.items():
+            sm.register_ics(sid, url)
         sm.refresh_in_background(calendar_id, sync_start, sync_end)
 
     def refresh_due_sources_in_background(self) -> None:
@@ -881,7 +895,12 @@ class EventStore:
         new._user_colors = dict(self._user_colors)
         new._auto_colors = dict(self._auto_colors)
 
-        # ICS URLs from new config (registered into the new SyncManager below)
+        # CalDAV runtime state — share live sessions
+        new._accounts = list(self._accounts)
+        new._caldav_calendars = dict(self._caldav_calendars)
+        new._sessions = dict(self._sessions)
+
+        # ICS URLs from new config
         new._ics_urls = {f"ics:{sub.name}": sub.url for sub in new_config.ics_subscriptions}
 
         # Viewport — keep sync windows anchored at what the user sees
@@ -924,8 +943,7 @@ class EventStore:
         new._on_change_callback = None
         new._on_sync_status_callback = None
 
-        # SyncManager — create fresh, transfer timing from old.
-        # copy_state_from() transfers live CalDAV sessions and sync timing.
+        # SyncManager — create fresh, transfer timing from old
         new._sync_manager = SyncManager(
             fs=new._fs,
             index=new._index,
@@ -934,10 +952,6 @@ class EventStore:
         )
         if self._sync_manager is not None:
             new._sync_manager.copy_state_from(self._sync_manager)
-        # Register the new config's ICS URLs so the fresh manager knows them
-        # (overrides any stale URLs transferred by copy_state_from).
-        for sid, url in new._ics_urls.items():
-            new._sync_manager.register_ics(sid, url)
 
         return new
 
