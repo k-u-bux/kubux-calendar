@@ -868,9 +868,10 @@ def test_set_on_sync_status_callback(tmp_path):
     def cb(pending, last_sync):
         statuses.append((pending, last_sync))
     store.set_on_sync_status_callback(cb)
-    store._notify_sync_status(pending_count=5, last_sync_time=datetime(2026, 1, 1, tzinfo=UTC))
+    store._notify_sync_status()
     assert len(statuses) == 1
-    assert statuses[0] == (5, datetime(2026, 1, 1, tzinfo=UTC))
+    # _notify_sync_status computes its own values: 0 pending, no last sync
+    assert statuses[0] == (0, None)
 
 
 # ----------------------------------------------------------------------

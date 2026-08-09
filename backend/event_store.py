@@ -142,12 +142,11 @@ class EventStore:
         if self._on_change_callback:
             self._on_change_callback()
 
-    def _notify_sync_status(self, pending_count: int = 0, last_sync_time=None) -> None:
+    def _notify_sync_status(self) -> None:
         if self._on_sync_status_callback:
-            if pending_count == 0 and last_sync_time is None:
-                pending_count = self.get_pending_sync_count()
-                last_sync_time = self.get_last_sync_time()
-            self._on_sync_status_callback(pending_count, last_sync_time)
+            self._on_sync_status_callback(
+                self.get_pending_sync_count(), self.get_last_sync_time()
+            )
 
     # ------------------------------------------------------------------
     # Initialization (Phase 1 + 2)

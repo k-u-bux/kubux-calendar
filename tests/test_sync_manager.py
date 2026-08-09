@@ -484,28 +484,6 @@ def test_on_refresh_done_no_sync_time():
 
 
 # ----------------------------------------------------------------------
-# _notify_change / _notify_sync_status
-# ----------------------------------------------------------------------
-
-def test_notify_change_callback():
-    cfg = _make_config()
-    fired = []
-    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg,
-                     on_change=lambda: fired.append(True))
-    sm._notify_change()
-    assert fired == [True]
-
-
-def test_notify_sync_status_callback():
-    cfg = _make_config()
-    fires = []
-    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg,
-                     on_sync_status=lambda pc, lst: fires.append((pc, lst)))
-    sm._notify_sync_status()
-    assert len(fires) == 1
-
-
-# ----------------------------------------------------------------------
 # refresh_due_in_background
 # ----------------------------------------------------------------------
 

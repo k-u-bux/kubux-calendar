@@ -195,18 +195,6 @@ class SyncManager:
         return self._config.outdate_threshold
 
     # ------------------------------------------------------------------
-    # Notification helpers
-    # ------------------------------------------------------------------
-
-    def _notify_change(self):
-        if self._on_change:
-            self._on_change()
-
-    def _notify_sync_status(self):
-        if self._on_sync_status:
-            self._on_sync_status(self.pending_count(), self._last_sync_time)
-
-    # ------------------------------------------------------------------
     # Source registration / removal
     # ------------------------------------------------------------------
 
@@ -439,8 +427,10 @@ class SyncManager:
         for sid in result.get("removed_sources", []):
             self._remove_source(sid)
 
-        self._notify_change()
-        self._notify_sync_status()
+        if self._on_change:
+            self._on_change()
+        if self._on_sync_status:
+            self._on_sync_status(self.pending_count(), self._last_sync_time)
 
         # Now enqueue a full refresh to actually fetch events.
         # The queue will serialise this with any already-pending refresh.
@@ -787,8 +777,10 @@ class SyncManager:
         # pending edit, the op is dropped.
         self._confirm_pending_uids()
 
-        self._notify_change()
-        self._notify_sync_status()
+        if self._on_change:
+            self._on_change()
+        if self._on_sync_status:
+            self._on_sync_status(self.pending_count(), self._last_sync_time)
 
         # Dispatch the next queued refresh
         self._dispatch_next_if_idle()
@@ -1008,8 +1000,10 @@ class SyncManager:
                 debug_log(Level.DEBUG, f"sync: queueing confirmation refresh for {sid} window={w_start}..{w_end}")
                 self._enqueue_refresh(sid, w_start, w_end)
 
-        self._notify_change()
-        self._notify_sync_status()
+        if self._on_change:
+            self._on_change()
+        if self._on_sync_status:
+            self._on_sync_status(self.pending_count(), self._last_sync_time)
 
     def _confirm_pending_uids(self) -> None:
         """Drop pending ops whose change has been confirmed by a refresh.
