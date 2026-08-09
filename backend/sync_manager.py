@@ -243,6 +243,95 @@ class SyncManager:
         self._fs.purge_source(source_id)
 
     # ------------------------------------------------------------------
+    # Shared worker helpers
+    # ------------------------------------------------------------------
+
+    def _connect_account(self, account) -> tuple:
+        """Connect a CalDAV account and list its calendars.
+
+        Returns ``(session, calendars)`` on success, ``(None, [])`` on failure.
+        Runs in a worker thread — never mutates shared state.
+        """
+        try:
+            pw = account.get_password(self._config.password_program)
+            session = caldav_connect(account.url, account.username, pw, account.name)
+            calendars = caldav_list_calendars(session)
+            return session, calendars
+        except Exception as e:
+            debug_log(Level.ERROR, f"sync: CalDAV error for {account.name}: {e}")
+            return None, []
+
+    def _register_calendars(self, result: dict, session, account, calendars, now) -> None:
+        """Register a connected account's calendars into a worker result dict.
+
+        Populates ``sessions``, ``calendars``, ``sources`` and per-source
+        timing for every calendar the server reported.
+        """
+        result["sessions"][account.name] = session
+        for cal_info in calendars:
+            source_id = f"caldav:{account.name}:{cal_info.id}"
+            result["calendars"][source_id] = cal_info
+            # Snapshot of source fields to apply on main thread
+            result["sources"][source_id] = {
+                "id": source_id,
+                "name": cal_info.name,
+                "color": cal_info.color,
+                "account_name": account.name,
+                "read_only": not cal_info.writable,
+                "source_type": "caldav",
+                "is_outdated": False,
+            }
+            result["source_last_attempt"][source_id] = now
+            # Mark last_success so the source is not treated as outdated
+            # even though we haven't fetched events yet.
+            result["source_last_success"][source_id] = now
+
+    def _detect_removed_sources(self, result: dict, ids) -> None:
+        """Detect CalDAV sources that existed locally but are missing from the
+        server response — only for accounts that connected successfully.
+        Stores the result under ``removed_sources``."""
+        removed = []
+        for sid in ids:
+            src = self._sources.get(sid)
+            if src and src.source_type == "caldav":
+                if src.account_name in result.get("sessions", {}):
+                    if sid not in result.get("calendars", {}):
+                        removed.append(sid)
+        result["removed_sources"] = removed
+
+    @staticmethod
+    def _bump_success(result: dict, sid: str, fetch_result: dict, now: datetime) -> None:
+        """Apply a successful per-source fetch result into the worker result dict."""
+        result["synced"].append(sid)
+        result["source_last_success"][sid] = fetch_result.get("last_success", now)
+        if "source_data" in fetch_result:
+            result["sources"][sid] = fetch_result["source_data"]
+
+    def _record_source_success(self, result: dict, source_id: str, name: str,
+                               color: str, account_name: str, read_only: bool,
+                               source_type: str, now: datetime) -> None:
+        """Record a successful per-source fetch: source_data + SourceMeta.
+
+        Shared by the CalDAV and ICS fetch paths — both persist the same
+        metadata shape and snapshot the source fields for the main thread.
+        """
+        result["source_data"] = {
+            "id": source_id,
+            "name": name,
+            "color": color,
+            "account_name": account_name,
+            "read_only": read_only,
+            "source_type": source_type,
+            "is_outdated": False,
+        }
+        result["last_success"] = now
+        self._fs.save_source_meta(SourceMeta(
+            source_id=source_id, name=name, color=color,
+            read_only=read_only, source_type=source_type,
+            account_name=account_name, last_success=now,
+        ))
+
+    # ------------------------------------------------------------------
     # Connect & discover (background) — sessions only, no event fetching
     # ------------------------------------------------------------------
 
@@ -284,39 +373,11 @@ class SyncManager:
         # --- CalDAV -------------------------------------------------------
         for account in self._config.nextcloud_accounts:
             debug_log(Level.DEBUG, f"sync: connecting CalDAV account '{account.name}' at {account.url}")
-            try:
-                pw = account.get_password(self._config.password_program)
-                debug_log(Level.DEBUG, f"sync: got password for {account.name}")
-                session = caldav_connect(account.url, account.username, pw,
-                                         account.name)
-                debug_log(Level.DEBUG, f"sync: connected to {account.name}")
-
-                calendars = caldav_list_calendars(session)
-                result["sessions"][account.name] = session
-                debug_log(Level.DEBUG, f"sync: found {len(calendars)} calendars for {account.name}")
-                for cal_info in calendars:
-                    source_id = f"caldav:{account.name}:{cal_info.id}"
-                    debug_log(Level.DEBUG, f"sync:   calendar '{cal_info.name}' id={cal_info.id} writable={cal_info.writable}")
-                    result["calendars"][source_id] = cal_info
-
-                    # Snapshot of source fields to apply on main thread
-                    result["sources"][source_id] = {
-                        "id": source_id,
-                        "name": cal_info.name,
-                        "color": cal_info.color,
-                        "account_name": account.name,
-                        "read_only": not cal_info.writable,
-                        "source_type": "caldav",
-                        "is_outdated": False,
-                    }
-
-                    result["source_last_attempt"][source_id] = now
-                    # Mark last_success so the source is not treated as outdated
-                    # even though we haven't fetched events yet.
-                    result["source_last_success"][source_id] = now
-
-            except Exception as e:
-                debug_log(Level.ERROR, f"sync: CalDAV error for {account.name}: {e}")
+            session, calendars = self._connect_account(account)
+            if session is None:
+                continue
+            debug_log(Level.DEBUG, f"sync: found {len(calendars)} calendars for {account.name}")
+            self._register_calendars(result, session, account, calendars, now)
 
         # --- ICS — just register source metadata, no fetch yet ------------
         for source_id, url in self._ics_urls.items():
@@ -336,14 +397,7 @@ class SyncManager:
 
         # Detect CalDAV sources that existed locally but are missing from the
         # server response — only for accounts that connected successfully.
-        removed = []
-        for sid in list(self._sources.keys()):
-            src = self._sources.get(sid)
-            if src and src.source_type == "caldav":
-                if src.account_name in result.get("sessions", {}):
-                    if sid not in result.get("calendars", {}):
-                        removed.append(sid)
-        result["removed_sources"] = removed
+        self._detect_removed_sources(result, list(self._sources.keys()))
 
         return result
 
@@ -513,17 +567,12 @@ class SyncManager:
             session = result["sessions"].get(account_name)
             if session is None:
                 # Find matching account config and connect
-                for acc in self._config.nextcloud_accounts:
-                    if acc.name == account_name:
-                        try:
-                            pw = acc.get_password(self._config.password_program)
-                            session = caldav_connect(acc.url, acc.username, pw, acc.name)
-                            debug_log(Level.DEBUG, f"sync: connected {account_name}")
-                        except Exception as e:
-                            debug_log(Level.ERROR, f"sync: connect failed for {account_name}: {e}")
-                        break
-                if session is None:
+                acc = next((a for a in self._config.nextcloud_accounts if a.name == account_name), None)
+                if acc is None:
                     debug_log(Level.DEBUG, f"sync: no account config for {account_name}")
+                    continue
+                session, _ = self._connect_account(acc)
+                if session is None:
                     continue
 
             # List calendars once per account
@@ -551,10 +600,7 @@ class SyncManager:
                 try:
                     fetch_result = self._fetch_caldav_source(sid, cal_info, session, now, sync_start, sync_end)
                     if fetch_result["ok"]:
-                        result["synced"].append(sid)
-                        result["source_last_success"][sid] = fetch_result.get("last_success", now)
-                        if "source_data" in fetch_result:
-                            result["sources"][sid] = fetch_result["source_data"]
+                        self._bump_success(result, sid, fetch_result, now)
                         debug_log(Level.DEBUG, f"sync:   {sid} OK")
                     else:
                         debug_log(Level.DEBUG, f"sync:   {sid} FAILED")
@@ -567,10 +613,7 @@ class SyncManager:
             try:
                 fetch_result = self._refresh_ics(sid, now, sync_start, sync_end)
                 if fetch_result["ok"]:
-                    result["synced"].append(sid)
-                    result["source_last_success"][sid] = fetch_result.get("last_success", now)
-                    if "source_data" in fetch_result:
-                        result["sources"][sid] = fetch_result["source_data"]
+                    self._bump_success(result, sid, fetch_result, now)
                     debug_log(Level.DEBUG, f"sync:   {sid} OK")
                 else:
                     debug_log(Level.DEBUG, f"sync:   {sid} FAILED")
@@ -582,14 +625,7 @@ class SyncManager:
 
         # Detect CalDAV sources that were targeted but are missing from the
         # server response — only for accounts that connected successfully.
-        removed = []
-        for sid in ids:
-            src = self._sources.get(sid)
-            if src and src.source_type == "caldav":
-                if src.account_name in result.get("sessions", {}):
-                    if sid not in result.get("calendars", {}):
-                        removed.append(sid)
-        result["removed_sources"] = removed
+        self._detect_removed_sources(result, ids)
 
         # Build a fresh index in the worker thread — reading .ics files
         # from disk is expensive and must not block the GUI.
@@ -652,26 +688,11 @@ class SyncManager:
         parts = source_id.split(":", 2)
         account_name = parts[1] if len(parts) == 3 and parts[0] == "caldav" else src.account_name
 
-        # Source data to apply on main thread
-        result["source_data"] = {
-            "id": source_id,
-            "name": cal_info.name,
-            "color": cal_info.color,
-            "account_name": account_name,
-            "read_only": not cal_info.writable,
-            "source_type": "caldav",
-            "is_outdated": False,
-        }
-        result["last_success"] = now
-
-        # Update metadata (filesystem write is safe from worker)
-        self._fs.save_source_meta(SourceMeta(
-            source_id=source_id, name=cal_info.name,
-            color=cal_info.color,
-            read_only=not cal_info.writable,
-            source_type="caldav", account_name=account_name,
-            last_success=now,
-        ))
+        # Source data to apply on main thread + persist metadata
+        self._record_source_success(
+            result, source_id, cal_info.name, cal_info.color,
+            account_name, not cal_info.writable, "caldav", now,
+        )
         result["ok"] = True
         return result
 
@@ -699,22 +720,13 @@ class SyncManager:
                 debug_log(Level.DEBUG, f"sync: ics_event parse — skipping: {e}")
                 continue
         self._fs.replace_source(source_id, events, sync_start, sync_end)
-        result["last_success"] = now
 
         src = self._sources.get(source_id)
         if src:
-            self._fs.save_source_meta(SourceMeta(
-                source_id=source_id, name=src.name, color=src.color,
-                read_only=True, source_type="ics", last_success=now,
-            ))
-            result["source_data"] = {
-                "id": source_id,
-                "name": src.name,
-                "color": src.color,
-                "read_only": True,
-                "source_type": "ics",
-                "is_outdated": False,
-            }
+            self._record_source_success(
+                result, source_id, src.name, src.color, "",
+                True, "ics", now,
+            )
         result["ok"] = True
         return result
 
