@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """
 Kubux Calendar - A PySide6 desktop calendar for CalDAV (Nextcloud) and ICS subscriptions.
-
-This is the main entry point for the application.
 """
 
 import sys
@@ -18,7 +16,6 @@ from gui.main_window import MainWindow
 
 
 def parse_args():
-    """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="Kubux Calendar - A desktop calendar for Nextcloud and ICS subscriptions"
     )
@@ -30,13 +27,12 @@ def parse_args():
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="Enable debug output"
+        help="Force debug output"
     )
     return parser.parse_args()
 
 
 def main():
-    """Main entry point."""
     args = parse_args()
     
     # Enable high DPI scaling
@@ -47,12 +43,6 @@ def main():
     # Create application
     app = QApplication(sys.argv)
     app.setApplicationName("Kubux Calendar")
-    app.setApplicationVersion("0.1")
-    app.setOrganizationName("kubux")
-    app.setOrganizationDomain("kubux.net")
-    
-    # Set application style
-    app.setStyle("Fusion")
     
     # Load configuration
     try:
