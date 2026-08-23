@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Kubux Calendar (Import)
+Comment=Open an iCalendar attachment and import it into Kubux Calendar
+Exec=kubux-calendar-attach %f
+Icon=office-calendar
+Terminal=false
+Type=Application
+Categories=Office;Calendar;
+Keywords=ics;ical;calendar;import;nextcloud;caldav;
+MimeType=text/calendar;text/x-vcalendar;
+NoDisplay=true

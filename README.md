@@ -303,6 +303,56 @@ The command exits `0` on success and non-zero on any failure (unknown account
 or calendar, incorrect credentials, network error), printing a message to
 stderr.
 
+## Command Line Tool: `kubux-calendar-attach` (XDG `.ics` handler)
+
+A companion for opening `.ics` calendar attachments and inserting them into
+the **pending-changes queue** that the GUI syncs to the server.  It is meant
+to be registered as the XDG default handler for `text/calendar`:
+
+```bash
+# In ~/.config/mimeapps.list, associate ics attachments with the IMPORTER:
+[Default Applications]
+text/calendar=kubux-calendar-attach.desktop
+```
+
+Note the handler is `kubux-calendar-attach.desktop` — **not** `kubux-calendar.desktop`.
+The latter launches the main window; it is the attach `.desktop` file whose
+`Exec=` runs `kubux-calendar-attach`, so `xdg-open` on an `.ics` attachment
+opens the import window.  The attach desktop file ships with the flake under
+`$out/share/applications/` (it is `NoDisplay=true`, i.e. a handler only, not a
+menu entry).
+
+When you open an `.ics` attachment it parses the event, opens a small
+event-editor window prefilled with its contents (title, location, dates,
+description), lets you pick which Nextcloud calendar it should go into, and
+on confirmation queues it for sync.
+
+```bash
+kubux-calendar-attach event.ics            # open editor, pick calendar
+kubux-calendar-attach --file event.ics     # same
+cat event.ics | kubux-calendar-attach      # read from stdin
+# Non-interactive: queue straight to a calendar, no window:
+kubux-calendar-attach event.ics --calendar Nextcloud.Primary/beruflich
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--calendar ACCOUNT/CAL` | Queue non-interactively to `<account>/<calendar>`. Without it, an editor window opens. |
+| `--config PATH` | Path to the kubux-calendar config TOML (default: auto-detect). |
+| `-h, --help` | Show help and exit. |
+
+### Concurrency with a running instance
+
+Both the GUI's `EventStore` and the CLI tools write the pending-changes file
+(`~/.local/state/kubux-calendar/v2/pending.json`).  To make concurrent access
+safe, `EventFS` guards every pending read-modify-write with a POSIX advisory
+file lock (`flock`), so a queued event is **never lost** no matter which
+process writes first.  A running GUI also watches `pending.json`: when an
+external tool queues an event, the running instance shows it and triggers a
+sync immediately.
+
 ## Architecture
 
 The application follows a modular architecture:
@@ -343,6 +393,10 @@ kubux-calendar/
 │   ├── log.py             # Level-filtered logging
 │   ├── task_dispatch.py   # Thread-pool task dispatcher
 │   └── timezone_utils.py  # Timezone conversion utilities
+├── cli/
+│   ├── caldav_send.py     # kubux-caldav-send: push an .ics to a calendar
+│   ├── calendar_attach.py # kubux-calendar-attach: XDG .ics import (queues for sync)
+│   └── attach_main.py     # Entry point for the attach XDG handler
 └── tests/
     ├── conftest.py             # Shared pytest fixtures (qapp, offscreen Qt)
     ├── test_interval_tree.py   # AVL tree insert/delete/query/integrity/stress
@@ -376,31 +430,34 @@ Run the test suite with pytest (requires the Nix development shell):
 nix develop --command python -m pytest tests/ -v
 ```
 
-441 tests across 21 test files:
+528 tests across 24 test files:
 
 | File | Tests | What it covers |
 |---|---|---|
-| `test_gui_logic.py` | 65 | Color math, event portions, overlap, time axis, layout, scrollbar math, pixel→time |
-| `test_event_parsing.py` | 61 | iCalendar parsing, ImmutableEvent, EventView, _rebuild_ical |
-| `test_event_store.py` | 55 | CRUD, visibility/color, state persistence, clone, _expand_instances, cache validity |
-| `test_sync_manager.py` | 44 | Refresh intervals, outdated detection, workers, ICS refresh, callbacks |
+| `test_gui_logic.py` | 67 | Color math, event portions, overlap, time axis, layout, scrollbar math, pixel→time |
+| `test_event_parsing.py` | 65 | iCalendar parsing, ImmutableEvent, EventView, _rebuild_ical |
+| `test_event_store.py` | 62 | CRUD, visibility/color, state persistence, clone, _expand_instances, cache validity |
+| `test_sync_manager.py` | 47 | Refresh intervals, outdated detection, workers, ICS refresh, callbacks |
 | `test_config.py` | 32 | TOML parsing, all sections, edge cases, defaults |
-| `test_network_ops.py` | 23 | CalDAV fetch/delete/exdate, ICS event parsing, HTTP fetch with mocks |
+| `test_network_ops.py` | 27 | CalDAV fetch/delete/exdate, ICS event parsing, HTTP fetch with mocks |
 | `test_event_fs.py` | 23 | Filesystem cache CRUD, source metadata, pending ops |
-| `test_task_dispatch.py` | 18 | Background task execution, wait/cancel, thunk/tie |
+| `test_caldav_send.py` | 21 | kubux-caldav-send CLI: config/account/calendar resolution, input, error paths |
+| `test_calendar_widget.py` | 21 | View switching, navigation, today, Dec↔Jan wrap |
+| `test_task_dispatch.py` | 19 | Background task execution, wait/cancel, thunk/tie |
 | `test_interval_tree.py` | 18 | AVL tree insert/delete, all 4 query types, integrity, random stress |
-| `test_calendar_widget.py` | 17 | View switching, navigation, today, Dec↔Jan wrap |
+| `test_follow_present.py` | 17 | Follow-present navigation behaviour |
+| `test_event_index.py` | 15 | In-memory index add/remove/query, recurring inclusion |
 | `test_timezone_utils.py` | 13 | Timezone-aware conversion, naive→aware, UTC→local |
-| `test_event_index.py` | 12 | In-memory index add/remove/query, recurring inclusion |
+| `test_attach_queue.py` | 12 | kubux-calendar-attach parse/enqueue + EventFS `flock` concurrency |
+| `test_recurrence_widget.py` | 12 | RecurrenceRule get/set round-trip, byday/count/until |
 | `test_shared_scrollbar.py` | 10 | Scrollbar state clamping, mirror sync |
-| `test_recurrence_widget.py` | 10 | RecurrenceRule get/set round-trip, byday/count/until |
 | `test_color_utils.py` | 9 | Color-to-hue conversion, unused color selection |
-| `test_event_dialog.py` | 6 | Timezone combo, save validation, tz-change conversion |
+| `test_list_view.py` | 9 | ±90-day range, sorted ordering, empty |
+| `test_event_dialog.py` | 8 | Timezone combo, save validation, tz-change conversion |
 | `test_all_day_events.py` | 6 | max_events, update_height, clear, out-of-range |
 | `test_views.py` | 5 | Day/Week get_date_range, _get_week_start, num_days |
 | `test_month_view.py` | 5 | All-day multi-day distribution, other-month cells |
 | `test_log.py` | 5 | Log level filtering, stderr output |
-| `test_list_view.py` | 4 | ±90-day range, sorted ordering, empty |
 
 All tests write to temporary directories — no data is written to the real cache at `~/.local/state/kubux-calendar/`.
 

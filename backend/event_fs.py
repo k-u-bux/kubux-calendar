@@ -18,9 +18,15 @@ pending entry is removed (confirmed).
 import json
 import os
 import tempfile
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover — non-POSIX fallback (project is Linux-only)
+    fcntl = None
 
 from .event import ImmutableEvent
 from library.log import debug_log, Level
@@ -365,11 +371,39 @@ class EventFS:
 
     # === Pending Operations ================================================
 
-    def save_pending(self, ops: list[PendingOp]) -> None:
-        data = [op.to_dict() for op in ops]
-        _atomic_write(self._pending_file, json.dumps(data, indent=2))
+    @contextmanager
+    def _pending_lock(self):
+        """Advisory exclusive lock guarding access to ``pending.json``.
 
-    def load_pending(self) -> list[PendingOp]:
+        ``pending.json`` is shared by the GUI's EventStore and by the
+        command line tools (``kubux-caldav-send``, ``kubux-calendar-attach``),
+        possibly in *different processes* at the same time.  The read-modify-
+        write in :meth:`add_pending` / :meth:`remove_pending` must therefore
+        be protected so concurrent writers never lose an update.
+
+        Uses ``flock`` (POSIX; project is Linux-only).  flock is scoped to an
+        open file description, so callers must acquire **one** lock around a
+        whole read-modify-write and must **not** nest (never call a public
+        pending method that re-acquires the lock from inside a locked block).
+        """
+        self._pending_file.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = self._pending_file.with_name(self._pending_file.name + ".lock")
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            if fcntl is not None:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            if fcntl is not None:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(fd)
+            else:
+                os.close(fd)
+
+    def _read_pending_raw(self) -> list[PendingOp]:
+        """Read pending ops without acquiring the lock (caller must hold it)."""
         if not self._pending_file.exists():
             return []
         try:
@@ -379,16 +413,37 @@ class EventFS:
             debug_log(Level.WARN, f"event_fs: load_pending failed — {e}")
             return []
 
+    def _write_pending_raw(self, ops: list[PendingOp]) -> None:
+        """Write pending ops without acquiring the lock (caller must hold it)."""
+        data = [op.to_dict() for op in ops]
+        _atomic_write(self._pending_file, json.dumps(data, indent=2))
+
+    def save_pending(self, ops: list[PendingOp]) -> None:
+        with self._pending_lock():
+            self._write_pending_raw(ops)
+
+    def load_pending(self) -> list[PendingOp]:
+        with self._pending_lock():
+            return self._read_pending_raw()
+
     def add_pending(self, op: PendingOp) -> None:
-        """Append or replace a pending operation for an event."""
-        ops = [o for o in self.load_pending() if o.uid != op.uid]
-        ops.append(op)
-        self.save_pending(ops)
+        """Append or replace a pending operation for an event.
+
+        Thread- and process-safe: the read-modify-write happens under a
+        single exclusive lock so concurrent callers (a running GUI plus a
+        CLI tool) never lose each other's updates.
+        """
+        with self._pending_lock():
+            ops = [o for o in self._read_pending_raw() if o.uid != op.uid]
+            ops.append(op)
+            self._write_pending_raw(ops)
 
     def remove_pending(self, uid: str) -> None:
-        """Remove the pending operation for *uid*."""
-        ops = [o for o in self.load_pending() if o.uid != uid]
-        self.save_pending(ops)
+        """Remove the pending operation for *uid* (process-safe)."""
+        with self._pending_lock():
+            ops = [o for o in self._read_pending_raw() if o.uid != uid]
+            self._write_pending_raw(ops)
 
     def clear_pending(self) -> None:
-        self.save_pending([])
+        with self._pending_lock():
+            self._write_pending_raw([])

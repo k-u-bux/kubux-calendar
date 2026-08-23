@@ -64,8 +64,17 @@
               --add-flags "$out/lib/kubux-calendar/cli/__main__.py" \
               --set PYTHONPATH "$out/lib/kubux-calendar"
 
+            # XDG handler: import an .ics attachment into the pending queue
+            makeWrapper ${pythonEnv}/bin/python $out/bin/kubux-calendar-attach \
+              --add-flags "$out/lib/kubux-calendar/cli/attach_main.py" \
+              --set PYTHONPATH "$out/lib/kubux-calendar"
+
             # Copy desktop file
             cp kubux-calendar.desktop $out/share/applications/
+            # XDG .ics handler desktop file — this is the one mimeapps.list
+            # should point text/calendar at (NOT kubux-calendar.desktop,
+            # which launches the GUI).
+            cp kubux-calendar-attach.desktop $out/share/applications/
           '';
 
           meta = with pkgs.lib; {

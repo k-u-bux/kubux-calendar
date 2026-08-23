@@ -90,6 +90,11 @@ class MainWindow(QMainWindow):
             self._config_watcher.addPath(str(config_path))
         self._config_watcher.fileChanged.connect(self._on_config_file_changed)
 
+        # Pending-changes watcher — lets a running instance pick up events
+        # queued from outside (e.g. the kubux-calendar-attach XDG handler).
+        self._pending_watcher = QFileSystemWatcher(self)
+        self._pending_watcher.fileChanged.connect(self._on_pending_file_changed)
+
         self._init_from_config(config)
 
         self._setup_window()
@@ -125,6 +130,12 @@ class MainWindow(QMainWindow):
             self.event_store = EventStore(config)
         self.event_store.set_on_change_callback(self._on_data_changed)
         self.event_store.set_on_sync_status_callback(self._on_sync_status_changed)
+
+        # Watch pending.json so externally queued events (kubux-calendar-attach)
+        # are picked up live.  The path is stable across config reloads.
+        pending_file = str(self.event_store._fs._pending_file)
+        if pending_file not in self._pending_watcher.files():
+            self._pending_watcher.addPath(pending_file)
 
         # UI is rebuilt below - invalidate the display signature so the
         # change-detection skip doesn't leave the fresh views empty.
@@ -883,6 +894,28 @@ class MainWindow(QMainWindow):
         # Delay reload slightly to ensure file is fully written
         QTimer.singleShot(500, self._load_pending_config)
     
+    def _on_pending_file_changed(self, path: str):
+        """React to external writes to pending.json.
+
+        The kubux-calendar-attach XDG handler (and other tools) can append
+        pending operations while the GUI is open.  When the pending count
+        rises vs. what we last reported, refresh the display and let the
+        sync-status path reset the sync timer so the new event is pushed to
+        the server promptly.  Changes that originate inside this app are
+        already handled by their own callbacks (`_last_pending_count` is up
+        to date, so nothing extra happens here).
+        """
+        if getattr(self, "_initializing", False):
+            return
+        try:
+            count = self.event_store.get_pending_sync_count()
+        except Exception as e:
+            debug_log(Level.DEBUG, f"_on_pending_file_changed: {e}")
+            return
+        if count > self._last_pending_count:
+            self._on_sync_status_changed(count, None)
+            self._update_display_from_cache()
+
     def _load_pending_config(self):
         """Load new config and apply or defer depending on open dialogs."""
         try:
