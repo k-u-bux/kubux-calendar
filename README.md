@@ -271,6 +271,38 @@ The List view displays all events in a chronological scrollable list:
 - Click the color box next to a calendar name to change its color
 - Calendars from Nextcloud are editable; ICS subscriptions are read-only
 
+## Command Line Tool: `kubux-caldav-send`
+
+A small companion CLI that uploads an `.ics` document to a calendar on a
+Nextcloud (CalDAV) account, using the same configuration file as the GUI.
+
+```bash
+# Pipe an event to a calendar
+cat event.ics | kubux-caldav-send --account Nextcloud.Primary --calendar beruflich
+
+# ...or pass a file explicitly (equivalent)
+kubux-caldav-send --account Nextcloud.Primary --calendar beruflich --file event.ics
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--account NAME` | Config account to use. May be `Nextcloud.Primary` or just `Primary`. Defaults to the only configured account, if there is exactly one. |
+| `--calendar NAME` | **Required.** Calendar on the server to upload to, matched by id or display name (e.g. `beruflich`). |
+| `-f, --file PATH` | Read the event from *PATH* instead of stdin. |
+| `--config PATH` | Path to the kubux-calendar config TOML (default: auto-detect). |
+| `-h, --help` | Show help and exit. |
+
+The event is read from stdin unless `--file` is given. The account and its
+password are resolved exactly as in the GUI: the server is taken from `url`,
+the account from `username`, and the password by running the configured
+`password_program` with `password_key`.
+
+The command exits `0` on success and non-zero on any failure (unknown account
+or calendar, incorrect credentials, network error), printing a message to
+stderr.
+
 ## Architecture
 
 The application follows a modular architecture:

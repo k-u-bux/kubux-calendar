@@ -51,11 +51,17 @@
             cp -r $src/backend $out/lib/kubux-calendar/
             cp -r $src/gui $out/lib/kubux-calendar/
             cp -r $src/library $out/lib/kubux-calendar/
+            cp -r $src/cli $out/lib/kubux-calendar/
             
             # Use makeWrapper to create a final executable 'kubux-calendar' that calls 
             # the python interpreter from the build environment and sets PYTHONPATH.
             makeWrapper ${pythonEnv}/bin/python $out/bin/kubux-calendar \
               --add-flags "$out/lib/kubux-calendar/kubux_calendar.py" \
+              --set PYTHONPATH "$out/lib/kubux-calendar"
+
+            # CLI tool to push an .ics file to a calendar
+            makeWrapper ${pythonEnv}/bin/python $out/bin/kubux-caldav-send \
+              --add-flags "$out/lib/kubux-calendar/cli/__main__.py" \
               --set PYTHONPATH "$out/lib/kubux-calendar"
 
             # Copy desktop file
