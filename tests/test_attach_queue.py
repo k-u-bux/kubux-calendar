@@ -3,11 +3,13 @@ the pending-changes file locking added to EventFS."""
 
 import os
 import threading
+from datetime import datetime
 from io import StringIO
 from pathlib import Path
 from unittest import mock
 
 import pytest
+import pytz
 
 from backend.event_fs import EventFS, PendingOp
 from backend.network_ops import CalendarInfo
@@ -198,3 +200,96 @@ class TestQueueFromArgs:
         cfg.timezone = "UTC"
         with pytest.raises(ValueError, match="<account>/<calendar>"):
             ca.queue_from_args(SAMPLE_ICS, "no-slash", cfg)
+
+
+# =====================================================================
+# AttachDialog timezone handling (Qt, offscreen)
+# =====================================================================
+
+_CAL = None
+
+
+def _make_dialog(qapp, ics, timezone="Europe/Berlin"):
+    import pytz
+    from backend.event import CalendarSource
+    global _CAL
+    if _CAL is None:
+        _CAL = CalendarSource(id="cal-1", name="beruflich", account_name="P",
+                              source_type="caldav", read_only=False)
+    config_tz = pytz.timezone(timezone)
+    base, ev = ca.parse_ics(ics, config_tz=config_tz)
+    cfg = type("Cfg", (), {"timezone": timezone, "password_program": "echo"})()
+    d = ca.AttachDialog(cfg, base, ev, [_CAL])
+    qapp.processEvents()
+    return d
+
+
+COMMON_ICS = (
+    "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//t//\n"
+    "BEGIN:VEVENT\nUID:u\nSUMMARY:S\nDTSTART:__START__\nDTEND:__END__\n"
+    "END:VEVENT\nEND:VCALENDAR\n"
+)
+
+
+@pytest.mark.skipif(not ca._QT_OK, reason="PySide6 not available")
+class TestAttachDialogTz:
+    def test_floating_defaults_to_local_and_preserves_wall(self, qapp):
+        ics = COMMON_ICS.replace("__START__", "20260810T090000") \
+                        .replace("__END__", "20260810T100000")
+        d = _make_dialog(qapp, ics)
+        try:
+            assert d._display_tzid == "Europe/Berlin"
+            assert d._tz_combo.currentText() == "Europe/Berlin"
+            # Time taken as-is: 09:00 local wall clock.
+            assert d._start_edit.dateTime().toPython().strftime("%H:%M") == "09:00"
+            edits = d._collect_edits()
+            assert edits["start"].tzinfo.zone == "Europe/Berlin"
+            # 09:00 (CEST, +2) == 07:00 UTC.
+            assert edits["start"].astimezone(pytz.UTC).replace(tzinfo=None) == \
+                datetime(2026, 8, 10, 7, 0)
+        finally:
+            d.close()
+
+    def test_changing_tz_adjusts_wall_clock_same_instant(self, qapp):
+        ics = COMMON_ICS.replace("__START__", "20260810T090000") \
+                        .replace("__END__", "20260810T100000")
+        d = _make_dialog(qapp, ics)
+        try:
+            d._tz_combo.setCurrentText("UTC")
+            qapp.processEvents()
+            assert d._display_tzid == "UTC"
+            # Same instant -> wall clock moves to 07:00 (Berlin +2 CEST).
+            assert d._start_edit.dateTime().toPython().strftime("%H:%M") == "07:00"
+            edits = d._collect_edits()
+            assert edits["start"].tzinfo == pytz.UTC
+            assert edits["start"].replace(tzinfo=None) == datetime(2026, 8, 10, 7, 0)
+        finally:
+            d.close()
+
+    def test_tzid_event_is_respected(self, qapp):
+        ics = ("BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//t//\n"
+               "BEGIN:VEVENT\nUID:t1\nSUMMARY:Tz\n"
+               "DTSTART;TZID=Europe/Berlin:20260810T090000\n"
+               "DTEND;TZID=Europe/Berlin:20260810T100000\n"
+               "END:VEVENT\nEND:VCALENDAR\n")
+        d = _make_dialog(qapp, ics)
+        try:
+            assert d._display_tzid == "Europe/Berlin"
+            edits = d._collect_edits()
+            assert edits["start"].tzinfo.zone == "Europe/Berlin"
+            # 09:00 BST/Berlin == 07:00 UTC.
+            assert edits["start"].astimezone(pytz.UTC).replace(tzinfo=None) == \
+                datetime(2026, 8, 10, 7, 0)
+        finally:
+            d.close()
+
+    def test_utc_event_shows_and_saves_utc(self, qapp):
+        ics = COMMON_ICS.replace("__START__", "20260810T090000Z") \
+                        .replace("__END__", "20260810T100000Z")
+        d = _make_dialog(qapp, ics)
+        try:
+            assert d._display_tzid == "UTC"
+            assert d._start_edit.dateTime().toPython().strftime("%H:%M") == "09:00"
+            assert d._collect_edits()["start"].tzinfo == pytz.UTC
+        finally:
+            d.close()

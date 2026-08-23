@@ -51,6 +51,11 @@ try:
 except Exception:  # pragma: no cover - headless import guard
     _QT_OK = False
 
+if _QT_OK:
+    # Reuse the same timezone palette + Floating sentinel as the GUI's event
+    # dialog so the attach editor behaves identically.
+    from gui.event_dialog import COMMON_TZ, FLOATING_LABEL
+
 
 # ============================================================ input parsing
 
@@ -193,7 +198,8 @@ if _QT_OK:
             self._calendars = calendars
             self._config_tz = pytz.timezone(config.timezone)
             self._queued = False
-            self._tzid = event.tzid
+            self._display_tzid: Optional[str] = None  # tz currently shown
+            self._ignore_tz_change = False
 
             self.setWindowTitle("Import event into Kubux Calendar")
             self.setAttribute(Qt.WA_DeleteOnClose)
@@ -226,8 +232,18 @@ if _QT_OK:
             self._end_edit.setDisplayFormat("yyyy-MM-dd HH:mm")
             form.addRow("End:", self._end_edit)
 
-            tz_label = QLabel(self._tzid or "Floating (local time)")
-            form.addRow("Timezone:", tz_label)
+            # Timezone selector (shared for start and end), like the GUI's
+            # event dialog.  'Floating' is a naive local-time event.
+            self._tz_combo = QComboBox()
+            for tz in COMMON_TZ:
+                self._tz_combo.addItem(tz)
+            self._tz_combo.addItem(FLOATING_LABEL)
+            self._tz_combo.setToolTip(
+                "Event timezone. 'Floating' means local time with no fixed "
+                "timezone."
+            )
+            self._tz_combo.currentIndexChanged.connect(self._on_tz_changed)
+            form.addRow("Timezone:", self._tz_combo)
 
             self._location_edit = QLineEdit()
             form.addRow("Location:", self._location_edit)
@@ -250,6 +266,72 @@ if _QT_OK:
             buttons.addWidget(save)
             layout.addLayout(buttons)
 
+        def _tz_for(self, tzid: Optional[str]):
+            """Return a pytz timezone for *tzid*; local for Floating/None."""
+            if not tzid or tzid == FLOATING_LABEL:
+                return self._config_tz
+            if tzid == "UTC":
+                return pytz.UTC
+            return pytz.timezone(tzid)
+
+        def _set_tz_combo(self, tzid: Optional[str]):
+            """Make the combo show *tzid* (None => Floating)."""
+            label = tzid if tzid is not None else FLOATING_LABEL
+            idx = self._tz_combo.findText(label)
+            if idx >= 0:
+                self._tz_combo.setCurrentIndex(idx)
+            else:
+                self._tz_combo.addItem(label)
+                self._tz_combo.setCurrentIndex(self._tz_combo.count() - 1)
+
+        def _get_tzid_from_combo(self) -> Optional[str]:
+            """Return the selected TZID, or None for Floating."""
+            text = self._tz_combo.currentText().strip()
+            if text == FLOATING_LABEL:
+                return None
+            return text if text else None
+
+        def _on_tz_changed(self, index: int):
+            """When the user changes the timezone, reinterpret the wall clock
+            in the new zone (same instant, adjusted display) — exactly like
+            the GUI's event dialog."""
+            if self._ignore_tz_change:
+                return
+            new_tzid = self._get_tzid_from_combo()
+            if new_tzid == self._display_tzid:
+                return
+            old_tzid = self._display_tzid
+
+            if old_tzid is None:
+                # Was Floating — just record the new zone; don't move the time.
+                self._display_tzid = new_tzid
+                return
+
+            start_naive = self._start_edit.dateTime().toPython()
+            end_naive = self._end_edit.dateTime().toPython()
+            try:
+                old_tz = self._tz_for(old_tzid)
+                new_tz = self._tz_for(new_tzid)
+            except Exception:
+                self._display_tzid = new_tzid
+                return
+
+            start_aware = old_tz.localize(start_naive)
+            end_aware = old_tz.localize(end_naive)
+            if new_tzid:
+                start_new = start_aware.astimezone(new_tz).replace(tzinfo=None)
+                end_new = end_aware.astimezone(new_tz).replace(tzinfo=None)
+            else:
+                # Switching to Floating — show wall clock in local tz.
+                start_new = start_aware.astimezone(self._config_tz).replace(tzinfo=None)
+                end_new = end_aware.astimezone(self._config_tz).replace(tzinfo=None)
+
+            self._ignore_tz_change = True
+            self._start_edit.setDateTime(QDateTime(start_new))
+            self._end_edit.setDateTime(QDateTime(end_new))
+            self._ignore_tz_change = False
+            self._display_tzid = new_tzid
+
         def _populate(self):
             ev = self._event
             self._title_edit.setText(ev.summary)
@@ -260,23 +342,32 @@ if _QT_OK:
                 self._start_edit.setDisplayFormat("yyyy-MM-dd")
                 self._end_edit.setDisplayFormat("yyyy-MM-dd")
 
+            # Timezone to display in:
+            #  - event carries a timezone (incl. UTC) -> respect it.
+            #  - floating event (no timezone) -> take the time as-is, defaulting
+            #    to the configured local timezone (selectable below).
+            tzid = ev.tzid or self._config.timezone
+            self._display_tzid = tzid
+            self._set_tz_combo(tzid)
+
             start, end = ev.start, ev.end
-            if start.tzinfo is not None:
-                try:
-                    start = start.astimezone(self._config_tz).replace(tzinfo=None)
-                    end = end.astimezone(self._config_tz).replace(tzinfo=None)
-                except Exception:
-                    pass
+            try:
+                show_tz = self._tz_for(self._display_tzid)
+                start = start.astimezone(show_tz).replace(tzinfo=None)
+                end = end.astimezone(show_tz).replace(tzinfo=None)
+            except Exception:
+                pass
             self._start_edit.setDateTime(QDateTime(start))
             self._end_edit.setDateTime(QDateTime(end))
 
         def _collect_edits(self) -> dict:
             def as_aware(dt: datetime) -> datetime:
-                if self._tzid and self._tzid != "UTC":
-                    return pytz.timezone(self._tzid).localize(dt)
-                if self._tzid == "UTC":
+                tzid = self._display_tzid
+                if tzid and tzid != "UTC":
+                    return self._tz_for(tzid).localize(dt)
+                if tzid == "UTC":
                     return dt.replace(tzinfo=pytz.UTC)
-                return dt  # floating — keep naive
+                return dt  # Floating — keep naive
 
             return {
                 "summary": self._title_edit.text().strip(),
