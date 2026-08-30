@@ -37,10 +37,10 @@
           ];
           
           # makeWrapper is necessary to ensure the packaged script runs with the correct Python interpreter path.
-          # imagemagick rasterizes the SVG icon into PNG fallbacks at install time (build-time only).
+          # librsvg (rsvg-convert) rasterizes the SVG icon into PNG fallbacks at install time (build-time only).
           nativeBuildInputs = [ 
             pkgs.makeWrapper 
-            pkgs.imagemagick
+            pkgs.librsvg
           ]; 
 
           # Installation with all modules:
@@ -88,7 +88,8 @@
             # Make icon renderings for all sizes (fallback for non-SVG WMs)
             for size in 16x16 22x22 24x24 32x32 48x48 64x64 96x96 128x128 192x192 256x256; do
                 mkdir -p $out/share/icons/hicolor/$size/apps
-                magick convert $src/app-icon.svg -resize $size $out/share/icons/hicolor/$size/apps/kubux-calendar.png
+                w=''${size%x*}; h=''${size#*x}
+                rsvg-convert -w $w -h $h -o $out/share/icons/hicolor/$size/apps/kubux-calendar.png $src/app-icon.svg
             done
           '';
 
