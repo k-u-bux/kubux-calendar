@@ -37,7 +37,11 @@
           ];
           
           # makeWrapper is necessary to ensure the packaged script runs with the correct Python interpreter path.
-          nativeBuildInputs = [ pkgs.makeWrapper ]; 
+          # imagemagick rasterizes the SVG icon into PNG fallbacks at install time (build-time only).
+          nativeBuildInputs = [ 
+            pkgs.makeWrapper 
+            pkgs.imagemagick
+          ]; 
 
           # Installation with all modules:
           installPhase = ''
@@ -75,6 +79,17 @@
             # should point text/calendar at (NOT kubux-calendar.desktop,
             # which launches the GUI).
             cp kubux-calendar-attach.desktop $out/share/applications/
+
+            # Scalable SVG icon - primary icon; PNG renderings below are
+            # the fallback for WMs/desktops that do not handle SVG files.
+            mkdir -p $out/share/icons/hicolor/scalable/apps
+            cp $src/app-icon.svg $out/share/icons/hicolor/scalable/apps/kubux-calendar.svg
+
+            # Make icon renderings for all sizes (fallback for non-SVG WMs)
+            for size in 16x16 22x22 24x24 32x32 48x48 64x64 96x96 128x128 192x192 256x256; do
+                mkdir -p $out/share/icons/hicolor/$size/apps
+                magick convert $src/app-icon.svg -resize $size $out/share/icons/hicolor/$size/apps/kubux-calendar.png
+            done
           '';
 
           meta = with pkgs.lib; {

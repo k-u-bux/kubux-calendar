@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <!-- tile -->
+  <rect x="2" y="2" width="44" height="44" rx="10" fill="#00C000"/>
+  <!-- page -->
+  <rect x="9" y="11" width="30" height="27" rx="3" fill="#FFFFFF"/>
+  <!-- header -->
+  <path d="M 9 18 h 30 v -4 a 3 3 0 0 0 -3 -3 h -24 a 3 3 0 0 0 -3 3 z" fill="#007000"/>
+  <!-- binder rings -->
+  <line x1="16" y1="6" x2="16" y2="11" stroke="#007000" stroke-width="3" stroke-linecap="round"/>
+  <line x1="32" y1="6" x2="32" y2="11" stroke="#007000" stroke-width="3" stroke-linecap="round"/>
+  <!-- day grid: 7 days x 4 weeks -->
+  <g fill="#00C000">
+  <rect x="11.0" y="21.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="15.0" y="21.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="19.0" y="21.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="23.0" y="21.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="27.0" y="21.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="31.0" y="21.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="35.0" y="21.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="11.0" y="25.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="15.0" y="25.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="19.0" y="25.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="23.0" y="25.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="27.0" y="25.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="31.0" y="25.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="35.0" y="25.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="11.0" y="29.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="15.0" y="29.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="19.0" y="29.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="23.0" y="29.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="31.0" y="29.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="35.0" y="29.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="11.0" y="33.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="15.0" y="33.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="19.0" y="33.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="23.0" y="33.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="27.0" y="33.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="31.0" y="33.0" width="2.8" height="2.8" rx="0.7"/>
+  <rect x="35.0" y="33.0" width="2.8" height="2.8" rx="0.7"/>
+  </g>
+  <!-- marked day -->
+  <rect x="26.4" y="28.4" width="4" height="4" rx="1.2" fill="#FF0000"/>
+</svg>
