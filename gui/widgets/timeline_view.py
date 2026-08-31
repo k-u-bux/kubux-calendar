@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollBar, QLabel,
     QApplication, QStyle,
 )
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import Qt, Signal, QTimer, QEvent
 from PySide6.QtGui import QFontMetrics, QWheelEvent, QKeyEvent
 
 from backend import EventView as EventData
@@ -153,6 +153,12 @@ class TimelineViewBase(QWidget):
         # Main area: time labels + day columns + scrollbar
         grid_row = QWidget()
         self._grid_row = grid_row
+        # Re-sync when the grid row is actually resized: the all-day row
+        # appearing/disappearing on date navigation changes the grid height
+        # AFTER this method ran, and the deferred singleShot(0) sync can fire
+        # before the pending LayoutRequest — leaving columns pinned to the
+        # stale viewport height until the next scroll.
+        grid_row.installEventFilter(self)
         grid_layout = QHBoxLayout(grid_row)
         grid_layout.setContentsMargins(0, 0, 0, 0)
         grid_layout.setSpacing(0)
@@ -367,6 +373,11 @@ class TimelineViewBase(QWidget):
     # ------------------------------------------------------------------
     # Resize — re-sync scrollbar appearance + push viewport
     # ------------------------------------------------------------------
+
+    def eventFilter(self, obj, event):
+        if obj is self._grid_row and event.type() == QEvent.Resize:
+            self._sync_scrollbar_appearance()
+        return super().eventFilter(obj, event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
