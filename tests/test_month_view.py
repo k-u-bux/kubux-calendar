@@ -83,6 +83,33 @@ def test_month_view_no_events(qapp):
         assert len(cell._event_widgets) == 0
 
 
+def test_month_view_events_sorted_all_day_first_chronological(qapp):
+    """All-day events first, then timed events chronologically per day."""
+    mv = MonthView()
+    mv.set_date(date(2026, 1, 15))
+    late = _mkevent(
+        datetime(2026, 1, 10, 14, 0, tzinfo=UTC),
+        datetime(2026, 1, 10, 15, 0, tzinfo=UTC),
+        summary="late",
+    )
+    all_day = _mkevent(
+        datetime(2026, 1, 10, tzinfo=UTC),
+        datetime(2026, 1, 11, tzinfo=UTC),
+        all_day=True, summary="all-day",
+    )
+    early = _mkevent(
+        datetime(2026, 1, 10, 9, 0, tzinfo=UTC),
+        datetime(2026, 1, 10, 9, 30, tzinfo=UTC),
+        summary="early",
+    )
+    # Deliberately unsorted input (store hands out UID-alphabetical order).
+    mv.set_events([late, all_day, early])
+
+    cell = _cell_for(mv, date(2026, 1, 10))
+    summaries = [w.event_data.summary for w in cell._event_widgets]
+    assert summaries == ["all-day", "early", "late"]
+
+
 def test_month_view_get_date_range(qapp):
     mv = MonthView()
     mv.set_date(date(2026, 1, 15))

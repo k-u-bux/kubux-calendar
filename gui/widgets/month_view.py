@@ -226,7 +226,12 @@ class MonthView(QWidget):
         for cell in self._cells:
             cell.clear_events()
 
-        for event in self._events:
+        # All-day events first, then timed events chronologically by start.
+        ordered = sorted(
+            self._events,
+            key=lambda e: (0 if is_all_day_event(e) else 1, to_local_datetime(e.start)),
+        )
+        for event in ordered:
             local_start = to_local_datetime(event.start)
             local_end = to_local_datetime(event.end)
 
