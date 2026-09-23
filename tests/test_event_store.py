@@ -874,6 +874,40 @@ def test_set_on_sync_status_callback(tmp_path):
     assert statuses[0] == (0, None)
 
 
+def test_sync_manager_status_callback_takes_no_arguments(tmp_path):
+    """The callback SyncManager is wired to must accept a zero-arg call.
+
+    Regression: EventStore._ensure_sync_manager wires _notify_sync_status —
+    the store's "recompute and notify" trigger, which takes no arguments —
+    into SyncManager's on_sync_status.  That slot used to be declared as
+    Callable[[int, Optional[datetime]], None] and called with the manager's
+    own pending_count()/last_sync_time, so the call raised TypeError.
+    task_dispatch swallows exceptions from task-completion callbacks, so the
+    only symptom was a log line — but the raise also unwound the rest of
+    _on_connect_all_done (_enqueue_refresh) and _on_refresh_done
+    (_dispatch_next_if_idle), silently skipping them on every sync cycle.
+
+    The store owns the (pending_count, last_sync_time) pair: it exposes both
+    via get_pending_sync_count()/get_last_sync_time().  SyncManager only
+    reports "status changed".
+    """
+    cfg = _make_config_path(tmp_path)
+    store = EventStore(cfg)
+
+    seen = []
+    store.set_on_sync_status_callback(
+        lambda pending, last: seen.append((pending, last))
+    )
+
+    sm = store._ensure_sync_manager()
+    on_sync_status = sm._on_sync_status
+    assert on_sync_status is not None  # the store always wires it
+
+    on_sync_status()  # exactly how SyncManager reports status
+
+    assert seen == [(0, None)]
+
+
 # ----------------------------------------------------------------------
 # load_events_for_source
 # ----------------------------------------------------------------------

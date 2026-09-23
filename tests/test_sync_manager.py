@@ -194,7 +194,6 @@ def test_properties():
     assert sm.is_range_covered(datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 2, tzinfo=UTC)) is False
     assert sm.source_last_success("src1") is None
     assert sm.source_last_attempt("src1") is None
-    assert sm.pending_count() == 0
     assert sm.get_calendar_info("src1") is None
 
 
@@ -207,14 +206,12 @@ def test_properties_with_values():
     sm._source_last_success["src1"] = now
     sm._source_last_attempt["src1"] = now
     sm._calendars["src1"] = MagicMock()
-    sm._fs.load_pending = MagicMock(return_value=[MagicMock()])
 
     assert sm.last_sync_time == now
     assert sm.is_range_covered(now - timedelta(days=30), now + timedelta(days=30)) is True
     assert sm.is_range_covered(now - timedelta(days=200), now - timedelta(days=150)) is False
     assert sm.source_last_success("src1") == now
     assert sm.source_last_attempt("src1") == now
-    assert sm.pending_count() == 1
     assert sm.get_calendar_info("src1") is not None
 
 

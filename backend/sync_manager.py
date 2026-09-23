@@ -53,7 +53,7 @@ class SyncManager:
         sources: dict[str, CalendarSource],
         config,                          # backend.config.Config
         on_change: Optional[Callable[[], None]] = None,
-        on_sync_status: Optional[Callable[[int, Optional[datetime]], None]] = None,
+        on_sync_status: Optional[Callable[[], None]] = None,
     ):
         self._fs = fs
         self._index = index
@@ -161,9 +161,6 @@ class SyncManager:
             return True
         # Sync succeeded but too long ago
         return (datetime.now() - last_success).total_seconds() > threshold
-
-    def pending_count(self) -> int:
-        return len(self._fs.load_pending())
 
     def get_calendar_info(self, source_id: str) -> Optional[CalendarInfo]:
         return self._calendars.get(source_id)
@@ -434,7 +431,7 @@ class SyncManager:
         if self._on_change:
             self._on_change()
         if self._on_sync_status:
-            self._on_sync_status(self.pending_count(), self._last_sync_time)
+            self._on_sync_status()
 
         # Now enqueue a full refresh to actually fetch events.
         # The queue will serialise this with any already-pending refresh.
@@ -786,7 +783,7 @@ class SyncManager:
         if self._on_change:
             self._on_change()
         if self._on_sync_status:
-            self._on_sync_status(self.pending_count(), self._last_sync_time)
+            self._on_sync_status()
 
         # Dispatch the next queued refresh
         self._dispatch_next_if_idle()
@@ -1009,7 +1006,7 @@ class SyncManager:
         if self._on_change:
             self._on_change()
         if self._on_sync_status:
-            self._on_sync_status(self.pending_count(), self._last_sync_time)
+            self._on_sync_status()
 
     def _confirm_pending_uids(self) -> None:
         """Drop pending ops whose change has been confirmed by a refresh.
