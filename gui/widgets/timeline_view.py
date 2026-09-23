@@ -11,6 +11,7 @@ Subclasses provide day columns and optional header via hooks.
 """
 
 from datetime import datetime, date, time as dt_time, timedelta
+from itertools import chain
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollBar, QLabel,
@@ -42,6 +43,32 @@ def _get_time_column_width() -> int:
 
 
 _WHEEL_MULTIPLIER = 4
+
+# Labelled hours.  Hour 0 is never shown, and 24 is the same instant as 0,
+# so the strip spans 1..23 and LO + HI == 24 is the pivot sum.
+_LABEL_HOURS = range(1, 24)
+_LABEL_LO, _LABEL_HI = _LABEL_HOURS.start, _LABEL_HOURS.stop - 1
+
+
+def _interleaved_hours(pivot: int) -> list[int]:
+    """Hour-label order: outermost pairs first, ending flush against *pivot*.
+
+        _interleaved_hours(12) -> 1, 23, 2, 22, …, 11, 13, 12
+        _interleaved_hours(18) -> 1, 23, …, 5, 19, 6, 7, …, 17, 18
+
+    Sibling widgets paint in the order they were raised, so the last entry
+    ends up on top: where labels overlap, the hour nearest *pivot* (the hour
+    at the viewport centre) is the legible one.  *pivot* is clamped to the
+    labelled range, which folds the two midnights onto the ends.
+    """
+    pivot = max(_LABEL_LO, min(_LABEL_HI, pivot))
+    m = min(pivot, _LABEL_LO + _LABEL_HI - pivot)     # extent of the pairing phase
+    outward = chain.from_iterable(
+        zip(range(_LABEL_LO, m), range(_LABEL_HI, _LABEL_HI - m + 1, -1))
+    )
+    middle = range(m, _LABEL_LO + _LABEL_HI - m + 1)
+    ring = middle if 2 * pivot >= _LABEL_LO + _LABEL_HI else reversed(middle)
+    return [*outward, *ring]
 
 
 class TimelineViewBase(QWidget):
@@ -241,6 +268,11 @@ class TimelineViewBase(QWidget):
     # ------------------------------------------------------------------
 
     def _create_time_labels(self, time_col_width: int) -> QWidget:
+        """Build every hour label once, in natural order.
+
+        Stacking order is *not* decided here: it depends on the scroll
+        position, so _position_time_labels re-applies it on every scroll.
+        """
         colors = get_colors_config()
 
         container = QWidget()
@@ -248,20 +280,11 @@ class TimelineViewBase(QWidget):
         container.setStyleSheet(f"background: {colors.header_background};")
 
         self._time_label_widgets: list[tuple[int, QLabel]] = []  # (hour, label)
-        # Interleaved order: 1, 23, 2, 22, 3, 21, … so overlapping labels
-        # show the hours closest to the visible center on top.
-        for i in range(12):
-            hour = i + 1
+        for hour in _LABEL_HOURS:
             lbl = QLabel(f"{hour:02d}:00", container)
             lbl.setAlignment(Qt.AlignCenter)
             lbl.hide()
             self._time_label_widgets.append((hour, lbl))
-            if hour < 12:
-                hour_opp = 24 - hour
-                lbl = QLabel(f"{hour_opp:02d}:00", container)
-                lbl.setAlignment(Qt.AlignCenter)
-                lbl.hide()
-                self._time_label_widgets.append((hour_opp, lbl))
 
         return container
 
@@ -296,6 +319,15 @@ class TimelineViewBase(QWidget):
             label_y = y_px - label_h // 2
             lbl.setGeometry(0, label_y, label_w, label_h)
             lbl.show()
+
+        # Where labels overlap, the hour at the viewport centre must be the
+        # readable one.  Siblings paint in raise order, so raise them
+        # farthest-from-centre first and centre-most last.  The mapper is
+        # the same source of truth the columns use for y → hour, so this
+        # holds for whichever axis is active.
+        centre_hour = int(round(self._mapper.y_to_hour(0.5, vh, ratio)))
+        for hour in _interleaved_hours(centre_hour):
+            labels_by_hour[hour].raise_()
 
     # ------------------------------------------------------------------
     # Scroll position (shared)
