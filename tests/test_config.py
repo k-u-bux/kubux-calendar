@@ -420,3 +420,22 @@ outdate_threshold = 3600
 """)
     config = Config.load(cfg)
     assert config.outdate_threshold == 3600
+
+
+def test_default_calendar_unset(tmp_path):
+    cfg = _write_config(tmp_path, """
+[General]
+password_program = "/usr/bin/pass"
+""")
+    config = Config.load(cfg)
+    assert config.default_calendar == ""
+
+
+def test_default_calendar_from_config(tmp_path):
+    cfg = _write_config(tmp_path, """
+[General]
+password_program = "/usr/bin/pass"
+default_calendar = "Nextcloud.Personal/private"
+""")
+    config = Config.load(cfg)
+    assert config.default_calendar == "Nextcloud.Personal/private"

@@ -137,3 +137,98 @@ def test_edit_dialog_title_label_without_placeholder(qapp, tmp_path):
     with patch("gui.event_dialog.QMessageBox"):
         dlg = EventDialog(store, event_data=_make_event_view())
     assert dlg.windowTitle() == "Edit: Dentist"
+
+
+# ----------------------------------------------------------------------
+# New-event calendar default: MainWindow passes the config's
+# [General] default_calendar (read at startup, in memory); the dialog
+# never persists it and stops needing it once the session used one
+# ----------------------------------------------------------------------
+
+URLAUB = "caldav:Nextcloud.Primary:urlaub"
+BERUFLICH = "caldav:Nextcloud.Primary:beruflich"
+
+
+def _two_calendar_store(tmp_path):
+    urlaub = CalendarSource(id=URLAUB, name="Urlaub", source_type="caldav")
+    beruf = CalendarSource(id=BERUFLICH, name="beruflich", source_type="caldav")
+    return _make_store(tmp_path, writable=[urlaub, beruf])
+
+
+def _dialog_state_file(tmp_path):
+    return tmp_path / "dialog_state.json"
+
+
+def _remember(state_file, calendar_id):
+    import json
+    state_file.write_text(json.dumps({"last_calendar_id": calendar_id}))
+
+
+def _new_dialog(store, startup_default=None, event_data=None):
+    with patch("gui.event_dialog.QMessageBox"):
+        return EventDialog(store, event_data=event_data,
+                           initial_datetime=datetime(2026, 1, 1, 10, 0),
+                           startup_default_calendar_id=startup_default)
+
+
+class TestStartupDefaultCalendar:
+    """The config value MainWindow resolved at startup (memory only)."""
+
+    def test_startup_default_is_selected(self, qapp, tmp_path):
+        dlg = _new_dialog(_two_calendar_store(tmp_path), BERUFLICH)
+        assert dlg._calendar_combo.currentData() == BERUFLICH
+
+    def test_startup_default_beats_remembered_calendar(self, qapp, tmp_path):
+        """Previous runs remembered urlaub; the config decides at startup."""
+        _remember(_dialog_state_file(tmp_path), URLAUB)
+        dlg = _new_dialog(_two_calendar_store(tmp_path), BERUFLICH)
+        assert dlg._calendar_combo.currentData() == BERUFLICH
+
+    def test_remembered_calendar_used_without_startup_default(self, qapp, tmp_path):
+        _remember(_dialog_state_file(tmp_path), BERUFLICH)
+        dlg = _new_dialog(_two_calendar_store(tmp_path), None)
+        assert dlg._calendar_combo.currentData() == BERUFLICH
+
+    def test_first_entry_when_nothing_is_known(self, qapp, tmp_path):
+        dlg = _new_dialog(_two_calendar_store(tmp_path), None)
+        assert dlg._calendar_combo.currentData() == URLAUB
+
+    def test_startup_default_is_not_persisted(self, qapp, tmp_path):
+        """dialog_state.json belongs to the session, not to the config."""
+        dlg = _new_dialog(_two_calendar_store(tmp_path), BERUFLICH)
+        assert dlg._dialog_state.get("last_calendar_id") is None
+        dlg.close()
+        text = _dialog_state_file(tmp_path).read_text()
+        assert "last_calendar_id" not in text
+
+    def test_edit_dialog_ignores_startup_default(self, qapp, tmp_path):
+        ev = _make_event_view()
+        ev.source = CalendarSource(id=URLAUB, name="Urlaub", source_type="caldav")
+        dlg = _new_dialog(_two_calendar_store(tmp_path), BERUFLICH, event_data=ev)
+        assert dlg._calendar_combo.currentData() == URLAUB
+
+
+class TestSessionCalendarUse:
+    """The dialog reports when the session itself picked a calendar."""
+
+    def test_not_used_before_anything_happens(self, qapp, tmp_path):
+        assert _new_dialog(_two_calendar_store(tmp_path), BERUFLICH) \
+            .calendar_used_this_session is False
+
+    def test_new_event_marks_it_used_and_persists(self, qapp, tmp_path):
+        store = _two_calendar_store(tmp_path)
+        dlg = _new_dialog(store, BERUFLICH)
+        dlg._title_edit.setText("Meeting")
+        dlg._on_save()
+        assert dlg.calendar_used_this_session is True
+        dlg.close()
+        assert BERUFLICH in _dialog_state_file(tmp_path).read_text()
+
+    def test_edit_same_calendar_does_not_mark_it_used(self, qapp, tmp_path):
+        ev = _make_event_view()
+        ev.source = CalendarSource(id=URLAUB, name="Urlaub", source_type="caldav")
+        store = _two_calendar_store(tmp_path)
+        store.update_event = lambda cal_event: True
+        dlg = _new_dialog(store, None, event_data=ev)
+        dlg._on_save()
+        assert dlg.calendar_used_this_session is False

@@ -23,6 +23,11 @@ When ``--calendar`` is given the event is queued non-interactively
 (no editor window).  ``--calendar`` takes ``<account>/<calendar>`` where
 *account* is a ``[Nextcloud.<Name>]`` config section and *calendar* is a
 calendar id/name on that account.
+
+In the editor, the pre-selected calendar is ``[General] default_calendar``
+from the config (source id, ``<account>/<calendar>``, or a bare calendar
+name) — read at launch, since this tool is a one-shot process; unset, the
+first writable calendar is used.
 """
 
 from __future__ import annotations
@@ -39,6 +44,7 @@ from backend.config import Config
 from backend.event import ImmutableEvent, _rebuild_ical
 from backend.event_fs import EventFS, PendingOp
 from backend.network_ops import caldav_connect, caldav_list_calendars
+from library.calendar_ref import resolve_calendar_id
 
 try:
     from PySide6.QtWidgets import (
@@ -179,6 +185,18 @@ def _writable_calendar_sources(config: Config) -> list:
     return store.get_writable_calendars()
 
 
+def default_calendar_id(config: Config, calendars: list) -> Optional[str]:
+    """Calendar the import editor pre-selects — ``[General] default_calendar``.
+
+    Read per launch: this tool is a one-shot process, so there is no session
+    default to remember.  Returns a calendar id, or ``None`` when the option
+    is unset or does not resolve (an unknown or ambiguous name is logged as a
+    warning, and the editor keeps the first calendar rather than silently
+    importing into the wrong one).
+    """
+    return resolve_calendar_id(getattr(config, "default_calendar", ""), calendars)
+
+
 # ============================================================ editor dialog
 
 if _QT_OK:
@@ -205,6 +223,7 @@ if _QT_OK:
             self.setAttribute(Qt.WA_DeleteOnClose)
             self.setMinimumSize(420, 480)
             self._build_ui()
+            self._select_default_calendar()
             self._populate()
 
         def _build_ui(self):
@@ -265,6 +284,21 @@ if _QT_OK:
             save.clicked.connect(self._on_queue)
             buttons.addWidget(save)
             layout.addLayout(buttons)
+
+        def _select_default_calendar(self):
+            """Pre-select ``[General] default_calendar`` from the config.
+
+            The editor otherwise starts on the first writable calendar, whose
+            position is arbitrary (hash-ordered), so a configured default is
+            what makes the import target predictable.
+            """
+            calendar_id = default_calendar_id(self._config, self._calendars)
+            if not calendar_id:
+                return
+            for i in range(self._calendar_combo.count()):
+                if self._calendar_combo.itemData(i) == calendar_id:
+                    self._calendar_combo.setCurrentIndex(i)
+                    break
 
         def _tz_for(self, tzid: Optional[str]):
             """Return a pytz timezone for *tzid*; local for Floating/None."""

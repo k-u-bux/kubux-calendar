@@ -55,6 +55,8 @@ def main():
         print("""
 [General]
 password_program = /usr/bin/pass
+# Calendar the event editor pre-selects (id, <account>/<calendar>, or name):
+# default_calendar = Nextcloud.Primary/beruflich
 
 [Nextcloud.Primary]
 url = https://nextcloud.example.com

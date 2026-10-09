@@ -117,6 +117,7 @@ The configuration file is located at:
 ```toml
 [General]
 password_program = "/usr/bin/pass"
+default_calendar = "Nextcloud.Primary/beruflich"
 
 [Layout]
 hour_height = 60
@@ -157,6 +158,32 @@ color = "#ff6b6b"
 | `state_file` | `~/.local/state/kubux-calendar/state.json` | Path to state file |
 | `log_level` | warn | Log threshold: debug, info, warn, error, silent |
 | `timezone` | (system) | IANA timezone name (e.g. `Europe/Berlin`) |
+| `default_calendar` | (unset) | Calendar an event editor pre-selects — see below |
+
+##### `default_calendar`
+
+Which calendar a **new** event starts on.  It is read **at startup** (for
+the GUI, once per run; for `kubux-calendar-attach`, at every launch — a
+one-shot tool) and kept in memory only: the config decides which calendar
+the editor starts on, and nothing else.  It is never written to the UI state
+file, and while the GUI is running new events keep defaulting to the
+calendar you used last, so editing this option takes effect on the next
+start, not immediately.  Accepted forms, resolved against the cached
+calendars — no server contact:
+
+| Form | Example |
+|------|---------|
+| Calendar source id | `caldav:Nextcloud.Primary:beruflich`, `ics:Holidays` |
+| `<account>/<calendar>` | `Nextcloud.Primary/beruflich` (the `Nextcloud.` prefix is optional) |
+| Calendar name or id | `beruflich` (case-insensitive; must be unambiguous) |
+
+An unset option leaves the previous behaviour: the GUI keeps the calendar
+last used (also across restarts, in `dialog_state.json` — written by the
+dialog itself, never by this option), the import window takes the first
+writable calendar.  An unknown or ambiguous name is **not** guessed — it is
+logged as a warning and treated as if the option were unset.  Editing an
+existing event never moves it: the dropdown then shows that event's own
+calendar.
 
 #### Layout Section
 
@@ -325,7 +352,11 @@ menu entry).
 When you open an `.ics` attachment it parses the event, opens a small
 event-editor window prefilled with its contents (title, location, dates,
 description), lets you pick which Nextcloud calendar it should go into, and
-on confirmation queues it for sync.
+on confirmation queues it for sync.  The calendar dropdown starts on the
+configured `[General] default_calendar` (see
+[Configuration](#configuration)); with that option unset the selected entry
+is arbitrary, so set it if you import invites regularly.  Neither is read
+from the invite: an invitation almost never names a calendar of yours.
 
 ```bash
 kubux-calendar-attach event.ics            # open editor, pick calendar

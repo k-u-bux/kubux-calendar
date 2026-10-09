@@ -74,12 +74,22 @@ class EventDialog(QWidget):
     closed = Signal()
     
     def __init__(self, event_store: EventStore, event_data: Optional[EventData] = None,
-                 initial_datetime: Optional[datetime] = None, parent=None):
+                 initial_datetime: Optional[datetime] = None, parent=None,
+                 startup_default_calendar_id: Optional[str] = None):
+        """*startup_default_calendar_id*: calendar a **new** event starts on.
+
+        Supplied by MainWindow from ``[General] default_calendar`` (read at
+        startup, in memory).  It takes precedence over the remembered
+        last-used calendar until this run has used one itself; the dialog
+        never persists it.
+        """
         super().__init__(parent)
         self.event_store = event_store
         self.event_data = event_data
         self.is_new = event_data is None
         self.initial_datetime = initial_datetime or datetime.now()
+        self.startup_default_calendar_id = startup_default_calendar_id
+        self.calendar_used_this_session = False
         self._display_tzid: Optional[str] = None  # tz the time fields currently display
         self._ignore_tz_change = False
         
@@ -135,6 +145,15 @@ class EventDialog(QWidget):
         except Exception as e:
             debug_log(Level.ERROR, f"Error saving dialog state: {e}")
     
+    def _remember_calendar(self, calendar_id: str):
+        """Remember the calendar a new event should start on.
+
+        Written to the dialog state (it survives restarts) and flags this run
+        as having used a calendar, which retires the config's startup default.
+        """
+        self._dialog_state["last_calendar_id"] = calendar_id
+        self.calendar_used_this_session = True
+    
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
@@ -184,8 +203,11 @@ class EventDialog(QWidget):
             form.addRow(self.event_store.config.labels.field_calendar, self._calendar_combo)
             
             if self.is_new:
-                # Set last used calendar as default
-                last_calendar_id = self._dialog_state.get("last_calendar_id")
+                # New event: the config's [General] default_calendar decides
+                # at startup (passed in by MainWindow), otherwise the calendar
+                # used last — nothing is written here in either case.
+                last_calendar_id = (self.startup_default_calendar_id
+                                    or self._dialog_state.get("last_calendar_id"))
                 if last_calendar_id:
                     for i in range(self._calendar_combo.count()):
                         if self._calendar_combo.itemData(i) == last_calendar_id:
@@ -466,7 +488,7 @@ class EventDialog(QWidget):
             )
             if new_event:
                 # Save last used calendar
-                self._dialog_state["last_calendar_id"] = calendar_id
+                self._remember_calendar(calendar_id)
                 self.event_saved.emit(new_event)
                 self.close()
             else:
@@ -495,7 +517,7 @@ class EventDialog(QWidget):
                 moved_event = self.event_store.move_event(cal_event, selected_calendar_id)
                 if moved_event:
                     # Save last used calendar for new events
-                    self._dialog_state["last_calendar_id"] = selected_calendar_id
+                    self._remember_calendar(selected_calendar_id)
                     self.event_saved.emit(moved_event)
                     self.close()
 

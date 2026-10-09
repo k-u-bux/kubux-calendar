@@ -35,6 +35,7 @@ from .widgets.config_state import (
 )
 from .sidebar import CalendarSidebar
 from .event_dialog import EventDialog
+from library.calendar_ref import resolve_calendar_id
 from library.log import debug_log, Level
 
 
@@ -109,6 +110,15 @@ class MainWindow(QMainWindow):
 
         self.config = config
         self._state_file = config.state_file
+
+        # [General] default_calendar is read once, at startup: while the app
+        # runs, a new event defaults to the calendar used last in this
+        # session, so a config change must not move it.  Kept in memory only
+        # — the dialog state file never learns about it.
+        if not hasattr(self, "_startup_default_calendar_ref"):
+            self._startup_default_calendar_ref = (config.default_calendar or "").strip()
+            self._startup_default_calendar_done = False
+            self._startup_default_calendar_id: Optional[str] = None
 
         set_timezone(config.timezone)
         set_layout_config(config.layout)
@@ -500,6 +510,9 @@ class MainWindow(QMainWindow):
             self._sidebar.refresh()
             self._sidebar.update_tooltips()
             QApplication.processEvents()  # Show sidebar immediately
+
+            # Sources are known now: read the configured default calendar.
+            self._resolve_startup_default_calendar()
             
             # Note: Don't restore scroll position here - it's done in _load_events_progressively
             # AFTER events are loaded and displayed
@@ -511,7 +524,29 @@ class MainWindow(QMainWindow):
             self._statusbar.showMessage("No cached data - syncing from servers...")
             # No cached data - start network sync immediately
             QTimer.singleShot(0, self._do_async_network_refresh)
-    
+
+    def _resolve_startup_default_calendar(self):
+        """Resolve the new-event default calendar from the config, once per run.
+
+        ``[General] default_calendar`` is read at startup and kept **in
+        memory**: it decides which calendar a new event starts on until this
+        session uses one itself, nothing is persisted.  Retried from
+        ``_open_event_dialog`` when no sources were cached yet at startup, so
+        it still applies on a first run once the calendars are fetched.
+        """
+        if self._startup_default_calendar_done:
+            return
+        if not self._startup_default_calendar_ref:
+            self._startup_default_calendar_done = True
+            return
+
+        calendars = self.event_store.get_writable_calendars()
+        if not calendars:
+            return  # nothing cached yet — try again when a new event is created
+        self._startup_default_calendar_done = True
+        self._startup_default_calendar_id = resolve_calendar_id(
+            self._startup_default_calendar_ref, calendars)
+
     def _load_events_progressively(self):
         """Load events from sources progressively, visible sources first.
         
@@ -961,6 +996,12 @@ class MainWindow(QMainWindow):
         """Handle event dialog close - check if we should apply pending config."""
         if dialog in self._event_dialogs:
             self._event_dialogs.remove(dialog)
+
+        # The session has used a calendar: it now decides what a new event
+        # starts on, so the config's startup default steps back (it was read
+        # once at startup and is not re-read).
+        if getattr(dialog, "calendar_used_this_session", False):
+            self._startup_default_calendar_id = None
         
         # If all dialogs closed and we have pending config, apply it
         if not self._event_dialogs and hasattr(self, '_pending_config') and self._pending_config:
@@ -1120,10 +1161,15 @@ class MainWindow(QMainWindow):
         initial_datetime: Optional[datetime] = None
     ):
         """Open an event dialog window."""
+        if event is None:
+            # New event: make sure the configured default calendar has been
+            # read (it may have been deferred — nothing cached at startup).
+            self._resolve_startup_default_calendar()
         dialog = EventDialog(
             event_store=self.event_store,
             event_data=event,
-            initial_datetime=initial_datetime
+            initial_datetime=initial_datetime,
+            startup_default_calendar_id=self._startup_default_calendar_id,
         )
         
         dialog.event_saved.connect(self._on_event_saved)

@@ -254,6 +254,7 @@ class Config:
     refresh_interval: int = 300  # Auto-refresh interval in seconds (0 to disable)
     outdate_threshold: int = 7200  # Seconds since last successful sync before marking events as unconfirmed (default 2 hours)
     timezone: str = field(default_factory=_system_timezone_name)  # overridden in load()
+    default_calendar: str = ""  # startup default calendar for new events / imports ('' = none)
     layout: LayoutConfig = field(default_factory=LayoutConfig)
     bindings: BindingsConfig = field(default_factory=BindingsConfig)
     localization: LocalizationConfig = field(default_factory=LocalizationConfig)
@@ -294,6 +295,7 @@ class Config:
         refresh_interval = general.get('refresh_interval', 300)  # Default 5 minutes
         outdate_threshold = general.get('outdate_threshold', 7200)  # Default 2 hours
         timezone = general.get('timezone', _system_timezone_name())
+        default_calendar = general.get('default_calendar', '')
 
         state_file_str = general.get('state_file', str(cls.get_default_state_path()))
         state_file = Path(os.path.expanduser(state_file_str))
@@ -494,6 +496,7 @@ class Config:
             refresh_interval=refresh_interval,
             outdate_threshold=outdate_threshold,
             timezone=timezone,
+            default_calendar=default_calendar,
             layout=layout,
             bindings=bindings,
             localization=localization,
