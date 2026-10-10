@@ -173,6 +173,33 @@ class TestRun:
             with pytest.raises(cs.UsageError, match="not writable"):
                 cs.run(cfg, "Primary", "beruflich", SAMPLE_ICAL)
 
+    def test_normalises_windows_zone_keys_before_upload(self):
+        """A Windows/Exchange key must not reach the server verbatim.
+
+        Stored as it is, every client without a Windows mapping mis-reads the
+        event's time — the document is normalised on the way out.
+        """
+        cal_info = make_calendar("beruflich", writable=True)
+        cfg = make_config([("Primary",)])
+        ical = SAMPLE_ICAL.replace(
+            "DTSTART:20260101T100000Z",
+            "DTSTART;TZID=W. Europe Standard Time:20260101T100000",
+        ).replace(
+            "DTEND:20260101T110000Z",
+            "DTEND;TZID=W. Europe Standard Time:20260101T110000",
+        )
+        assert "W. Europe Standard Time" in ical
+
+        with mock.patch.object(cs, "caldav_connect"), \
+             mock.patch.object(cs, "caldav_list_calendars", return_value=[cal_info]), \
+             mock.patch.object(cs, "caldav_save_event", return_value=True) as save:
+            cs.run(cfg, "Primary", "beruflich", ical)
+
+        payload = save.call_args[0][1]
+        assert "W. Europe Standard Time" not in payload
+        assert "DTSTART;TZID=Europe/Berlin:20260101T100000" in payload
+        assert "DTEND;TZID=Europe/Berlin:20260101T110000" in payload
+
     def test_save_failure_raises(self):
         cal_info = make_calendar("beruflich", writable=True)
         cfg = make_config([("Primary",)])

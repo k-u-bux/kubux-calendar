@@ -283,6 +283,38 @@ class TestAttachDialogTz:
         finally:
             d.close()
 
+    def test_windows_tzid_event_maps_to_the_standard_name(self, qapp):
+        """An Outlook invite exposes Europe/Berlin, not the Windows key.
+
+        The tool could not do anything with "W. Europe Standard Time": pytz has
+        no such zone, so the editor showed the bare key and queuing it raised.
+        """
+        ics = ("BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//t//\n"
+               "BEGIN:VTIMEZONE\nTZID:W. Europe Standard Time\n"
+               "BEGIN:STANDARD\nDTSTART:16011028T030000\n"
+               "RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10\n"
+               "TZOFFSETFROM:+0200\nTZOFFSETTO:+0100\nEND:STANDARD\n"
+               "BEGIN:DAYLIGHT\nDTSTART:16010325T020000\n"
+               "RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=3\n"
+               "TZOFFSETFROM:+0100\nTZOFFSETTO:+0200\nEND:DAYLIGHT\n"
+               "END:VTIMEZONE\n"
+               "BEGIN:VEVENT\nUID:win-1\nSUMMARY:Outlook\n"
+               "DTSTART;TZID=W. Europe Standard Time:20260810T090000\n"
+               "DTEND;TZID=W. Europe Standard Time:20260810T100000\n"
+               "END:VEVENT\nEND:VCALENDAR\n")
+        d = _make_dialog(qapp, ics)
+        try:
+            assert d._display_tzid == "Europe/Berlin"
+            assert d._tz_combo.currentText() == "Europe/Berlin"
+            assert d._start_edit.dateTime().toPython().strftime("%H:%M") == "09:00"
+            edits = d._collect_edits()
+            assert edits["start"].tzinfo.zone == "Europe/Berlin"
+            # 09:00 CEST == 07:00 UTC.
+            assert edits["start"].astimezone(pytz.UTC).replace(tzinfo=None) == \
+                datetime(2026, 8, 10, 7, 0)
+        finally:
+            d.close()
+
     def test_utc_event_shows_and_saves_utc(self, qapp):
         ics = COMMON_ICS.replace("__START__", "20260810T090000Z") \
                         .replace("__END__", "20260810T100000Z")

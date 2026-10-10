@@ -16,6 +16,7 @@ from icalendar import Calendar as ICalCalendar, Event as ICalEvent
 import uuid as _uuid
 from library.log import debug_log, Level
 from library.timezone_utils import ensure_tz, get_local_timezone
+from library.windows_tz import standard_timezone_name
 
 
 # Shared sync window constants (used by EventStore and SyncManager).
@@ -163,7 +164,11 @@ def _parse_vevent(ical_data: str, config_tz: Optional[pytz.BaseTzInfo] = None) -
     if dtstart_prop is not None and hasattr(dtstart_prop, 'params'):
         params = dtstart_prop.params
         if "TZID" in params:
-            tzid = str(params["TZID"])
+            # The exposed tzid is the standard name: a Windows/Exchange key
+            # ("W. Europe Standard Time") means nothing to a tz database, to
+            # the timezone combo, or to another calendar application.  The
+            # stored iCalendar text is not touched — only what callers see.
+            tzid = standard_timezone_name(str(params["TZID"]))
         else:
             dt = dtstart_prop.dt
             if isinstance(dt, datetime) and dt.tzinfo is not None:
@@ -369,7 +374,8 @@ class ImmutableEvent:
 
     @property
     def tzid(self) -> Optional[str]:
-        """Original TZID from DTSTART, or None if floating, or 'UTC'."""
+        """TZID of DTSTART as its standard name, or None if floating, or
+        'UTC'."""
         return self._cache.get("tzid")
 
     # --- time properties ---------------------------------------------------
@@ -417,7 +423,8 @@ class ImmutableEvent:
 
         Timezone rules:
         - UTC events → keep as UTC
-        - TZID events → keep original TZID
+        - TZID events → keep the zone (a Windows/Exchange key is mapped to its
+          standard name)
         - Floating events → interpreted in *config_tz* for display/comparison
 
         The original *ical_text* is stored verbatim — floating times are

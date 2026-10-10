@@ -10,6 +10,7 @@ import time as _time
 import pytz
 from typing import Optional, Union
 from library.log import debug_log, Level
+from library.windows_tz import timezone_for
 
 
 def _system_timezone_name() -> str:
@@ -62,7 +63,11 @@ def ensure_tz(
 
     - If *dt* is a :class:`date` (not a :class:`datetime`), combine with midnight.
     - If *dt* is already aware, return as-is.
-    - If *tz_or_id* is a string, interpret as an IANA timezone name.
+    - If *tz_or_id* is a string, interpret as a timezone name.  A
+      Windows/Exchange key ("W. Europe Standard Time") is not a tz database
+      name; it is mapped to its standard one first (library/windows_tz.py).
+      An id that resolves to nothing falls through to *default* and is logged
+      as a warning — never silently assumed to be UTC.
     - If *tz_or_id* is a ``pytz.BaseTzInfo``, use directly.
     - If *tz_or_id* is *None*, use *default* (which itself defaults to UTC).
     """
@@ -71,10 +76,9 @@ def ensure_tz(
     if dt.tzinfo is not None:
         return dt
     if isinstance(tz_or_id, str):
-        try:
-            return pytz.timezone(tz_or_id).localize(dt)
-        except Exception:
-            pass
+        tz_from_id = timezone_for(tz_or_id)
+        if tz_from_id is not None:
+            return tz_from_id.localize(dt)
     tz = tz_or_id if isinstance(tz_or_id, pytz.BaseTzInfo) else (default or pytz.UTC)
     return tz.localize(dt)
 

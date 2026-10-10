@@ -31,6 +31,7 @@ from backend.network_ops import (
     caldav_list_calendars,
     caldav_save_event,
 )
+from library.windows_tz import standardize_ics_timezones
 
 
 class UsageError(Exception):
@@ -172,6 +173,10 @@ def run(config: Config, account_name: str, calendar_query: str,
 
     Returns a human-readable success message.
     """
+    # A Windows/Exchange zone key would be stored on the server verbatim and
+    # then mis-read by every client without a Windows mapping — normalise the
+    # document on its way out.
+    ical_text = standardize_ics_timezones(ical_text)
     account = resolve_account(config, account_name)
     password = account.get_password(config.password_program)
     session = caldav_connect(account.url, account.username, password,

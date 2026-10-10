@@ -45,6 +45,7 @@ from backend.event import ImmutableEvent, _rebuild_ical
 from backend.event_fs import EventFS, PendingOp
 from backend.network_ops import caldav_connect, caldav_list_calendars
 from library.calendar_ref import resolve_calendar_id
+from library.windows_tz import standard_timezone_name, standardize_ics_timezones
 
 try:
     from PySide6.QtWidgets import (
@@ -119,6 +120,10 @@ def build_pending_op(source_id: str, base_ical: str, uid: str,
         ical_data = _rebuild_ical(base_ical, **edits)
     else:
         ical_data = base_ical
+    # Whatever is queued is pushed to the server as it is, so a
+    # Windows/Exchange zone key must not survive this point: stored verbatim it
+    # would be mis-read by every client that has no Windows mapping.
+    ical_data = standardize_ics_timezones(ical_data)
     return PendingOp(uid=uid, source_id=source_id, operation="create",
                      ical_data=ical_data)
 
@@ -301,12 +306,15 @@ if _QT_OK:
                     break
 
         def _tz_for(self, tzid: Optional[str]):
-            """Return a pytz timezone for *tzid*; local for Floating/None."""
+            """Return a pytz timezone for *tzid*; local for Floating/None.
+
+            A Windows/Exchange key is mapped to its standard name first, so an
+            Outlook invite resolves like any other event."""
             if not tzid or tzid == FLOATING_LABEL:
                 return self._config_tz
             if tzid == "UTC":
                 return pytz.UTC
-            return pytz.timezone(tzid)
+            return pytz.timezone(standard_timezone_name(tzid))
 
         def _set_tz_combo(self, tzid: Optional[str]):
             """Make the combo show *tzid* (None => Floating)."""
