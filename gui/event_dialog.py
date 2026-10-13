@@ -23,9 +23,8 @@ from backend import EventStore, EventView, RecurrenceRule
 
 # EventView is what get_events() and create_event() return
 EventData = EventView
-from library.timezone_utils import ensure_tz
+from library.timezone_utils import ensure_tz, DATETIME_FORMAT, DATE_FORMAT
 from library.log import debug_log, Level
-from library.datetime_formats import DATETIME_FORMAT, DATE_FORMAT
 from .widgets.recurrence_widget import RecurrenceWidget
 
 

@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import QDateTime
 
 from backend import RecurrenceRule
-from library.datetime_formats import DATETIME_FORMAT
+from library.timezone_utils import DATETIME_FORMAT
 
 
 class RecurrenceWidget(QGroupBox):

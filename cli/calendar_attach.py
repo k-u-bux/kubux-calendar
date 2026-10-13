@@ -45,7 +45,7 @@ from backend.event import ImmutableEvent, _rebuild_ical
 from backend.event_fs import EventFS, PendingOp
 from backend.network_ops import caldav_connect, caldav_list_calendars
 from library.calendar_ref import resolve_calendar_id
-from library.datetime_formats import DATETIME_FORMAT, DATE_FORMAT
+from library.timezone_utils import DATETIME_FORMAT, DATE_FORMAT
 from library.windows_tz import standard_timezone_name, standardize_ics_timezones
 
 try:

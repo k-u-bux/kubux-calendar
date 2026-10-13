@@ -3,6 +3,10 @@ Timezone utilities for Kubux Calendar.
 
 Provides unified timezone conversion functions for the entire application.
 All event times are stored in UTC and converted to local time for display.
+
+Also owns the date/time display formats shared by the dialogs' date-time
+fields (event dialog, its recurrence "until" field, attach editor): ISO
+date order and 24-hour time, independent of the user's locale.
 """
 
 from datetime import datetime, timedelta, date
@@ -11,6 +15,12 @@ import pytz
 from typing import Optional, Union
 from library.log import debug_log, Level
 from library.windows_tz import timezone_for
+
+
+# Qt display formats for QDateTimeEdit fields, e.g. "2027-03-09 14:05".
+DATETIME_FORMAT = "yyyy-MM-dd HH:mm"
+# Date only, shown while an event is all-day, e.g. "2027-03-09".
+DATE_FORMAT = "yyyy-MM-dd"
 
 
 def _system_timezone_name() -> str:
