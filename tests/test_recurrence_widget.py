@@ -159,3 +159,14 @@ def test_recurrence_widget_weekday_visibility_index_based(qapp):
     w._update_weekday_visibility()
     assert w._weekday_row.isHidden()
 
+
+# ----------------------------------------------------------------------
+# "Until" date format: ISO date + 24h time, like the dialog's start/end
+# ----------------------------------------------------------------------
+
+def test_until_edit_uses_iso_date_24h_format(qapp):
+    w = RecurrenceWidget()
+    assert w._until_edit.displayFormat() == "yyyy-MM-dd HH:mm"
+    w._until_edit.setDateTime(QDateTime(datetime(2027, 3, 9, 14, 5, 0)))
+    assert w._until_edit.text() == "2027-03-09 14:05"
+

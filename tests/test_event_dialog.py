@@ -232,3 +232,16 @@ class TestSessionCalendarUse:
         dlg = _new_dialog(store, None, event_data=ev)
         dlg._on_save()
         assert dlg.calendar_used_this_session is False
+
+
+# ----------------------------------------------------------------------
+# Recurrence "until" field must use the same date/time format as the
+# dialog's start/end lines (yyyy-MM-dd + 24h time)
+# ----------------------------------------------------------------------
+
+def test_recurrence_until_format_matches_start_end(qapp, tmp_path):
+    dlg = _new_dialog(_make_store(tmp_path))
+    until_edit = dlg._recurrence_widget._until_edit
+    assert dlg._start_edit.displayFormat() == "yyyy-MM-dd HH:mm"
+    assert until_edit.displayFormat() == dlg._start_edit.displayFormat()
+    assert until_edit.displayFormat() == dlg._end_edit.displayFormat()

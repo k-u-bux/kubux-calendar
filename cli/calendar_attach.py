@@ -45,6 +45,7 @@ from backend.event import ImmutableEvent, _rebuild_ical
 from backend.event_fs import EventFS, PendingOp
 from backend.network_ops import caldav_connect, caldav_list_calendars
 from library.calendar_ref import resolve_calendar_id
+from library.datetime_formats import DATETIME_FORMAT, DATE_FORMAT
 from library.windows_tz import standard_timezone_name, standardize_ics_timezones
 
 try:
@@ -248,12 +249,12 @@ if _QT_OK:
 
             self._start_edit = QDateTimeEdit()
             self._start_edit.setCalendarPopup(True)
-            self._start_edit.setDisplayFormat("yyyy-MM-dd HH:mm")
+            self._start_edit.setDisplayFormat(DATETIME_FORMAT)
             form.addRow("Start:", self._start_edit)
 
             self._end_edit = QDateTimeEdit()
             self._end_edit.setCalendarPopup(True)
-            self._end_edit.setDisplayFormat("yyyy-MM-dd HH:mm")
+            self._end_edit.setDisplayFormat(DATETIME_FORMAT)
             form.addRow("End:", self._end_edit)
 
             # Timezone selector (shared for start and end), like the GUI's
@@ -381,8 +382,8 @@ if _QT_OK:
             self._description_edit.setText(ev.description)
             self._all_day_check.setChecked(ev.all_day)
             if ev.all_day:
-                self._start_edit.setDisplayFormat("yyyy-MM-dd")
-                self._end_edit.setDisplayFormat("yyyy-MM-dd")
+                self._start_edit.setDisplayFormat(DATE_FORMAT)
+                self._end_edit.setDisplayFormat(DATE_FORMAT)
 
             # Timezone to display in:
             #  - event carries a timezone (incl. UTC) -> respect it.

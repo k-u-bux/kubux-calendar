@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import QDateTime
 
 from backend import RecurrenceRule
+from library.datetime_formats import DATETIME_FORMAT
 
 
 class RecurrenceWidget(QGroupBox):
@@ -104,6 +105,8 @@ class RecurrenceWidget(QGroupBox):
 
         self._until_edit = QDateTimeEdit()
         self._until_edit.setCalendarPopup(True)
+        # Same format as the dialog's start/end lines: ISO date, 24h time.
+        self._until_edit.setDisplayFormat(DATETIME_FORMAT)
         self._until_edit.setDateTime(QDateTime.currentDateTime().addMonths(1))
         self._until_edit.hide()
         layout.addRow(self.labels.recurrence_until, self._until_edit)

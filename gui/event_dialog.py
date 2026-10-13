@@ -25,6 +25,7 @@ from backend import EventStore, EventView, RecurrenceRule
 EventData = EventView
 from library.timezone_utils import ensure_tz
 from library.log import debug_log, Level
+from library.datetime_formats import DATETIME_FORMAT, DATE_FORMAT
 from .widgets.recurrence_widget import RecurrenceWidget
 
 
@@ -229,7 +230,7 @@ class EventDialog(QWidget):
         start_row = QHBoxLayout()
         self._start_edit = QDateTimeEdit()
         self._start_edit.setCalendarPopup(True)
-        self._start_edit.setDisplayFormat("yyyy-MM-dd HH:mm")
+        self._start_edit.setDisplayFormat(DATETIME_FORMAT)
         self._start_edit.dateTimeChanged.connect(self._on_start_changed)
         start_row.addWidget(self._start_edit, 1)
         form.addRow(self.event_store.config.labels.field_start, start_row)
@@ -238,7 +239,7 @@ class EventDialog(QWidget):
         end_row = QHBoxLayout()
         self._end_edit = QDateTimeEdit()
         self._end_edit.setCalendarPopup(True)
-        self._end_edit.setDisplayFormat("yyyy-MM-dd HH:mm")
+        self._end_edit.setDisplayFormat(DATETIME_FORMAT)
         end_row.addWidget(self._end_edit, 1)
         form.addRow(self.event_store.config.labels.field_end, end_row)
         
@@ -388,7 +389,7 @@ class EventDialog(QWidget):
     
     def _on_all_day_changed(self, state: int):
         is_all_day = state == Qt.Checked
-        fmt = "yyyy-MM-dd" if is_all_day else "yyyy-MM-dd HH:mm"
+        fmt = DATE_FORMAT if is_all_day else DATETIME_FORMAT
         self._start_edit.setDisplayFormat(fmt)
         self._end_edit.setDisplayFormat(fmt)
     
