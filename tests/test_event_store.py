@@ -466,6 +466,48 @@ def test_get_writable_calendars():
     assert writable[0].id == "cal2"
 
 
+def test_get_writable_calendars_follows_sidebar_order():
+    """Writable order == get_calendars() order, read-only sources dropped.
+
+    The _sources dict is filled in a deliberately scrambled order: walking it
+    (what the implementation used to do) would return exactly that order.
+    """
+    cfg = MagicMock()
+    cfg.timezone = "UTC"
+    cfg.state_file = Path("/tmp/state.json")
+    feed = MagicMock()
+    feed.name = "feed"
+    cfg.ics_subscriptions = [feed]
+    cfg.nextcloud_accounts = [MagicMock(), MagicMock()]
+    cfg.nextcloud_accounts[0].name = "Personal"
+    cfg.nextcloud_accounts[1].name = "Work"
+
+    store = EventStore(cfg)
+    store._sources["caldav:Work:zeta"] = CalendarSource(
+        id="caldav:Work:zeta", name="Zeta", account_name="Work")
+    store._sources["ics:feed"] = CalendarSource(
+        id="ics:feed", name="feed", account_name="",
+        read_only=True, source_type="ics")
+    store._sources["caldav:Personal:beta"] = CalendarSource(
+        id="caldav:Personal:beta", name="Beta", account_name="Personal")
+    store._sources["caldav:Work:alpha"] = CalendarSource(
+        id="caldav:Work:alpha", name="Alpha", account_name="Work")
+    store._sources["caldav:Personal:alpha"] = CalendarSource(
+        id="caldav:Personal:alpha", name="Alpha", account_name="Personal")
+
+    writable = store.get_writable_calendars()
+    assert [c.id for c in writable] == [
+        "caldav:Personal:alpha",   # Personal (config order 1st), Alpha < Beta
+        "caldav:Personal:beta",
+        "caldav:Work:alpha",       # Work after Personal, Alpha < Zeta
+        "caldav:Work:zeta",
+    ]
+    # The read-only ICS subscription is the only difference to the sidebar.
+    assert [c.id for c in writable] == [
+        c.id for c in store.get_calendars() if not c.read_only
+    ]
+
+
 # ----------------------------------------------------------------------
 # visibility and color
 # ----------------------------------------------------------------------

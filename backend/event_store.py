@@ -358,7 +358,14 @@ class EventStore:
         return self._sources.get(calendar_id)
 
     def get_writable_calendars(self) -> list[CalendarSource]:
-        return [s for s in self._sources.values() if not s.read_only]
+        """Writable sources, in the same order as the sidebar.
+
+        Same ordering rules as ``get_calendars()`` (config account order, then
+        calendar name, ICS subscriptions last) with the read-only sources
+        dropped — so the event editor's calendar list and the sidebar never
+        contradict each other, and the list does not reshuffle between runs.
+        """
+        return [s for s in self.get_calendars() if not s.read_only]
 
     def set_calendar_visibility(self, calendar_id: str, visible: bool) -> None:
         if calendar_id in self._sources:
