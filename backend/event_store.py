@@ -778,12 +778,30 @@ class EventStore:
             except Exception as e:
                 debug_log(Level.WARN, f"store: _load_state failed — {e}")
 
+    def _read_ui_section(self) -> dict:
+        """The 'ui' section already on disk, or ``{}`` if it cannot be read.
+
+        Used when this store saves without a live ``MainWindow`` (the CLI
+        tools construct an EventStore directly).  The UI section belongs to
+        the GUI; a headless save must carry it forward rather than drop it.
+        """
+        try:
+            with open(self._state_file, 'r') as f:
+                return json.load(f).get('ui', {})
+        except Exception:
+            return {}
+
     def _save_state(self) -> None:
         try:
             self._state_file.parent.mkdir(parents=True, exist_ok=True)
             # Import here to avoid circular import at module level.
             from gui.main_window import main_window
-            ui_state = main_window._ui_state if main_window is not None else {}
+            if main_window is not None:
+                ui_state = main_window._ui_state
+            else:
+                # No window owns the 'ui' section here (CLI / attach tool):
+                # preserve what is on disk instead of writing {} over it.
+                ui_state = self._read_ui_section()
             with open(self._state_file, 'w') as f:
                 json.dump(
                     {
