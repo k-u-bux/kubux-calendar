@@ -203,3 +203,71 @@ def test_list_visible_range_ignored_in_other_views(qapp):
 
     cw._list_view.visible_range_changed.emit(datetime(2026, 3, 10, 9, 0), datetime(2026, 3, 12, 9, 0))
     assert cw.get_current_date() == date(2026, 1, 5)
+
+
+# ----------------------------------------------------------------------
+# position intent survives view switching and month navigation
+# ----------------------------------------------------------------------
+
+def test_day_today_month_day_keeps_date(qapp):
+    """day -> TODAY -> month -> day must not move off the current date."""
+    cw = _make_cal()
+    cw.set_view(ViewType.DAY)
+    cw.go_today()
+    cw.set_view(ViewType.MONTH)
+    cw.set_view(ViewType.DAY)
+    assert cw.get_current_date() == date.today()
+
+
+def test_week_to_day_keeps_day_of_month(qapp):
+    """day -> week -> day must stay on the same day, not the week's Monday."""
+    cw = _make_cal()
+    cw.set_view(ViewType.DAY)
+    cw.set_date(date(2026, 1, 15))  # a Thursday
+    cw.set_view(ViewType.WEEK)
+    cw.set_view(ViewType.DAY)
+    assert cw.get_current_date() == date(2026, 1, 15)
+
+
+def test_month_next_prev_round_trip_keeps_day(qapp):
+    """month -> NEXT -> PREV -> day must not move the date."""
+    cw = _make_cal()
+    cw.set_view(ViewType.MONTH)
+    cw.set_date(date(2026, 1, 31))
+    cw.go_next()
+    cw.go_previous()
+    cw.set_view(ViewType.DAY)
+    assert cw.get_current_date() == date(2026, 1, 31)
+
+
+def test_month_navigation_clamps_without_crashing(qapp):
+    """Jan 31 -> NEXT renders Feb 28 instead of raising, and the day intent
+    survives, so the next step lands on Mar 31 rather than Mar 28."""
+    cw = _make_cal()
+    cw.set_view(ViewType.MONTH)
+    cw.set_date(date(2026, 1, 31))
+    cw.go_next()
+    assert cw.get_current_date() == date(2026, 2, 28)
+    cw.go_next()
+    assert cw.get_current_date() == date(2026, 3, 31)
+
+
+def test_month_prev_from_march_31_stays_31(qapp):
+    """Mar 31 -> PREV renders Feb 28, and PREV again lands on Jan 31."""
+    cw = _make_cal()
+    cw.set_view(ViewType.MONTH)
+    cw.set_date(date(2026, 3, 31))
+    cw.go_previous()
+    assert cw.get_current_date() == date(2026, 2, 28)
+    cw.go_previous()
+    assert cw.get_current_date() == date(2026, 1, 31)
+
+
+def test_reload_preserves_day_of_month(qapp):
+    """_load_state runs set_date(...) then set_view(...); the day-of-month must
+    survive both.  Previously week/month views snapped it to the period start."""
+    for view in (ViewType.DAY, ViewType.WEEK, ViewType.MONTH):
+        cw = _make_cal()
+        cw.set_date(date(2026, 1, 15))
+        cw.set_view(view)
+        assert cw.get_current_date() == date(2026, 1, 15), f"clobbered in {view}"

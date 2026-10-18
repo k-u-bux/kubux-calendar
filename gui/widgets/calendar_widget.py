@@ -4,9 +4,15 @@ CalendarWidget: main calendar widget with switchable views.
 This is the coordinator that switches between Day, Week, Month, and List views.
 All view implementations live in their own modules; this file just wires them
 together and provides the public API used by MainWindow.
+
+Position state is a :class:`~gui.widgets.calendar_cursor.CalendarCursor`, not a
+:class:`datetime.date`: the cursor may hold a day-of-month that is invalid for
+its month (e.g. "Feb 31"), which month navigation relies on to stay lossless.
+The cursor is clamped to a real date only where it is *used as a date* — see
+:attr:`_current_date`.
 """
 
-from datetime import datetime, date, timedelta, time as dt_time
+from datetime import datetime, date, time as dt_time
 from typing import Optional
 from enum import Enum
 
@@ -23,6 +29,7 @@ from .config_state import (
     get_hour_height,
     get_layout_config,
 )
+from .calendar_cursor import CalendarCursor
 from .time_axis import MixedTimeAxis
 from .shared_scrollbar import _ScrollBarState
 from .follow_state import FollowState
@@ -55,10 +62,23 @@ class CalendarWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._current_view = ViewType.WEEK
-        self._current_date = date.today()
+        # The unclamped position.  May be invalid as a date; read it through
+        # _current_date (which resolves) or _cursor (which does not).
+        self._cursor = CalendarCursor.from_date(date.today())
         self._cached_events: list[EventData] = []
         self._setup_ui()
 
+    @property
+    def _current_date(self) -> date:
+        """The cursor, clamped to a real calendar date.
+
+        Read-only on purpose: the unclamped position lives in ``_cursor`` and
+        must only be advanced through it (``set_date``, ``_apply_cursor``,
+        ``go_next``/``go_previous``).  Assigning here would silently drop the
+        day-of-month intent that month navigation depends on.  Every read is a
+        *use as a date*, so clamping happens here.
+        """
+        return self._cursor.resolve()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -113,14 +133,14 @@ class CalendarWidget(QWidget):
         self.set_view(self._current_view)
 
     def _on_list_visible_range_changed(self, start: datetime, end: datetime):
-        """Silently track the list view position in _current_date.
+        """Silently track the list view position in the cursor.
 
         Keeps persisted state and the fetch range (±90 days around
         _current_date) aligned with where the user actually scrolled to.
         Silent on purpose: no date_changed signal, no refresh loop.
         """
         if self._current_view == ViewType.LIST and start:
-            self._current_date = start.date()
+            self._cursor = CalendarCursor.from_date(start.date())
 
     def set_view(self, view_type: ViewType):
         self._follow_state.follow_present = False
@@ -130,27 +150,34 @@ class CalendarWidget(QWidget):
 
         self._current_view = view_type
 
-        # Use reference datetime's date for the new view
-        if ref_datetime:
-            self._current_date = ref_datetime.date()
+        # Re-derive the position only when leaving the list view.  Its live
+        # scroll anchor is real information the cursor does not hold.  For
+        # day/week/month the reference is a *lossy projection* of the cursor
+        # (start of day / week / month), so adopting it would drop the
+        # day-of-month intent — e.g. Jan 31 -> month -> day must stay Jan 31,
+        # and reopening the app on a Thursday must not snap back to Monday.
+        if old_view == ViewType.LIST and ref_datetime:
+            self._cursor = CalendarCursor.from_date(ref_datetime.date())
+
+        d = self._cursor.resolve()
 
         if view_type == ViewType.DAY:
             self._stack.setCurrentWidget(self._day_view)
-            self._day_view.set_date(self._current_date)
+            self._day_view.set_date(d)
             self._day_view._sync_scrollbar_appearance()
             self._day_view.setFocus()
         elif view_type == ViewType.WEEK:
             self._stack.setCurrentWidget(self._week_view)
-            self._week_view.set_date(self._current_date)
+            self._week_view.set_date(d)
             self._week_view._sync_scrollbar_appearance()
             self._week_view.setFocus()
         elif view_type == ViewType.MONTH:
             self._stack.setCurrentWidget(self._month_view)
-            self._month_view.set_date(self._current_date)
+            self._month_view.set_date(d)
             self._month_view.setFocus()
         else:  # LIST
             self._stack.setCurrentWidget(self._list_view)
-            self._list_view.set_date(self._current_date)
+            self._list_view.set_date(d)
             # For list view switching to it: set pending scroll target
             # It will be applied after events are loaded in _refresh_display()
             if old_view != ViewType.LIST and ref_datetime:
@@ -193,11 +220,14 @@ class CalendarWidget(QWidget):
             # Final fallback: current datetime
             return datetime.now()
 
-    def set_date(self, d: date):
-        self._follow_state.follow_present = False
-        self._current_date = d
-        # Only update the currently active view.  Inactive views are
-        # refreshed via view_changed → set_events when switched to.
+    def _apply_cursor(self):
+        """Render the cursor into the active view and announce the date.
+
+        This is where clamping happens for navigation that advances the cursor
+        without naming a real date.  Inactive views are refreshed via
+        view_changed → set_events when switched to.
+        """
+        d = self._cursor.resolve()
         if self._current_view == ViewType.DAY:
             self._day_view.set_date(d)
         elif self._current_view == ViewType.WEEK:
@@ -207,6 +237,11 @@ class CalendarWidget(QWidget):
         else:  # LIST
             self._list_view.set_date(d)
         self.date_changed.emit(d)
+
+    def set_date(self, d: date):
+        self._follow_state.follow_present = False
+        self._cursor = CalendarCursor.from_date(d)
+        self._apply_cursor()
 
     def set_events(self, events: list[EventData]):
         """Set events - only updates the active view."""
@@ -282,28 +317,33 @@ class CalendarWidget(QWidget):
     def go_previous(self):
         self._follow_state.follow_present = False
         if self._current_view == ViewType.DAY:
-            self.set_date(self._current_date - timedelta(days=1))
+            self._cursor = self._cursor.shift_days(-1)
+            self._apply_cursor()
         elif self._current_view == ViewType.WEEK:
-            self.set_date(self._current_date - timedelta(weeks=1))
+            self._cursor = self._cursor.shift_days(-7)
+            self._apply_cursor()
         elif self._current_view == ViewType.MONTH:
-            if self._current_date.month == 1:
-                self.set_date(self._current_date.replace(year=self._current_date.year - 1, month=12))
-            else:
-                self.set_date(self._current_date.replace(month=self._current_date.month - 1))
+            # Whole-month step: (year, month) with carry, day intent preserved.
+            # "Jan 31" -> "Dec 31" or "Feb 31" without clamping here.
+            self._cursor = self._cursor.shift_months(-1)
+            self._apply_cursor()
         else:  # LIST - scroll up by one page
             self._list_view.scroll_page_backward()
 
     def go_next(self):
         self._follow_state.follow_present = False
         if self._current_view == ViewType.DAY:
-            self.set_date(self._current_date + timedelta(days=1))
+            self._cursor = self._cursor.shift_days(1)
+            self._apply_cursor()
         elif self._current_view == ViewType.WEEK:
-            self.set_date(self._current_date + timedelta(weeks=1))
+            self._cursor = self._cursor.shift_days(7)
+            self._apply_cursor()
         elif self._current_view == ViewType.MONTH:
-            if self._current_date.month == 12:
-                self.set_date(self._current_date.replace(year=self._current_date.year + 1, month=1))
-            else:
-                self.set_date(self._current_date.replace(month=self._current_date.month + 1))
+            # Whole-month step: (year, month) with carry, day intent preserved.
+            # Stepping off "Jan 31" gives "Feb 31" -> resolves to Feb 28, and
+            # stepping on lands on "Mar 31" rather than "Mar 28".
+            self._cursor = self._cursor.shift_months(1)
+            self._apply_cursor()
         else:  # LIST - scroll down by one page
             self._list_view.scroll_page_forward()
 
