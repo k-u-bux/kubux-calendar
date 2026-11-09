@@ -908,7 +908,8 @@ class SyncManager:
             if not op.ical_data:
                 debug_log(Level.WARN, f"sync: pending op for {op.uid} has no ical_data — cannot sync")
                 return False
-            return caldav_save_event(cal_info, op.ical_data)
+            return caldav_save_event(cal_info, op.ical_data,
+                                     op.uid if op.operation == "update" else None)
 
         elif op.operation == "delete":
             return caldav_delete_event(cal_info, op.uid)

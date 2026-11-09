@@ -569,6 +569,35 @@ def test_sync_one_create_missing_event():
     assert ok is False
 
 
+def test_sync_one_update_passes_uid_to_save():
+    """An update must hand the UID to caldav_save_event so the PUT can target
+    the href that holds it (not a derived <uid>.ics)."""
+    cfg = _make_config()
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg)
+    cal_info = MagicMock()
+    session = MagicMock()
+    src = CalendarSource(id="src1", name="Cal1", account_name="acc1")
+    op = PendingOp(uid="u1", source_id="src1", operation="update", ical_data="X")
+    with patch("backend.sync_manager.caldav_save_event", return_value=True) as save:
+        ok = sm._sync_one(op, {"src1": cal_info}, {"acc1": session}, {"src1": src})
+    assert ok is True
+    save.assert_called_once_with(cal_info, "X", "u1")
+
+
+def test_sync_one_create_passes_no_uid():
+    """A create must not look up the UID: a duplicate is a real conflict."""
+    cfg = _make_config()
+    sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg)
+    cal_info = MagicMock()
+    session = MagicMock()
+    src = CalendarSource(id="src1", name="Cal1", account_name="acc1")
+    op = PendingOp(uid="u1", source_id="src1", operation="create", ical_data="X")
+    with patch("backend.sync_manager.caldav_save_event", return_value=True) as save:
+        ok = sm._sync_one(op, {"src1": cal_info}, {"acc1": session}, {"src1": src})
+    assert ok is True
+    save.assert_called_once_with(cal_info, "X", None)
+
+
 def test_sync_one_delete_instance_no_start():
     cfg = _make_config()
     sm = SyncManager(fs=MagicMock(), index=MagicMock(), sources={}, config=cfg)

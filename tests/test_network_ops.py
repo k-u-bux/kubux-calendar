@@ -255,6 +255,73 @@ def test_caldav_save_event_no_cal():
     result = caldav_save_event(cal_info, SINGLE_EVENT_ICAL)
     assert result is False
 
+
+def test_caldav_save_event_update_puts_to_existing_href():
+    """An update must PUT to the resource that holds the UID.
+
+    CalDAV addresses resources by URL; python-caldav's save_event() derives
+    ``<uid>.ics`` and therefore declares a create, which a Nextcloud server
+    answers with ``409 no-uid-conflict`` when the UID lives under another
+    resource name.  Passing the UID must resolve the real href instead.
+    """
+    from backend.network_ops import caldav_save_event, CalendarInfo
+
+    cal_info = CalendarInfo(
+        id="cal1", name="Cal1", color="", url="",
+        account_name="Personal", writable=True,
+    )
+    mock_cal = MagicMock()
+    existing = MagicMock()
+    existing.data = "old"
+    mock_cal.event_by_uid.return_value = existing
+    cal_info._caldav_cal = mock_cal
+
+    result = caldav_save_event(cal_info, SINGLE_EVENT_ICAL, uid="uid-1")
+
+    assert result is True
+    mock_cal.event_by_uid.assert_called_once_with("uid-1")
+    assert existing.data == SINGLE_EVENT_ICAL
+    existing.save.assert_called_once_with()
+    mock_cal.save_event.assert_not_called()
+
+
+def test_caldav_save_event_update_uid_absent_creates():
+    """Update op whose UID the server does not know (yet) falls back to create."""
+    from caldav.lib import error as caldav_error
+
+    from backend.network_ops import caldav_save_event, CalendarInfo
+
+    cal_info = CalendarInfo(
+        id="cal1", name="Cal1", color="", url="",
+        account_name="Personal", writable=True,
+    )
+    mock_cal = MagicMock()
+    mock_cal.event_by_uid.side_effect = caldav_error.NotFoundError
+    cal_info._caldav_cal = mock_cal
+
+    result = caldav_save_event(cal_info, SINGLE_EVENT_ICAL, uid="uid-1")
+
+    assert result is True
+    mock_cal.save_event.assert_called_once_with(SINGLE_EVENT_ICAL)
+
+
+def test_caldav_save_event_create_does_not_look_up_uid():
+    """A create passes no uid: a duplicate UID is a real conflict, not an edit."""
+    from backend.network_ops import caldav_save_event, CalendarInfo
+
+    cal_info = CalendarInfo(
+        id="cal1", name="Cal1", color="", url="",
+        account_name="Personal", writable=True,
+    )
+    mock_cal = MagicMock()
+    cal_info._caldav_cal = mock_cal
+
+    result = caldav_save_event(cal_info, SINGLE_EVENT_ICAL, uid=None)
+
+    assert result is True
+    mock_cal.event_by_uid.assert_not_called()
+    mock_cal.save_event.assert_called_once_with(SINGLE_EVENT_ICAL)
+
 # ----------------------------------------------------------------------
 # caldav_fetch_events
 # ----------------------------------------------------------------------

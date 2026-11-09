@@ -170,12 +170,30 @@ def caldav_fetch_events(calendar: CalendarInfo,
 
 
 def caldav_save_event(calendar: CalendarInfo,
-                      ical_text: str) -> bool:
-    """Create or update an event on the server.  Returns success."""
+                      ical_text: str,
+                      uid: Optional[str] = None) -> bool:
+    """Create or update an event on the server.  Returns success.
+
+    *uid* is the event's UID when the caller is updating a resource that
+    already exists.  CalDAV addresses resources by URL, not by UID, so the
+    PUT target has to be the href that actually holds that UID — python-caldav
+    would otherwise derive ``<uid>.ics`` and declare a create, which the
+    server rejects with ``409 no-uid-conflict`` whenever that UID lives under
+    a different resource name (any client that names its resources itself).
+    """
     cal = calendar._caldav_cal
     if cal is None or not calendar.writable:
         return False
     try:
+        if uid:
+            try:
+                existing = cal.event_by_uid(uid)
+            except caldav_error.NotFoundError:
+                existing = None
+            if existing is not None:
+                existing.data = ical_text
+                existing.save()
+                return True
         cal.save_event(ical_text)
         return True
     except Exception as e:
