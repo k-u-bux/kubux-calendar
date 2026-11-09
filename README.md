@@ -156,7 +156,7 @@ color = "#ff6b6b"
 | `refresh_interval` | 300 | Auto-refresh from server (seconds, 0 to disable) |
 | `outdate_threshold` | 7200 | Seconds since last successful sync before marking events as "unconfirmed" (default 2 hours) |
 | `state_file` | `~/.local/state/kubux-calendar/state.json` | Path to state file |
-| `log_level` | warn | Log threshold: debug, info, warn, error, silent |
+| `log_level` | warn | Log threshold: debug, info, warn, error, silent. Output goes to stderr and only when the program was started from a terminal — a session-launched app writes nothing to journald. |
 | `timezone` | (system) | IANA timezone name (e.g. `Europe/Berlin`) |
 | `default_calendar` | (unset) | Calendar an event editor pre-selects — see below |
 

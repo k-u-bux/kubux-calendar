@@ -27,7 +27,7 @@ def parse_args():
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="Force debug output"
+        help="Force debug output to stderr (only when started from a terminal)"
     )
     return parser.parse_args()
 
