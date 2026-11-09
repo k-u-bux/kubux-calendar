@@ -32,10 +32,12 @@ first writable calendar is used.
 
 from __future__ import annotations
 
-from library.log import silence_unattended_stderr  # first: closes stderr when detached
-silence_unattended_stderr()
+from library.log import silence_unattended_output, started_from_terminal  # first: closes stdout+stderr
+silence_unattended_output()
 
 import argparse
+import os
+import socket
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -66,6 +68,74 @@ if _QT_OK:
     # Reuse the same timezone palette + Floating sentinel as the GUI's event
     # dialog so the attach editor behaves identically.
     from gui.event_dialog import COMMON_TZ, FLOATING_LABEL
+
+
+# ============================================================ failure reporting
+
+_app = None    # the QApplication, kept alive while a message window is up
+
+
+def _socket_connectable(path: str) -> bool:
+    """True if something is listening on that unix socket."""
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(0.2)
+            s.connect(path)
+    except OSError:
+        return False
+    return True
+
+
+def _display_available() -> bool:
+    """Cheap check that a window could actually be shown.
+
+    Without this, a detached run in an environment that exports a stale
+    ``DISPLAY`` (an SSH session, a container with the socket bind-mounted)
+    makes Qt load the xcb plugin and die inside Qt instead of exiting cleanly —
+    the dialog could never have appeared there anyway.  Connecting to the X
+    socket tells a live server from a leftover socket file.
+    """
+    if os.environ.get("WAYLAND_DISPLAY"):
+        return True
+    display = os.environ.get("DISPLAY", "")
+    if not display:
+        return False
+    host, _, rest = display.rpartition(":")
+    if host:                          # remote display (ssh -X): assume reachable
+        return True
+    number = rest.split(".")[0]
+    return number.isdigit() and _socket_connectable(f"/tmp/.X11-unix/X{number}")
+
+
+def _report_failure(message: str, title: str = "Kubux Calendar") -> None:
+    """Report a failure where the user can actually see it.
+
+    This tool is the desktop's ``text/calendar`` handler: it is almost always
+    started detached, with its streams pointed at ``/dev/null`` (see
+    :func:`library.log.silence_unattended_output`), so a stderr line would
+    never be seen.  A detached run opens a message window; a terminal run keeps
+    the plain stderr line it always had.
+    """
+    if started_from_terminal():
+        print(f"kubux-calendar-attach: {message}", file=sys.stderr)
+        return
+    if not _QT_OK:                      # nothing to draw a window with
+        return
+    if not _display_available():
+        return                          # no display: nothing to open it on
+    # Hold the instance in a module global: a temporary QApplication is
+    # collected as soon as the expression ends, and the dialog then crashes.
+    global _app
+    try:
+        if _app is None:
+            _app = QApplication.instance() or QApplication([sys.argv[0]])
+        # A QMessageBox *instance* rather than QMessageBox.critical(): shown as
+        # the very first window of the process, the static helper dies in Qt
+        # (verified on PySide6 6.11), while the instance form works.
+        box = QMessageBox(QMessageBox.Critical, title, message, QMessageBox.Ok)
+        box.exec()
+    except Exception:                   # pragma: no cover - unusable display
+        pass
 
 
 # ============================================================ input parsing
@@ -502,13 +572,14 @@ def main(argv=None, stdin=None) -> int:
 
         return _interactive(config, text)
     except Exception as e:  # noqa: BLE001
-        print(f"kubux-calendar-attach: error: {e}", file=sys.stderr)
+        _report_failure(f"Cannot import the invitation.\n\n{e}")
         return 1
 
 
 def _interactive(config: Config, text: str) -> int:
     if not _QT_OK:
-        print("kubux-calendar-attach: PySide6 not available", file=sys.stderr)
+        _report_failure("PySide6 is not available, so the import window "
+                        "cannot be opened.")
         return 1
 
     config_tz = pytz.timezone(config.timezone)
@@ -516,11 +587,10 @@ def _interactive(config: Config, text: str) -> int:
 
     calendars = _writable_calendar_sources(config)
     if not calendars:
-        print(
-            "kubux-calendar-attach: no writable calendars configured.\n"
-            "  Run kubux-calendar once so it can cache your Nextcloud "
-            "calendars, then retry.",
-            file=sys.stderr,
+        _report_failure(
+            "No writable calendars are configured.\n\n"
+            "Run kubux-calendar once so it can cache your Nextcloud "
+            "calendars, then try again."
         )
         return 1
 

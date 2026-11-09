@@ -11,13 +11,13 @@ a shell (``2>file``, ``|& tee``) keeps the controlling terminal and is
 honoured: that choice is the user's, not ours.
 
 Gating :func:`debug_log` alone is not enough: journald receives every byte
-written to file descriptor 2, including output from the Qt C++ libraries,
-from subprocesses (which inherit the descriptor) and from Python's own
-warnings and tracebacks, none of which pass through this module.  So
-:func:`silence_unattended_stderr` redirects the descriptor itself to
-``/dev/null``; the entry points whose output is captured (the GUI and the
+written to file descriptors 1 and 2, including output from the Qt C++
+libraries, from subprocesses (which inherit the descriptors) and from
+Python's own ``print``, warnings and tracebacks, none of which pass through
+this module.  So :func:`silence_unattended_output` redirects both descriptors
+to ``/dev/null``; the entry points whose output is captured (the GUI and the
 ``.ics`` handler) call it before importing anything else.  Command-line tools
-keep their stderr — there it is the tool's own output channel.
+keep their streams — there they are the tool's own output channel.
 
 Usage::
 
@@ -34,25 +34,37 @@ from datetime import datetime
 from enum import IntEnum
 
 
-def silence_unattended_stderr() -> None:
-    """Point fd 2 at ``/dev/null`` when there is no controlling terminal.
+def started_from_terminal() -> bool:
+    """True if this process has a controlling terminal.
 
-    Probed via ``/dev/tty`` rather than ``sys.stderr.isatty()``: the latter is
+    Probed via ``/dev/tty`` rather than ``sys.stdout.isatty()``: the latter is
     also false for a shell redirection, which is a deliberate user action,
     while a session-launched process has no controlling terminal at all and its
-    stderr lands in journald.  Child processes inherit the redirected
-    descriptor, so their output is silenced by the same call.
+    streams land in journald.
     """
     try:
-        os.close(os.open("/dev/tty", os.O_WRONLY))
+        fd = os.open("/dev/tty", os.O_WRONLY)
     except OSError:
-        pass
-    else:
-        return                    # started from a terminal: keep stderr
+        return False
+    try:
+        return os.isatty(fd)
+    finally:
+        os.close(fd)
+
+
+def silence_unattended_output() -> None:
+    """Point fd 1 and fd 2 at ``/dev/null`` when there is no controlling terminal.
+
+    Child processes inherit the redirected descriptors, so their output is
+    silenced by the same call.  A terminal launch keeps its streams.
+    """
+    if started_from_terminal():
+        return
     try:
         fd = os.open(os.devnull, os.O_WRONLY)
     except OSError:
         return
+    os.dup2(fd, 1)
     os.dup2(fd, 2)
     os.close(fd)
 
@@ -70,31 +82,13 @@ _current = Level.WARN
 """Global threshold — messages below this level are suppressed."""
 
 _attended: "bool | None" = None
-"""Cached answer of :func:`_started_from_terminal`."""
+"""Cached answer of :func:`started_from_terminal`."""
 
 
 def set_level(level: Level | int) -> None:
     """Set the global log threshold."""
     global _current
     _current = Level(level)
-
-
-def _started_from_terminal() -> bool:
-    """True if this process has a controlling terminal.
-
-    Probed via ``/dev/tty`` rather than ``sys.stderr.isatty()``: the latter
-    is also false for a shell redirection, which is a deliberate user action,
-    while a session-launched process has no controlling terminal at all and
-    its stderr lands in journald.
-    """
-    try:
-        fd = os.open("/dev/tty", os.O_WRONLY)
-    except OSError:
-        return False
-    try:
-        return os.isatty(fd)
-    finally:
-        os.close(fd)
 
 
 def debug_log(level: Level, message: str) -> None:
@@ -108,7 +102,7 @@ def debug_log(level: Level, message: str) -> None:
     if level < _current:
         return
     if _attended is None:
-        _attended = _started_from_terminal()
+        _attended = started_from_terminal()
     if not _attended or sys.stderr is None:
         return
     timestamp = datetime.now().strftime("%H:%M:%S")

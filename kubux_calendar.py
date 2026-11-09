@@ -3,8 +3,8 @@
 Kubux Calendar - A PySide6 desktop calendar for CalDAV (Nextcloud) and ICS subscriptions.
 """
 
-from library.log import silence_unattended_stderr  # first: closes stderr when detached
-silence_unattended_stderr()
+from library.log import silence_unattended_output  # first: closes stdout+stderr when detached
+silence_unattended_output()
 
 import sys
 import argparse

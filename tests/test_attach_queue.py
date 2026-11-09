@@ -325,3 +325,96 @@ class TestAttachDialogTz:
             assert d._collect_edits()["start"].tzinfo == pytz.UTC
         finally:
             d.close()
+
+
+# =====================================================================
+# failure reporting: detached -> message window, terminal -> stderr
+# =====================================================================
+
+def _stub_message_box(monkeypatch, shown):
+    """Replace QMessageBox with something that records instead of blocking."""
+
+    class StubBox:
+        Critical, Ok = 3, 1
+
+        def __init__(self, icon, title, text, buttons=None):
+            shown.append((title, text))
+
+        def exec(self):
+            return 1
+
+    monkeypatch.setattr(ca, "QMessageBox", StubBox)
+
+
+class TestFailureReporting:
+    def test_detached_launch_opens_a_message_window(self, qapp, monkeypatch):
+        shown = []
+        monkeypatch.setattr(ca, "started_from_terminal", lambda: False)
+        monkeypatch.setenv("DISPLAY", ":0")
+        _stub_message_box(monkeypatch, shown)
+
+        ca._report_failure("boom")
+
+        assert shown == [("Kubux Calendar", "boom")]
+
+    def test_no_display_means_no_window(self, monkeypatch):
+        """A detached run without any display must not try to draw one."""
+        shown = []
+        monkeypatch.setattr(ca, "started_from_terminal", lambda: False)
+        monkeypatch.delenv("DISPLAY", raising=False)
+        monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+        _stub_message_box(monkeypatch, shown)
+
+        ca._report_failure("boom")
+
+        assert shown == []
+
+    def test_stale_display_means_no_window(self, monkeypatch):
+        """`DISPLAY=:N` with no listener: Qt would die, so do not try."""
+        shown = []
+        monkeypatch.setattr(ca, "started_from_terminal", lambda: False)
+        monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+        monkeypatch.setenv("DISPLAY", ":987")      # no such X server here
+        _stub_message_box(monkeypatch, shown)
+
+        ca._report_failure("boom")
+
+        assert shown == []
+
+    def test_live_display_socket_is_accepted(self, monkeypatch):
+        """A local display with a listening socket counts as available."""
+        monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+        monkeypatch.setenv("DISPLAY", ":987")
+        monkeypatch.setattr(ca, "_socket_connectable",
+                            lambda p: p == "/tmp/.X11-unix/X987")
+        assert ca._display_available() is True
+
+    def test_wayland_display_is_accepted(self, monkeypatch):
+        monkeypatch.delenv("DISPLAY", raising=False)
+        monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+        assert ca._display_available() is True
+
+    def test_terminal_launch_keeps_the_stderr_line(self, capsys, monkeypatch):
+        shown = []
+        monkeypatch.setattr(ca, "started_from_terminal", lambda: True)
+        _stub_message_box(monkeypatch, shown)
+
+        ca._report_failure("boom")
+
+        assert "kubux-calendar-attach: boom" in capsys.readouterr().err
+        assert shown == []
+
+    def test_main_reports_a_failure_in_a_window_when_detached(
+            self, qapp, monkeypatch, tmp_path):
+        """The missing-config/missing-file path must not exit silently."""
+        shown = []
+        monkeypatch.setattr(ca, "started_from_terminal", lambda: False)
+        monkeypatch.setenv("DISPLAY", ":0")
+        _stub_message_box(monkeypatch, shown)
+
+        rc = ca.main(["--file", str(tmp_path / "missing.ics")])
+
+        assert rc == 1
+        assert len(shown) == 1
+        assert "Cannot import the invitation" in shown[0][1]
+        assert "missing.ics" in shown[0][1]

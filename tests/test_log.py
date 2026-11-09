@@ -73,7 +73,7 @@ def test_started_from_terminal_without_ctty(monkeypatch):
         raise OSError(6, "No such device or address")
 
     monkeypatch.setattr(logmod.os, "open", no_ctty)
-    assert logmod._started_from_terminal() is False
+    assert logmod.started_from_terminal() is False
 
 
 def test_started_from_terminal_with_ctty(monkeypatch):
@@ -81,7 +81,7 @@ def test_started_from_terminal_with_ctty(monkeypatch):
     master, slave = pty.openpty()
     try:
         monkeypatch.setattr(logmod.os, "open", lambda *a, **k: os.dup(slave))
-        assert logmod._started_from_terminal() is True
+        assert logmod.started_from_terminal() is True
     finally:
         os.close(master)
         os.close(slave)
@@ -125,13 +125,14 @@ def test_debug_log_silent_suppresses_all():
     assert "should not appear" not in captured.getvalue()
 
 
-def test_silence_unattended_stderr_redirects_fd2(monkeypatch):
-    """No controlling terminal -> fd 2 is pointed at /dev/null.
+def test_silence_unattended_output_redirects_both_streams(monkeypatch):
+    """No controlling terminal -> fd 1 and fd 2 are pointed at /dev/null.
 
-    Gating debug_log is not enough: Qt, subprocesses and tracebacks write to
-    the descriptor directly, so the descriptor itself is what gets closed.
+    Gating debug_log is not enough: Qt, subprocesses, tracebacks and plain
+    print() write to the descriptors directly, so the descriptors themselves
+    are what get closed.
     """
-    seen = {}
+    seen = {"dup2": [], "closed": []}
 
     def fake_open(path, *args, **kwargs):
         if path == "/dev/tty":
@@ -140,27 +141,28 @@ def test_silence_unattended_stderr_redirects_fd2(monkeypatch):
 
     monkeypatch.setattr(logmod.os, "open", fake_open)
     monkeypatch.setattr(logmod.os, "dup2",
-                        lambda fd, target: seen.update(dup2=(fd, target)))
+                        lambda fd, target: seen["dup2"].append((fd, target)))
     monkeypatch.setattr(logmod.os, "close",
-                        lambda fd: seen.setdefault("closed", []).append(fd))
+                        lambda fd: seen["closed"].append(fd))
 
-    logmod.silence_unattended_stderr()
+    logmod.silence_unattended_output()
 
-    assert seen["dup2"] == (42, 2)
+    assert seen["dup2"] == [(42, 1), (42, 2)]
     assert seen["closed"] == [42]
 
 
-def test_silence_unattended_stderr_keeps_terminal(monkeypatch):
-    """With a controlling terminal, fd 2 is left alone."""
+def test_silence_unattended_output_keeps_terminal(monkeypatch):
+    """With a controlling terminal, nothing is opened or redirected."""
     seen = {"dup2": False, "closed": []}
 
+    monkeypatch.setattr(logmod, "started_from_terminal", lambda: True)
     monkeypatch.setattr(logmod.os, "open", lambda *a, **k: 7)
     monkeypatch.setattr(logmod.os, "dup2",
                         lambda fd, target: seen.update(dup2=True))
     monkeypatch.setattr(logmod.os, "close",
                         lambda fd: seen["closed"].append(fd))
 
-    logmod.silence_unattended_stderr()
+    logmod.silence_unattended_output()
 
     assert seen["dup2"] is False
-    assert seen["closed"] == [7]
+    assert seen["closed"] == []
