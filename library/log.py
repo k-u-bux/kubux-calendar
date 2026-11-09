@@ -10,6 +10,15 @@ rather than being redirected somewhere unseen.  An explicit redirection from
 a shell (``2>file``, ``|& tee``) keeps the controlling terminal and is
 honoured: that choice is the user's, not ours.
 
+Gating :func:`debug_log` alone is not enough: journald receives every byte
+written to file descriptor 2, including output from the Qt C++ libraries,
+from subprocesses (which inherit the descriptor) and from Python's own
+warnings and tracebacks, none of which pass through this module.  So
+:func:`silence_unattended_stderr` redirects the descriptor itself to
+``/dev/null``; the entry points whose output is captured (the GUI and the
+``.ics`` handler) call it before importing anything else.  Command-line tools
+keep their stderr — there it is the tool's own output channel.
+
 Usage::
 
     from library.log import debug_log, Level
@@ -23,6 +32,29 @@ import os
 import sys
 from datetime import datetime
 from enum import IntEnum
+
+
+def silence_unattended_stderr() -> None:
+    """Point fd 2 at ``/dev/null`` when there is no controlling terminal.
+
+    Probed via ``/dev/tty`` rather than ``sys.stderr.isatty()``: the latter is
+    also false for a shell redirection, which is a deliberate user action,
+    while a session-launched process has no controlling terminal at all and its
+    stderr lands in journald.  Child processes inherit the redirected
+    descriptor, so their output is silenced by the same call.
+    """
+    try:
+        os.close(os.open("/dev/tty", os.O_WRONLY))
+    except OSError:
+        pass
+    else:
+        return                    # started from a terminal: keep stderr
+    try:
+        fd = os.open(os.devnull, os.O_WRONLY)
+    except OSError:
+        return
+    os.dup2(fd, 2)
+    os.close(fd)
 
 
 class Level(IntEnum):

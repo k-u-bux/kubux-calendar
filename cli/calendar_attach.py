@@ -32,6 +32,9 @@ first writable calendar is used.
 
 from __future__ import annotations
 
+from library.log import silence_unattended_stderr  # first: closes stderr when detached
+silence_unattended_stderr()
+
 import argparse
 import sys
 from datetime import datetime

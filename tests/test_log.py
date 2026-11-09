@@ -123,3 +123,44 @@ def test_debug_log_silent_suppresses_all():
     finally:
         sys.stderr = old
     assert "should not appear" not in captured.getvalue()
+
+
+def test_silence_unattended_stderr_redirects_fd2(monkeypatch):
+    """No controlling terminal -> fd 2 is pointed at /dev/null.
+
+    Gating debug_log is not enough: Qt, subprocesses and tracebacks write to
+    the descriptor directly, so the descriptor itself is what gets closed.
+    """
+    seen = {}
+
+    def fake_open(path, *args, **kwargs):
+        if path == "/dev/tty":
+            raise OSError(6, "No such device or address")
+        return 42                                   # "the /dev/null handle"
+
+    monkeypatch.setattr(logmod.os, "open", fake_open)
+    monkeypatch.setattr(logmod.os, "dup2",
+                        lambda fd, target: seen.update(dup2=(fd, target)))
+    monkeypatch.setattr(logmod.os, "close",
+                        lambda fd: seen.setdefault("closed", []).append(fd))
+
+    logmod.silence_unattended_stderr()
+
+    assert seen["dup2"] == (42, 2)
+    assert seen["closed"] == [42]
+
+
+def test_silence_unattended_stderr_keeps_terminal(monkeypatch):
+    """With a controlling terminal, fd 2 is left alone."""
+    seen = {"dup2": False, "closed": []}
+
+    monkeypatch.setattr(logmod.os, "open", lambda *a, **k: 7)
+    monkeypatch.setattr(logmod.os, "dup2",
+                        lambda fd, target: seen.update(dup2=True))
+    monkeypatch.setattr(logmod.os, "close",
+                        lambda fd: seen["closed"].append(fd))
+
+    logmod.silence_unattended_stderr()
+
+    assert seen["dup2"] is False
+    assert seen["closed"] == [7]
